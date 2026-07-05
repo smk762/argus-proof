@@ -1,0 +1,21 @@
+# Managed by Copier — do not edit by hand.
+# Run `copier update` in this repo to pull template changes.
+_commit: e7a0753
+_src_path: argus-pkg-template
+author: smk762
+cli_name: argus-proof
+description: 'Post-training LoRA evaluation and optimisation: generate samples from
+    a trained LoRA and score them against the curated dataset it was trained from'
+dockerfile: Dockerfile
+github_owner: smk762
+has_cli: true
+has_server: true
+image_name: argus-proof
+package_name: argus_proof
+post_test: ''
+project_name: argus-proof
+python_min: '3.11'
+ruff_pin: 0.15.16
+test_extras: dev,server,cli
+version_build_arg: false
+
