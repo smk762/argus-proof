@@ -82,11 +82,9 @@ def schema(
     check: bool = Option(False, "--check", help="Exit non-zero if the committed schema is stale (for CI)"),
 ) -> None:
     """Emit the wire-contract JSON Schema consumers codegen against."""
-    import json
+    from argus_proof.models import render_wire_schema
 
-    from argus_proof.models import wire_schema
-
-    rendered = json.dumps(wire_schema(), indent=2, sort_keys=True) + "\n"
+    rendered = render_wire_schema()
 
     if check:
         existing = output.read_text(encoding="utf-8") if output.exists() else ""

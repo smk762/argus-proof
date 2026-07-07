@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from argus_core.wire import check_version, make_versioned_base, schema_major
+from argus_core.wire import render_schema as _core_render_schema
 from argus_core.wire import wire_schema as _core_wire_schema
 from pydantic import BaseModel, Field
 
@@ -477,3 +478,12 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
 def wire_schema() -> dict:
     """Combined JSON Schema for proof's wire contract (all WIRE_MODELS)."""
     return _core_wire_schema(WIRE_MODELS, title=WIRE_TITLE)
+
+
+def render_wire_schema() -> str:
+    """The canonical committed-schema string (sorted, indented, newline-terminated).
+
+    Delegates to argus_core.wire.render_schema so proof's ``schema`` /
+    ``schema --check`` formatting stays identical to the rest of the suite.
+    """
+    return _core_render_schema(WIRE_MODELS, title=WIRE_TITLE)
