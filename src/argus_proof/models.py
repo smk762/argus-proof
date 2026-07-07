@@ -107,8 +107,21 @@ class ModelRef(BaseModel):
 
 
 class LoRARef(ModelRef):
-    """A LoRA applied during generation: a :class:`ModelRef` plus its weight."""
+    """A LoRA applied during generation, as recorded in a resolved run: a
+    :class:`ModelRef` (name pinned by SHA256) plus its weight."""
 
+    weight: float = 1.0
+
+
+class LoRASpec(BaseModel):
+    """A LoRA to apply, as *requested* — name + weight, before the file is hashed.
+
+    The request-time counterpart of :class:`LoRARef`: a :class:`RunSpec` names a
+    LoRA by filename; the backend resolves it to a file, hashes it, and records
+    the resulting :class:`LoRARef` in the :class:`RunManifest`.
+    """
+
+    name: str
     weight: float = 1.0
 
 
@@ -152,6 +165,90 @@ class RunManifest(_Versioned):
     source_manifest_version: str | None = None
     training_run_id: str | None = None
     created_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Generation — the request a backend runs and what it produces
+# ---------------------------------------------------------------------------
+
+
+class RunSpec(BaseModel):
+    """A generation request: what to generate, before a backend resolves it.
+
+    The prompt-grid builder (issue #3) emits a list of these; a
+    :class:`~argus_proof.backends.base.GenBackend` turns one into images plus the
+    resolved :class:`RunManifest`. Models are named (not yet hashed): the backend
+    resolves each name to a file and records its SHA256 in the manifest.
+
+    ``seeds`` is the seed strategy made concrete — one fixed seed for a
+    within-checkpoint sweep, or a fixed seed-set (so seed luck averages out) for
+    a cross-checkpoint comparison. One image is produced per seed.
+    """
+
+    run_id: str
+    base_checkpoint: str
+    vae: str | None = None
+    loras: list[LoRASpec] = Field(default_factory=list)
+    sampling: SamplingParams
+    prompt: str
+    negative_prompt: str = ""
+    seeds: list[int] = Field(min_length=1)
+    source_manifest: str | None = None
+    source_manifest_version: str | None = None
+    training_run_id: str | None = None
+
+
+class GeneratedImage(BaseModel):
+    """One image a backend produced, ready to be scored.
+
+    ``image_id`` is the opaque handle scores reference; ``(run_id, seed)`` is the
+    reproducible key. ``pnginfo`` is the metadata read back from the PNG the
+    engine embedded (ComfyUI PNGInfo), so the recorded params can be checked
+    against what actually rendered rather than trusted blind.
+    """
+
+    image_id: str
+    run_id: str
+    seed: int
+    path: str
+    width: int
+    height: int
+    pnginfo: dict[str, str] = Field(default_factory=dict)
+
+
+class BackendCapabilities(BaseModel):
+    """What a generation backend can do — its capability descriptor.
+
+    Lets a caller pick or validate a backend without hard-coding which one it
+    is: swapping backends is a config change, not a code change.
+    """
+
+    name: str
+    supports_seed_set: bool = True
+    max_loras: int | None = None  # None = unbounded
+    reads_pnginfo: bool = False
+    streams_progress: bool = False
+
+
+ProgressType = Literal["start", "progress", "image", "done", "error"]
+
+
+class ProgressEvent(BaseModel):
+    """One NDJSON progress line streamed during generation (suite convention).
+
+    ``type`` selects which fields matter: ``start`` sets ``total`` (images to
+    make); ``progress`` sets ``completed``/``total``; ``image`` sets ``seed`` +
+    ``image_id`` as each finishes; ``done`` closes the run; ``error`` carries a
+    failure ``message``.
+    """
+
+    run_id: str
+    type: ProgressType
+    message: str | None = None
+    seed: int | None = None
+    image_id: str | None = None
+    completed: int | None = None
+    total: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -304,8 +401,13 @@ class RejectArchive(_Versioned):
 WIRE_MODELS: tuple[type[BaseModel], ...] = (
     ModelRef,
     LoRARef,
+    LoRASpec,
     SamplingParams,
     RunManifest,
+    RunSpec,
+    GeneratedImage,
+    BackendCapabilities,
+    ProgressEvent,
     MetricScores,
     RejectReason,
     ImageScores,
