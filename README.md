@@ -86,7 +86,7 @@ report.verdict.passed        # run pass/fail vs GateConfig.run_pass_rate
 Concrete scorers (InsightFace identity, torchmetrics CLIPScore, pyiqa,
 DreamSim/LPIPS, ImageReward/HPSv2, phash dedup) are heavy and land behind the
 `[score]` extra, implementing these protocols; remote/hosted variants build on
-`argus_core.backends.RemoteBackend` (point at a service by IP/port). The spine
+`argus_cortex.backends.RemoteBackend` (point at a service by IP/port). The spine
 itself is dependency-free and fully tested with fakes.
 
 ## Develop

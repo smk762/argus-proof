@@ -157,7 +157,7 @@
       "type": "object"
     },
     "GateConfig": {
-      "description": "Thresholds that route each image to auto-pass / auto-fail / needs-HITL.\n\nAn automated pre-pass so humans only rate the borderline band (HITL doesn't\nscale to every image). Scorers return a normalised score in ``[0, 1]``\n(higher = better); the gate takes a ``weights``-weighted mean of the metrics\npresent (curator's weighted ``score_breakdown`` pattern) into a composite:\n``composite >= auto_pass`` \u2192 pass, ``<= auto_fail`` \u2192 fail, between \u2192 HITL.\n``hard_gates`` are absolute per-metric floors (e.g. a minimum identity) that\nfail an image regardless of composite. A run passes when its group pass-rate\nreaches ``run_pass_rate``.",
+      "description": "Thresholds that route each image to auto-pass / auto-fail / needs-HITL.\n\nAn automated pre-pass so humans only rate the borderline band (HITL doesn't\nscale to every image). Scorers return a normalised score in ``[0, 1]``\n(higher = better); the gate takes a ``weights``-weighted mean of the metrics\npresent (curator's weighted ``score_breakdown`` pattern) into a composite:\n``composite >= auto_pass`` \u2192 pass, ``<= auto_fail`` \u2192 fail, between \u2192 HITL.\n``hard_gates`` are absolute per-metric floors (e.g. a minimum identity) that\nfail an image regardless of composite. A run passes when its group pass-rate\nreaches ``run_pass_rate``.\n\n``safety`` is in the default composite weights so an unsafe image is dragged\ndown once safety scoring lands (Phase 4); for a true veto, add ``safety`` to\n``hard_gates`` with your scorer's floor \u2014 the composite alone can let a\nhigh-quality-but-unsafe image through.",
       "properties": {
         "auto_fail": {
           "default": 0.4,
@@ -1155,10 +1155,15 @@
       "type": "object"
     },
     "Verdict": {
-      "description": "The pass/fail decision for a run, with the reasons behind it.",
+      "description": "The automated pass/fail decision for a run, with the reasons behind it.\n\n``passed`` reflects the automated scoring alone (groups that auto-passed).\n``pending`` is True when the run hasn't cleared the bar yet but un-reviewed\nHITL groups could still push it over once rated \u2014 so a caller can tell\n\"failed\" apart from \"not judged yet\" instead of reading a premature fail.",
       "properties": {
         "passed": {
           "title": "Passed",
+          "type": "boolean"
+        },
+        "pending": {
+          "default": false,
+          "title": "Pending",
           "type": "boolean"
         },
         "reasons": {

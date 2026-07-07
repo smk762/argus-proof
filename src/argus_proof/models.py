@@ -30,7 +30,7 @@ from typing import Annotated, Literal
 from argus_cortex.wire import check_version, make_versioned_base, schema_major
 from argus_cortex.wire import render_schema as _core_render_schema
 from argus_cortex.wire import wire_schema as _core_wire_schema
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Version of the proof wire contract (RunManifest / EvalReport / RejectArchive).
 # Bump the minor for backward-compatible additions (a new optional field, a new
@@ -384,7 +384,9 @@ class AggregateScores(BaseModel):
     n_passed: int = Field(ge=0)
     pass_rate: float = Field(ge=0.0, le=1.0)
     means: MetricScores = Field(default_factory=MetricScores)
-    # Number of near-dup groups the pass-rate is computed over (None = not deduped).
+    # Number of near-dup groups the pass-rate is computed over; the scorer always
+    # sets it (equal to n_images when no deduper ran). Optional only for callers
+    # that build an AggregateScores by hand.
     n_groups: int | None = Field(default=None, ge=0)
     # Groups the gate routed to human review (composite in the middle band).
     n_needs_hitl: int = Field(default=0, ge=0)
@@ -407,9 +409,16 @@ class ScorerProvenance(BaseModel):
 
 
 class Verdict(BaseModel):
-    """The pass/fail decision for a run, with the reasons behind it."""
+    """The automated pass/fail decision for a run, with the reasons behind it.
+
+    ``passed`` reflects the automated scoring alone (groups that auto-passed).
+    ``pending`` is True when the run hasn't cleared the bar yet but un-reviewed
+    HITL groups could still push it over once rated — so a caller can tell
+    "failed" apart from "not judged yet" instead of reading a premature fail.
+    """
 
     passed: bool
+    pending: bool = False
     reasons: list[str] = Field(default_factory=list)
 
 
@@ -424,15 +433,32 @@ class GateConfig(BaseModel):
     ``hard_gates`` are absolute per-metric floors (e.g. a minimum identity) that
     fail an image regardless of composite. A run passes when its group pass-rate
     reaches ``run_pass_rate``.
+
+    ``safety`` is in the default composite weights so an unsafe image is dragged
+    down once safety scoring lands (Phase 4); for a true veto, add ``safety`` to
+    ``hard_gates`` with your scorer's floor — the composite alone can let a
+    high-quality-but-unsafe image through.
     """
 
     weights: dict[str, float] = Field(
-        default_factory=lambda: {"identity": 1.0, "clip_score": 1.0, "aesthetic": 1.0, "preference": 1.0}
+        default_factory=lambda: {
+            "identity": 1.0,
+            "clip_score": 1.0,
+            "aesthetic": 1.0,
+            "preference": 1.0,
+            "safety": 1.0,
+        }
     )
     auto_pass: float = Field(default=0.7, ge=0.0, le=1.0)
     auto_fail: float = Field(default=0.4, ge=0.0, le=1.0)
     hard_gates: dict[str, float] = Field(default_factory=dict)
     run_pass_rate: float = Field(default=0.75, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _check_band(self) -> GateConfig:
+        if self.auto_fail > self.auto_pass:
+            raise ValueError(f"auto_fail ({self.auto_fail}) must be <= auto_pass ({self.auto_pass})")
+        return self
 
 
 class EvalReport(_Versioned):

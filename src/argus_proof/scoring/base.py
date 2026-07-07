@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from argus_core.taxonomy import TargetProfile
+from argus_cortex.taxonomy import TargetProfile
 
 from argus_proof.models import RejectReasonCode
 

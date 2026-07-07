@@ -39,13 +39,25 @@ logger = structlog.get_logger()
 
 def _score_images(images: list[GeneratedImage], scorers: Sequence[ImageScorer], ctx: ScoreContext) -> list[ImageScores]:
     live = [s for s in scorers if s.is_available()]
+    # Validate the scorers up front so a misconfigured metric fails fast with a
+    # clear message, not an opaque pydantic error partway through the run.
+    for scorer in live:
+        if scorer.metric not in METRIC_FIELDS:
+            raise ValueError(f"scorer metric {scorer.metric!r} is not one of {METRIC_FIELDS}")
     rows: list[ImageScores] = []
     for img in images:
         metrics = MetricScores()
+        image_path = Path(img.path)
         for scorer in live:
-            value = scorer.score(Path(img.path), ctx)
-            if value is not None:
-                setattr(metrics, scorer.metric, value)
+            value = scorer.score(image_path, ctx)
+            if value is None:
+                continue
+            # Enforce the [0,1] contract here: an un-normalised scorer (e.g. a raw
+            # pyiqa 1–10 or ImageReward score) would otherwise silently dominate
+            # the gate's weighted composite and auto-pass garbage.
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"scorer for {scorer.metric!r} returned {value}; scores must be normalised to [0, 1]")
+            setattr(metrics, scorer.metric, value)
         rows.append(ImageScores(image_id=img.image_id, seed=img.seed, metrics=metrics))
     return rows
 
@@ -142,19 +154,27 @@ def score_run(
     if diversity is not None and diversity.is_available():
         provenance.append(diversity.provenance())
 
+    # passed = the auto-passed groups ALONE clear the bar (a definitive pass that
+    # HITL can't undo). pending = it hasn't cleared yet, but if every un-reviewed
+    # group ends up passing it could — so it's "awaiting review", not "failed".
     passed = pass_rate >= config.run_pass_rate
+    best_case = (n_passed + n_needs_hitl) / n_groups if n_groups else 0.0
+    pending = not passed and n_needs_hitl > 0 and best_case >= config.run_pass_rate
+    status = "passed" if passed else ("pending review" if pending else "failed")
     reasons = [
-        f"pass_rate {pass_rate:.2f} {'>=' if passed else '<'} threshold {config.run_pass_rate:.2f} "
+        f"pass_rate {pass_rate:.2f} vs threshold {config.run_pass_rate:.2f} — {status} "
         f"({n_passed}/{n_groups} groups passed, {n_needs_hitl} need review)"
     ]
     if div is not None:
         reasons.append(f"diversity {div:.2f}")
 
-    logger.info("scoring.run", run_id=manifest.run_id, pass_rate=pass_rate, n_groups=n_groups, diversity=div)
+    logger.info(
+        "scoring.run", run_id=manifest.run_id, pass_rate=pass_rate, n_groups=n_groups, pending=pending, diversity=div
+    )
     return EvalReport(
         run_id=manifest.run_id,
         images=rows,
         aggregate=aggregate,
         scorers=provenance,
-        verdict=Verdict(passed=passed, reasons=reasons),
+        verdict=Verdict(passed=passed, pending=pending, reasons=reasons),
     )

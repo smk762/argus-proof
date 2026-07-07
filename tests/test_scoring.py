@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from argus_proof.models import (
     GateConfig,
     GeneratedImage,
@@ -202,6 +204,41 @@ def test_run_verdict_uses_pass_rate_threshold() -> None:
     # 3/4 groups pass = 0.75
     assert score_run(manifest(), images, scorers=[scorer], gate=GateConfig(run_pass_rate=0.75)).verdict.passed is True
     assert score_run(manifest(), images, scorers=[scorer], gate=GateConfig(run_pass_rate=0.8)).verdict.passed is False
+
+
+def test_pending_verdict_when_hitl_could_still_flip_it() -> None:
+    # 2 auto-pass + 2 HITL over 4 groups: 0.5 < 0.75 now, but reviewing the HITL
+    # groups could reach 1.0 -> pending, not a definitive fail.
+    images = [img(f"run-1-{i}", i) for i in range(1, 5)]
+    scorer = FakeScorer("aesthetic", {"run-1-1": 0.9, "run-1-2": 0.9, "run-1-3": 0.55, "run-1-4": 0.55})
+    verdict = score_run(manifest(), images, scorers=[scorer]).verdict
+    assert verdict.passed is False
+    assert verdict.pending is True
+    assert "pending review" in verdict.reasons[0]
+
+
+def test_definitive_fail_is_not_pending() -> None:
+    # Even if the lone HITL group passes, 1/4 < 0.75 -> not pending, just failed.
+    images = [img(f"run-1-{i}", i) for i in range(1, 5)]
+    scorer = FakeScorer("aesthetic", {"run-1-1": 0.55, "run-1-2": 0.1, "run-1-3": 0.1, "run-1-4": 0.1})
+    verdict = score_run(manifest(), images, scorers=[scorer]).verdict
+    assert verdict.passed is False
+    assert verdict.pending is False
+
+
+def test_unknown_metric_raises_clear_error() -> None:
+    with pytest.raises(ValueError, match="is not one of"):
+        score_run(manifest(), [img("run-1-1", 1)], scorers=[FakeScorer("sharpness", {"run-1-1": 0.9})])
+
+
+def test_out_of_range_score_raises() -> None:
+    with pytest.raises(ValueError, match=r"normalised to \[0, 1\]"):
+        score_run(manifest(), [img("run-1-1", 1)], scorers=[FakeScorer("aesthetic", {"run-1-1": 6.5})])
+
+
+def test_gateconfig_rejects_inverted_band() -> None:
+    with pytest.raises(ValueError, match="auto_fail"):
+        GateConfig(auto_fail=0.9, auto_pass=0.7)
 
 
 def test_report_round_trips_with_new_fields() -> None:
