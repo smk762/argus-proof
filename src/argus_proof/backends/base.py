@@ -9,6 +9,7 @@ diffusers / A1111 adapters, are swappable by config, not code.
 
 from __future__ import annotations
 
+import glob
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,7 +50,9 @@ def make_dir_resolver(root: Path) -> ModelResolver:
         direct = root / name
         if direct.is_file():
             return direct
-        basename = Path(name).name
+        # glob.escape so metacharacters in a real filename (e.g. "subject[v2].safetensors")
+        # are matched literally instead of parsed as a glob pattern (which matches nothing).
+        basename = glob.escape(Path(name).name)
         for candidate in sorted(root.rglob(basename)):
             if candidate.is_file():
                 return candidate

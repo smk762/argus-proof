@@ -80,7 +80,12 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
     """
     scalars = _scalar_values(spec, seed)
     lora_by_index = {i: lora for i, lora in enumerate(spec.loras, start=1)}
-    seen_lora_indices: set[int] = set()
+    seen_scalars: set[str] = set()
+    # Track name and weight placeholders per LoRA index SEPARATELY: a template
+    # that injects $lora but hard-codes the strength (no $lora_weight) would
+    # otherwise silently drop the spec's weight while the manifest records it.
+    seen_lora_names: set[int] = set()
+    seen_lora_weights: set[int] = set()
 
     def resolve(value: object) -> object:
         if not isinstance(value, str) or not value.startswith("$"):
@@ -90,6 +95,7 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
             resolved = scalars[value]
             if resolved is None:
                 raise BackendError(f"workflow template uses {value} but the run spec has no value for it")
+            seen_scalars.add(value)
             return resolved
 
         m = _LORA_RE.match(value)
@@ -102,7 +108,7 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
                     f"workflow template references {value} but the run spec has no LoRA #{index} "
                     f"({len(spec.loras)} LoRA(s) supplied)"
                 )
-            seen_lora_indices.add(index)
+            (seen_lora_weights if is_weight else seen_lora_names).add(index)
             return lora.weight if is_weight else lora.name
 
         # An unknown "$..." string: leave it untouched (it may be a literal).
@@ -115,10 +121,24 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
             for key, val in inputs.items():
                 inputs[key] = resolve(val)
 
-    missing = set(lora_by_index) - seen_lora_indices
+    def _slot(index: int, weight: bool) -> str:
+        suffix = "_weight" if weight else ""
+        return f"$lora{suffix}" if index == 1 else f"$lora_{index}{suffix}"
+
+    missing = [_slot(i, False) for i in lora_by_index if i not in seen_lora_names]
+    missing += [_slot(i, True) for i in lora_by_index if i not in seen_lora_weights]
     if missing:
         raise BackendError(
-            f"workflow template has no slot for LoRA(s) {sorted(missing)} — "
-            f"the spec supplies {len(spec.loras)} LoRA(s); add $lora_N placeholders or trim the spec"
+            f"workflow template is missing LoRA placeholder(s) {sorted(missing)} — "
+            f"the spec supplies {len(spec.loras)} LoRA(s); every LoRA needs both its name and weight slot "
+            "so a LoRA (or its weight) can't be silently dropped"
+        )
+
+    # A configured VAE that the template never consumes would be silently ignored
+    # yet still recorded in the manifest — refuse it rather than misrepresent the run.
+    if spec.vae is not None and "$vae" not in seen_scalars:
+        raise BackendError(
+            "run spec sets a vae but the workflow template has no $vae slot — it would be ignored at "
+            "generation yet recorded in the manifest; add a $vae slot or clear spec.vae"
         )
     return rendered

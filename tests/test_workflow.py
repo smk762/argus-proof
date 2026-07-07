@@ -62,7 +62,7 @@ def test_does_not_mutate_the_template() -> None:
 
 def test_more_loras_than_template_slots_raises() -> None:
     spec = make_spec(loras=[LoRASpec(name="a.safetensors"), LoRASpec(name="b.safetensors")])
-    with pytest.raises(BackendError, match="no slot for LoRA"):
+    with pytest.raises(BackendError, match="missing LoRA placeholder"):
         render_workflow(example_template(), spec, seed=1)
 
 
@@ -76,3 +76,25 @@ def test_used_placeholder_without_value_raises() -> None:
     template = {"1": {"class_type": "VAELoader", "inputs": {"vae_name": "$vae"}}}
     with pytest.raises(BackendError, match=r"\$vae"):
         render_workflow(template, make_spec(vae=None), seed=1)
+
+
+def test_lora_name_slot_without_weight_slot_raises() -> None:
+    # $lora present but the strength is hard-coded (no $lora_weight): the spec's
+    # weight would be silently dropped while the manifest records it.
+    template = {
+        "10": {"class_type": "LoraLoader", "inputs": {"lora_name": "$lora", "strength_model": 1.0, "clip": ["4", 1]}}
+    }
+    with pytest.raises(BackendError, match=r"missing LoRA placeholder"):
+        render_workflow(template, make_spec(), seed=1)
+
+
+def test_lora_weight_slot_without_name_slot_raises() -> None:
+    template = {"10": {"class_type": "LoraLoader", "inputs": {"lora_name": "fixed.safetensors", "w": "$lora_weight"}}}
+    with pytest.raises(BackendError, match=r"missing LoRA placeholder"):
+        render_workflow(template, make_spec(), seed=1)
+
+
+def test_vae_set_but_template_has_no_vae_slot_raises() -> None:
+    # spec.vae would be ignored at generation yet recorded in the manifest.
+    with pytest.raises(BackendError, match="no .vae slot"):
+        render_workflow(example_template(), make_spec(vae="sdxl_vae.safetensors"), seed=1)

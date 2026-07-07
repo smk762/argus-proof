@@ -215,12 +215,37 @@ def test_run_that_never_finishes_times_out(models: Path, tmp_path: Path) -> None
         backend.generate(make_spec([1]), tmp_path / "run")
 
 
-def test_missing_model_file_raises(tmp_path: Path) -> None:
+def test_missing_model_fails_fast_before_generating_with_error_event(tmp_path: Path) -> None:
+    transport = FakeTransport(make_png())
     backend = ComfyUIBackend(
         workflow_template=example_template(),
-        resolve_model=make_dir_resolver(tmp_path),  # empty dir
-        transport=FakeTransport(make_png()),
+        resolve_model=make_dir_resolver(tmp_path),  # empty dir -> can't resolve/hash
+        transport=transport,
         poll_interval=0,
     )
+    events: list[ProgressEvent] = []
     with pytest.raises(BackendError, match="cannot hash"):
+        backend.generate(make_spec([1, 2]), tmp_path / "run", events.append)
+    # Fails during the upfront manifest build: no /prompt submitted, error event emitted.
+    assert transport.posts == []
+    assert events[-1].type == "error"
+
+
+def test_completed_run_with_no_outputs_is_a_no_images_error_not_a_timeout(models: Path, tmp_path: Path) -> None:
+    class NoOutputs(FakeTransport):
+        def get_json(self, path: str) -> dict:
+            if path.startswith("/history/"):
+                pid = path.rsplit("/", 1)[1]
+                return {pid: {"status": {"status_str": "success", "completed": True}, "outputs": {}}}
+            return super().get_json(path)
+
+    backend = build_backend(models, NoOutputs(make_png()))
+    with pytest.raises(BackendError, match="produced no images"):
         backend.generate(make_spec([1]), tmp_path / "run")
+
+
+def test_resolver_matches_filenames_with_glob_metacharacters(tmp_path: Path) -> None:
+    (tmp_path / "loras").mkdir()
+    weird = tmp_path / "loras" / "subject[v2].safetensors"
+    weird.write_bytes(b"x")
+    assert make_dir_resolver(tmp_path)("subject[v2].safetensors") == weird

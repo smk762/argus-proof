@@ -139,6 +139,10 @@ class ComfyUIBackend:
 
         images: list[GeneratedImage] = []
         try:
+            # Build the manifest FIRST: this resolves + hashes every model, so a
+            # missing/unresolvable checkpoint fails fast (before any GPU spend)
+            # and inside the error-event path, instead of after the whole grid ran.
+            manifest = self._build_manifest(spec)
             for done, seed in enumerate(spec.seeds, start=1):
                 images.extend(self._generate_seed(spec, seed, out_dir, emit))
                 emit(ProgressEvent(run_id=spec.run_id, type="progress", completed=done, total=total))
@@ -146,7 +150,6 @@ class ComfyUIBackend:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
 
-        manifest = self._build_manifest(spec)
         (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
@@ -180,7 +183,10 @@ class ComfyUIBackend:
                 status = entry.get("status", {})
                 if status.get("status_str") == "error":
                     raise BackendError(f"ComfyUI run failed for seed {seed}: {status}")
-                if entry.get("outputs"):
+                # Return on completion, not merely on outputs being present — a run
+                # that finished with no SaveImage output is a "no images" error, not
+                # a timeout. Fall back to outputs for engines without a status flag.
+                if status.get("completed") is True or status.get("status_str") == "success" or entry.get("outputs"):
                     return entry
             if time.monotonic() >= deadline:
                 raise BackendError(f"ComfyUI run for seed {seed} did not finish within {self.timeout}s")
