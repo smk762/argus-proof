@@ -171,6 +171,213 @@
       "title": "GeneratedImage",
       "type": "object"
     },
+    "GridConfig": {
+      "description": "The axes that expand a source export into a grid of :class:`RunSpec`s.\n\nBase prompts come from the export's captions (the zeroshot caption variant,\nfalling back to the training ``.txt`` sidecar). Those are multiplied across\nthe axes below into a deterministic, reproducible set of runs; a control\n``seeds`` set is shared by every run so seed luck can't skew a comparison.\n\n* ``lora_checkpoints`` \u2014 the LoRA(s) to sweep; supply saved epoch checkpoints\n  here to find the under/overtrained sweet spot (cheap, no retrain).\n* ``lora_weights`` \u2014 the weight sweep (e.g. 0.6\u20131.0); optimal weight varies\n  per checkpoint and interacts with overtraining.\n* ``token_axes`` \u2014 variable tokens (setting/wardrobe/pose \u2026) combined into\n  Monte-Carlo combos appended to each base prompt, capped by\n  ``max_token_combos`` and sampled deterministically from ``combo_seed`` so\n  token effects stay attributable.\n* ``flexibility_prompts`` \u2014 off-distribution prompts that require a novel\n  attribute, to catch an overfit LoRA that only reproduces its training set.",
+      "properties": {
+        "base_checkpoint": {
+          "title": "Base Checkpoint",
+          "type": "string"
+        },
+        "combo_seed": {
+          "default": 0,
+          "title": "Combo Seed",
+          "type": "integer"
+        },
+        "flexibility_prompts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flexibility Prompts",
+          "type": "array"
+        },
+        "lora_checkpoints": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Lora Checkpoints",
+          "type": "array"
+        },
+        "lora_weights": {
+          "items": {
+            "type": "number"
+          },
+          "minItems": 1,
+          "title": "Lora Weights",
+          "type": "array"
+        },
+        "max_base_prompts": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Base Prompts"
+        },
+        "max_token_combos": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Token Combos"
+        },
+        "negative_prompt": {
+          "default": "",
+          "title": "Negative Prompt",
+          "type": "string"
+        },
+        "run_id_prefix": {
+          "default": "proof",
+          "title": "Run Id Prefix",
+          "type": "string"
+        },
+        "sampling": {
+          "$ref": "#/$defs/SamplingParams"
+        },
+        "seconds_per_image": {
+          "default": 6.0,
+          "title": "Seconds Per Image",
+          "type": "number"
+        },
+        "seeds": {
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Seeds",
+          "type": "array"
+        },
+        "source_manifest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Manifest"
+        },
+        "source_manifest_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Manifest Version"
+        },
+        "token_axes": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Token Axes",
+          "type": "object"
+        },
+        "training_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Training Run Id"
+        }
+      },
+      "required": [
+        "base_checkpoint",
+        "lora_checkpoints",
+        "sampling",
+        "seeds"
+      ],
+      "title": "GridConfig",
+      "type": "object"
+    },
+    "GridEstimate": {
+      "description": "The up-front count + GPU-hour estimate reported before any generation.\n\n``axes`` breaks the grid down (how many checkpoints \u00d7 weights \u00d7 prompts \u00d7\nseeds) so a caller sees why the count is what it is before committing GPU.",
+      "properties": {
+        "axes": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Axes",
+          "type": "object"
+        },
+        "est_gpu_hours": {
+          "title": "Est Gpu Hours",
+          "type": "number"
+        },
+        "est_gpu_seconds": {
+          "title": "Est Gpu Seconds",
+          "type": "number"
+        },
+        "n_images": {
+          "title": "N Images",
+          "type": "integer"
+        },
+        "n_runs": {
+          "title": "N Runs",
+          "type": "integer"
+        },
+        "seconds_per_image": {
+          "title": "Seconds Per Image",
+          "type": "number"
+        }
+      },
+      "required": [
+        "n_runs",
+        "n_images",
+        "seconds_per_image",
+        "est_gpu_seconds",
+        "est_gpu_hours"
+      ],
+      "title": "GridEstimate",
+      "type": "object"
+    },
+    "GridPlan": {
+      "description": "A fully enumerated grid: the runs to generate plus their cost estimate.",
+      "properties": {
+        "estimate": {
+          "$ref": "#/$defs/GridEstimate"
+        },
+        "run_id_prefix": {
+          "title": "Run Id Prefix",
+          "type": "string"
+        },
+        "specs": {
+          "items": {
+            "$ref": "#/$defs/RunSpec"
+          },
+          "title": "Specs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "run_id_prefix",
+        "estimate"
+      ],
+      "title": "GridPlan",
+      "type": "object"
+    },
     "ImageScores": {
       "description": "Per-image scores for one generated sample, keyed by ``(run_id, seed)``.\n\n``image_id`` is an opaque handle for the report to reference; the durable,\nreproducible key is ``seed`` (with the run's :class:`RunManifest`).\n``hitl_rating`` is a 1\u20135 star human rating when review has happened.",
       "properties": {
