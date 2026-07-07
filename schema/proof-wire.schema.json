@@ -1,0 +1,597 @@
+{
+  "$defs": {
+    "AggregateScores": {
+      "description": "Run-level roll-up: counts, pass rate, and the mean of each metric axis.",
+      "properties": {
+        "means": {
+          "$ref": "#/$defs/MetricScores"
+        },
+        "n_images": {
+          "minimum": 0,
+          "title": "N Images",
+          "type": "integer"
+        },
+        "n_passed": {
+          "minimum": 0,
+          "title": "N Passed",
+          "type": "integer"
+        },
+        "pass_rate": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Pass Rate",
+          "type": "number"
+        }
+      },
+      "required": [
+        "n_images",
+        "n_passed",
+        "pass_rate"
+      ],
+      "title": "AggregateScores",
+      "type": "object"
+    },
+    "EvalReport": {
+      "description": "Scored evaluation of a generation run: per-image + aggregate + verdict.\n\nLinks to its :class:`RunManifest` by ``run_id`` rather than embedding it, so\nthe run dir stays the single source of truth for generation params.",
+      "properties": {
+        "aggregate": {
+          "$ref": "#/$defs/AggregateScores"
+        },
+        "created_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created At"
+        },
+        "images": {
+          "items": {
+            "$ref": "#/$defs/ImageScores"
+          },
+          "title": "Images",
+          "type": "array"
+        },
+        "proof_version": {
+          "default": "1.0",
+          "title": "Proof Version",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "scorers": {
+          "items": {
+            "$ref": "#/$defs/ScorerProvenance"
+          },
+          "title": "Scorers",
+          "type": "array"
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "run_id",
+        "aggregate",
+        "verdict"
+      ],
+      "title": "EvalReport",
+      "type": "object"
+    },
+    "ImageScores": {
+      "description": "Per-image scores for one generated sample, keyed by ``(run_id, seed)``.\n\n``image_id`` is an opaque handle for the report to reference; the durable,\nreproducible key is ``seed`` (with the run's :class:`RunManifest`).\n``hitl_rating`` is a 1\u20135 star human rating when review has happened.",
+      "properties": {
+        "hitl_rating": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hitl Rating"
+        },
+        "image_id": {
+          "title": "Image Id",
+          "type": "string"
+        },
+        "metrics": {
+          "$ref": "#/$defs/MetricScores"
+        },
+        "passed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Passed"
+        },
+        "reject_reasons": {
+          "items": {
+            "$ref": "#/$defs/RejectReason"
+          },
+          "title": "Reject Reasons",
+          "type": "array"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "image_id",
+        "seed"
+      ],
+      "title": "ImageScores",
+      "type": "object"
+    },
+    "LoRARef": {
+      "description": "A LoRA applied during generation: a :class:`ModelRef` plus its weight.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "lowercase hex SHA256 digest",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "weight": {
+          "default": 1.0,
+          "title": "Weight",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "sha256"
+      ],
+      "title": "LoRARef",
+      "type": "object"
+    },
+    "MetricScores": {
+      "description": "The scoring axes for one image (or their means, in the aggregate).\n\nEvery field is optional so an axis whose scorer did not run stays ``None``\ninstead of a misleading ``0.0``. Semantics: ``identity`` similarity to the\nreference (higher = closer), ``clip_score`` prompt adherence, ``aesthetic``\nan IQA/aesthetic score, ``preference`` an ImageReward/HPS-style score, and\n``safety`` a safety score.",
+      "properties": {
+        "aesthetic": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Aesthetic"
+        },
+        "clip_score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clip Score"
+        },
+        "identity": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Identity"
+        },
+        "preference": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Preference"
+        },
+        "safety": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Safety"
+        }
+      },
+      "title": "MetricScores",
+      "type": "object"
+    },
+    "ModelRef": {
+      "description": "A model file pinned by content: how the engine names it + its SHA256.\n\n``name`` is what the generation engine loads (e.g. a ComfyUI checkpoint\nfilename); ``sha256`` is the real identity, so a manifest can't drift if the\nfile behind the name changes.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "lowercase hex SHA256 digest",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "sha256"
+      ],
+      "title": "ModelRef",
+      "type": "object"
+    },
+    "RejectArchive": {
+      "description": "Metadata-only archive of rejected/flagged outputs \u2014 zero image references.\n\n``manifests`` (keyed by ``run_id``) carries the full generation params for\nevery run a record came from, so the archive is self-describing: you can see\nexactly what produced a bad output without keeping the output itself. Both\n:class:`RunManifest` and :class:`RejectRecord` are image-free by\nconstruction, so the archive retains no image or thumbnail paths.",
+      "properties": {
+        "manifests": {
+          "additionalProperties": {
+            "$ref": "#/$defs/RunManifest"
+          },
+          "title": "Manifests",
+          "type": "object"
+        },
+        "proof_version": {
+          "default": "1.0",
+          "title": "Proof Version",
+          "type": "string"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/$defs/RejectRecord"
+          },
+          "title": "Records",
+          "type": "array"
+        }
+      },
+      "title": "RejectArchive",
+      "type": "object"
+    },
+    "RejectReason": {
+      "description": "One structured reason an image was rejected or flagged.",
+      "properties": {
+        "code": {
+          "enum": [
+            "identity_mismatch",
+            "prompt_mismatch",
+            "low_quality",
+            "anatomy",
+            "artifact",
+            "duplicate",
+            "overfit",
+            "unsafe",
+            "other"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "RejectReason",
+      "type": "object"
+    },
+    "RejectRecord": {
+      "description": "One rejected/flagged output, described without retaining its image.\n\nKeyed by ``(run_id, seed)``: the seed plus the run's :class:`RunManifest`\nreconstructs the exact image on demand, so nothing about the pixels needs to\nbe stored. There is deliberately no path, thumbnail, or image field here \u2014\nthat is the whole point of the archive.",
+      "properties": {
+        "hitl_rating": {
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hitl Rating"
+        },
+        "metrics": {
+          "$ref": "#/$defs/MetricScores"
+        },
+        "reasons": {
+          "items": {
+            "$ref": "#/$defs/RejectReason"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run_id",
+        "seed"
+      ],
+      "title": "RejectRecord",
+      "type": "object"
+    },
+    "RunManifest": {
+      "description": "A fully reproducible generation run: everything needed to recreate it.\n\n``seeds`` is the seed strategy made concrete \u2014 a single fixed seed for a\nwithin-checkpoint sweep is a one-element list; a fixed seed-set (so seed luck\naverages out across a cross-checkpoint comparison) is an N-element list.\nEach generated image is identified by ``(run_id, seed)``.\n\n``source_manifest`` links back to the curator export ``manifest.jsonl`` the\nLoRA was trained from, and ``training_run_id`` (optional) is the forge\n``training_run_id`` / ``RunEvent.run_id`` join key when the LoRA came through\nthe suite rather than being supplied ad hoc.",
+      "properties": {
+        "base_checkpoint": {
+          "$ref": "#/$defs/ModelRef"
+        },
+        "created_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created At"
+        },
+        "engine": {
+          "title": "Engine",
+          "type": "string"
+        },
+        "engine_version": {
+          "title": "Engine Version",
+          "type": "string"
+        },
+        "loras": {
+          "items": {
+            "$ref": "#/$defs/LoRARef"
+          },
+          "title": "Loras",
+          "type": "array"
+        },
+        "negative_prompt": {
+          "default": "",
+          "title": "Negative Prompt",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "proof_version": {
+          "default": "1.0",
+          "title": "Proof Version",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sampling": {
+          "$ref": "#/$defs/SamplingParams"
+        },
+        "seeds": {
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Seeds",
+          "type": "array"
+        },
+        "source_manifest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Manifest"
+        },
+        "source_manifest_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Manifest Version"
+        },
+        "training_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Training Run Id"
+        },
+        "vae": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "run_id",
+        "base_checkpoint",
+        "sampling",
+        "prompt",
+        "seeds",
+        "engine",
+        "engine_version"
+      ],
+      "title": "RunManifest",
+      "type": "object"
+    },
+    "SamplingParams": {
+      "description": "The sampler knobs that, with the seed-set, make a run reproducible.",
+      "properties": {
+        "cfg": {
+          "title": "Cfg",
+          "type": "number"
+        },
+        "clip_skip": {
+          "default": 1,
+          "title": "Clip Skip",
+          "type": "integer"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "sampler": {
+          "title": "Sampler",
+          "type": "string"
+        },
+        "scheduler": {
+          "title": "Scheduler",
+          "type": "string"
+        },
+        "steps": {
+          "exclusiveMinimum": 0,
+          "title": "Steps",
+          "type": "integer"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sampler",
+        "scheduler",
+        "steps",
+        "cfg",
+        "width",
+        "height"
+      ],
+      "title": "SamplingParams",
+      "type": "object"
+    },
+    "ScorerProvenance": {
+      "description": "Where a score came from: the scorer, its version, and the model it used.\n\nRecorded for every scorer that contributed to an :class:`EvalReport` so a\nresult is auditable and reproducible \u2014 a score is only as trustworthy as the\nmodel and version that produced it.",
+      "properties": {
+        "metric": {
+          "title": "Metric",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "name",
+        "metric"
+      ],
+      "title": "ScorerProvenance",
+      "type": "object"
+    },
+    "Verdict": {
+      "description": "The pass/fail decision for a run, with the reasons behind it.",
+      "properties": {
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        }
+      },
+      "required": [
+        "passed"
+      ],
+      "title": "Verdict",
+      "type": "object"
+    }
+  },
+  "title": "argus-proof wire contract"
+}

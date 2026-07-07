@@ -73,6 +73,34 @@ def report(
     _stub("report", "https://github.com/smk762/argus-studio/issues/19")
 
 
+DEFAULT_SCHEMA_PATH = Path("schema/proof-wire.schema.json")
+
+
+@app.command()
+def schema(
+    output: Path = Option(DEFAULT_SCHEMA_PATH, "--output", "-o", help="Where to write the JSON Schema"),
+    check: bool = Option(False, "--check", help="Exit non-zero if the committed schema is stale (for CI)"),
+) -> None:
+    """Emit the wire-contract JSON Schema consumers codegen against."""
+    import json
+
+    from argus_proof.models import wire_schema
+
+    rendered = json.dumps(wire_schema(), indent=2, sort_keys=True) + "\n"
+
+    if check:
+        existing = output.read_text(encoding="utf-8") if output.exists() else ""
+        if existing != rendered:
+            typer.echo(f"{output} is stale — run `argus-proof schema` and commit the result.", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"{output} is up to date.")
+        return
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(rendered, encoding="utf-8")
+    typer.echo(f"Wrote wire schema -> {output}")
+
+
 @app.command()
 def serve(
     port: int = Option(8104, "--port", "-p", help="Port to listen on"),

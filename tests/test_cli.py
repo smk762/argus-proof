@@ -11,7 +11,7 @@ runner = CliRunner()
 def test_help_lists_verbs() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for verb in ("inspect", "run", "score", "report", "serve"):
+    for verb in ("inspect", "run", "score", "report", "schema", "serve"):
         assert verb in result.output
 
 
