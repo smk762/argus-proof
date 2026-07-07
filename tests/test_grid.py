@@ -78,6 +78,33 @@ def test_prompts_deduplicated_in_order(tmp_path: Path) -> None:
     assert read_export_prompts(tmp_path) == ["same", "other"]
 
 
+def test_non_utf8_txt_sidecar_is_skipped_not_crashed(tmp_path: Path) -> None:
+    (tmp_path / "good.txt").write_text("a photo of sks", encoding="utf-8")
+    (tmp_path / "latin1.txt").write_bytes(b"a photo of caf\xe9")  # invalid UTF-8
+    assert read_export_prompts(tmp_path) == ["a photo of sks"]
+
+
+def test_non_utf8_json_is_skipped_not_crashed(tmp_path: Path) -> None:
+    (tmp_path / "bad.json").write_bytes(b"\xff\xfe not utf-8")
+    (tmp_path / "a.txt").write_text("txt caption", encoding="utf-8")
+    assert read_export_prompts(tmp_path) == ["txt caption"]
+
+
+def test_malformed_jsonl_line_skips_line_not_whole_file(tmp_path: Path) -> None:
+    lines = [
+        json.dumps({"name": "a.png", "caption_variants": {"zeroshot": "prompt a"}}),
+        "{ this is not valid json",
+        json.dumps({"name": "b.png", "caption_variants": {"zeroshot": "prompt b"}}),
+    ]
+    (tmp_path / "captions.jsonl").write_text("\n".join(lines), encoding="utf-8")
+    assert read_export_prompts(tmp_path) == ["prompt a", "prompt b"]
+
+
+def test_negative_max_token_combos_rejected() -> None:
+    with pytest.raises(ValueError):
+        make_config(max_token_combos=-1)
+
+
 # --------------------------------------------------------------------------
 # grid expansion
 # --------------------------------------------------------------------------

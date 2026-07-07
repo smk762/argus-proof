@@ -209,6 +209,7 @@
         "max_base_prompts": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {
@@ -221,6 +222,7 @@
         "max_token_combos": {
           "anyOf": [
             {
+              "minimum": 1,
               "type": "integer"
             },
             {

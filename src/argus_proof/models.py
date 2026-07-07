@@ -283,8 +283,8 @@ class GridConfig(BaseModel):
     negative_prompt: str = ""
     seeds: list[int] = Field(min_length=1)
     token_axes: dict[str, list[str]] = Field(default_factory=dict)
-    max_token_combos: int | None = None
-    max_base_prompts: int | None = None
+    max_token_combos: int | None = Field(default=None, ge=1)
+    max_base_prompts: int | None = Field(default=None, ge=1)
     flexibility_prompts: list[str] = Field(default_factory=list)
     combo_seed: int = 0
     seconds_per_image: float = 6.0  # rough SDXL @ ~30 steps; basis for the GPU-hour estimate

@@ -85,8 +85,8 @@ def _load_lens_entries(path: Path) -> list[dict]:
     """
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
-        return []
+    except (OSError, UnicodeDecodeError):
+        return []  # unreadable or non-UTF-8 file in the export -> skip, don't crash
     entries: list[dict] = []
     if path.suffix == ".jsonl":
         for line in text.splitlines():
@@ -96,7 +96,7 @@ def _load_lens_entries(path: Path) -> list[dict]:
             try:
                 obj = json.loads(line)
             except ValueError:
-                return []
+                continue  # skip a malformed line, keep the rest of the file's captions
             if isinstance(obj, dict):
                 entries.append(obj)
     else:
@@ -131,8 +131,8 @@ def _prompts_from_txt_sidecars(export_dir: Path) -> list[str]:
             continue
         try:
             text = path.read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
+        except (OSError, UnicodeDecodeError):
+            continue  # skip an unreadable or non-UTF-8 sidecar rather than crash
         if text:
             prompts.append(text)
     return _dedup(prompts)
