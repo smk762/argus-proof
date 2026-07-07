@@ -20,6 +20,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    # Shared suite foundation (taxonomy, wire-schema tooling, AI-backend contract).
+    # Git dep until argus-core is published to PyPI; pin to a version then.
+    "argus-core @ git+https://github.com/smk762/argus-core@main",
     "pydantic>=2.7",
     "structlog>=24.0",
 ]

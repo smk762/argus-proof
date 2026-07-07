@@ -27,7 +27,9 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from argus_core.wire import check_version, make_versioned_base, schema_major
+from argus_core.wire import wire_schema as _core_wire_schema
+from pydantic import BaseModel, Field
 
 # Version of the proof wire contract (RunManifest / EvalReport / RejectArchive).
 # Bump the minor for backward-compatible additions (a new optional field, a new
@@ -42,30 +44,22 @@ PROOF_VERSION = "1.0"
 # front rather than deserialize it into the wrong shape.
 SUPPORTED_PROOF_MAJORS: tuple[str, ...] = ("1",)
 
-
-def proof_major(version: str) -> str:
-    """The major component of a ``proof_version`` string (``'1.4' -> '1'``)."""
-    return version.split(".", 1)[0]
+# Title of the emitted JSON Schema (schema/proof-wire.schema.json).
+WIRE_TITLE = "argus-proof wire contract"
 
 
 class ProofError(RuntimeError):
     """A user-facing failure: incompatible schema, bad input, malformed run."""
 
 
-def check_proof_version(version: str) -> None:
-    """Raise :class:`ProofError` if *version*'s major is not supported.
+# The version machinery is shared suite-wide via argus-core; proof supplies its
+# own field name, version, and error type so a version mismatch is a ProofError.
+proof_major = schema_major
 
-    The single gate every deserialization path runs through, so an incompatible
-    manifest/report is refused with a clear message instead of being silently
-    misread. Called from the :class:`_Versioned` validator, so it fires on both
-    direct construction and ``model_validate``.
-    """
-    if proof_major(version) not in SUPPORTED_PROOF_MAJORS:
-        understood = ", ".join(f"{m}.x" for m in SUPPORTED_PROOF_MAJORS)
-        raise ProofError(
-            f"proof_version {version} is not supported (this build understands {understood}) "
-            "— upgrade argus-proof or regenerate the run"
-        )
+
+def check_proof_version(version: str) -> None:
+    """Raise :class:`ProofError` if *version*'s major is not supported."""
+    check_version(version, SUPPORTED_PROOF_MAJORS, label="proof_version", error=ProofError)
 
 
 # A lowercase hex SHA256 digest. Carried on every model file so a RunManifest
@@ -73,20 +67,11 @@ def check_proof_version(version: str) -> None:
 # swapped underneath it. The pattern surfaces in the emitted JSON schema.
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", description="lowercase hex SHA256 digest")]
 
-
-class _Versioned(BaseModel):
-    """Base for the three top-level wire models: stamps and checks the version.
-
-    ``proof_version`` defaults to the running build's :data:`PROOF_VERSION`; the
-    validator refuses an incompatible major however the object is built.
-    """
-
-    proof_version: str = PROOF_VERSION
-
-    @model_validator(mode="after")
-    def _check_version(self) -> _Versioned:
-        check_proof_version(self.proof_version)
-        return self
+# Base for the three top-level wire models: stamps ``proof_version`` and refuses
+# an incompatible major (as a ProofError) on construction and model_validate.
+_Versioned = make_versioned_base(
+    "proof_version", PROOF_VERSION, SUPPORTED_PROOF_MAJORS, label="proof_version", error=ProofError
+)
 
 
 # ---------------------------------------------------------------------------
@@ -491,11 +476,4 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
 
 def wire_schema() -> dict:
     """Combined JSON Schema for proof's wire contract (all WIRE_MODELS)."""
-    from pydantic.json_schema import models_json_schema
-
-    _, schema = models_json_schema(
-        [(m, "serialization") for m in WIRE_MODELS],
-        title="argus-proof wire contract",
-        ref_template="#/$defs/{model}",
-    )
-    return schema
+    return _core_wire_schema(WIRE_MODELS, title=WIRE_TITLE)
