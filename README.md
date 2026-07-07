@@ -66,6 +66,29 @@ checkpoint/LoRA by **SHA256** so the run reconstructs exactly. See
 [`templates/comfyui_sdxl_lora.json`](src/argus_proof/templates/comfyui_sdxl_lora.json)
 for the shipped example.
 
+## Scoring (Phase 2)
+
+Generated images are scored into an `EvalReport` by a pluggable framework
+(`argus_proof.scoring`). Per-image `ImageScorer`s each fill one normalised
+`[0,1]` metric (identity / clip_score / aesthetic / preference / safety); a
+`Deduper` collapses Monte-Carlo near-duplicates so a cluster counts **once**
+toward the pass rate; a `DiversityScorer` rewards variety. A `GateConfig` routes
+each image to **auto-pass / auto-fail / needs-HITL** on a weighted composite,
+so humans only rate the borderline band:
+
+```python
+from argus_proof.scoring import score_run, ScoreContext
+report = score_run(manifest, images, scorers=[...], deduper=..., diversity=...)
+report.aggregate.pass_rate   # computed over near-dup groups, not raw frames
+report.verdict.passed        # run pass/fail vs GateConfig.run_pass_rate
+```
+
+Concrete scorers (InsightFace identity, torchmetrics CLIPScore, pyiqa,
+DreamSim/LPIPS, ImageReward/HPSv2, phash dedup) are heavy and land behind the
+`[score]` extra, implementing these protocols; remote/hosted variants build on
+`argus_core.backends.RemoteBackend` (point at a service by IP/port). The spine
+itself is dependency-free and fully tested with fakes.
+
 ## Develop
 
 ```bash

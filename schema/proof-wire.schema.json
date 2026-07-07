@@ -1,14 +1,45 @@
 {
   "$defs": {
     "AggregateScores": {
-      "description": "Run-level roll-up: counts, pass rate, and the mean of each metric axis.",
+      "description": "Run-level roll-up: counts, pass rate, mean of each metric axis, diversity.\n\n``pass_rate`` is computed over near-duplicate *groups*, not raw frames, so a\ncluster of Monte-Carlo near-dups counts once: ``n_passed / n_groups``.\n``n_groups`` equals ``n_images`` when no deduper ran.",
       "properties": {
+        "diversity": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Diversity"
+        },
         "means": {
           "$ref": "#/$defs/MetricScores"
+        },
+        "n_groups": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "N Groups"
         },
         "n_images": {
           "minimum": 0,
           "title": "N Images",
+          "type": "integer"
+        },
+        "n_needs_hitl": {
+          "default": 0,
+          "minimum": 0,
+          "title": "N Needs Hitl",
           "type": "integer"
         },
         "n_passed": {
@@ -123,6 +154,48 @@
         "verdict"
       ],
       "title": "EvalReport",
+      "type": "object"
+    },
+    "GateConfig": {
+      "description": "Thresholds that route each image to auto-pass / auto-fail / needs-HITL.\n\nAn automated pre-pass so humans only rate the borderline band (HITL doesn't\nscale to every image). Scorers return a normalised score in ``[0, 1]``\n(higher = better); the gate takes a ``weights``-weighted mean of the metrics\npresent (curator's weighted ``score_breakdown`` pattern) into a composite:\n``composite >= auto_pass`` \u2192 pass, ``<= auto_fail`` \u2192 fail, between \u2192 HITL.\n``hard_gates`` are absolute per-metric floors (e.g. a minimum identity) that\nfail an image regardless of composite. A run passes when its group pass-rate\nreaches ``run_pass_rate``.",
+      "properties": {
+        "auto_fail": {
+          "default": 0.4,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Auto Fail",
+          "type": "number"
+        },
+        "auto_pass": {
+          "default": 0.7,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Auto Pass",
+          "type": "number"
+        },
+        "hard_gates": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Hard Gates",
+          "type": "object"
+        },
+        "run_pass_rate": {
+          "default": 0.75,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Run Pass Rate",
+          "type": "number"
+        },
+        "weights": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Weights",
+          "type": "object"
+        }
+      },
+      "title": "GateConfig",
       "type": "object"
     },
     "GeneratedImage": {
@@ -383,6 +456,18 @@
     "ImageScores": {
       "description": "Per-image scores for one generated sample, keyed by ``(run_id, seed)``.\n\n``image_id`` is an opaque handle for the report to reference; the durable,\nreproducible key is ``seed`` (with the run's :class:`RunManifest`).\n``hitl_rating`` is a 1\u20135 star human rating when review has happened.",
       "properties": {
+        "duplicate_group": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duplicate Group"
+        },
         "hitl_rating": {
           "anyOf": [
             {

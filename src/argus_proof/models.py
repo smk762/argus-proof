@@ -365,16 +365,31 @@ class ImageScores(BaseModel):
     metrics: MetricScores = Field(default_factory=MetricScores)
     hitl_rating: int | None = Field(default=None, ge=1, le=5)
     reject_reasons: list[RejectReason] = Field(default_factory=list)
+    # None = undecided (routed to HITL by the gate); True/False = auto pass/fail.
     passed: bool | None = None
+    # Near-duplicate group id; images sharing an id collapse to one unit for the
+    # pass-rate math. None when no deduper ran (each image is its own group).
+    duplicate_group: int | None = None
 
 
 class AggregateScores(BaseModel):
-    """Run-level roll-up: counts, pass rate, and the mean of each metric axis."""
+    """Run-level roll-up: counts, pass rate, mean of each metric axis, diversity.
+
+    ``pass_rate`` is computed over near-duplicate *groups*, not raw frames, so a
+    cluster of Monte-Carlo near-dups counts once: ``n_passed / n_groups``.
+    ``n_groups`` equals ``n_images`` when no deduper ran.
+    """
 
     n_images: int = Field(ge=0)
     n_passed: int = Field(ge=0)
     pass_rate: float = Field(ge=0.0, le=1.0)
     means: MetricScores = Field(default_factory=MetricScores)
+    # Number of near-dup groups the pass-rate is computed over (None = not deduped).
+    n_groups: int | None = Field(default=None, ge=0)
+    # Groups the gate routed to human review (composite in the middle band).
+    n_needs_hitl: int = Field(default=0, ge=0)
+    # Output variety in [0,1] (higher = more varied); None if not measured.
+    diversity: float | None = None
 
 
 class ScorerProvenance(BaseModel):
@@ -396,6 +411,28 @@ class Verdict(BaseModel):
 
     passed: bool
     reasons: list[str] = Field(default_factory=list)
+
+
+class GateConfig(BaseModel):
+    """Thresholds that route each image to auto-pass / auto-fail / needs-HITL.
+
+    An automated pre-pass so humans only rate the borderline band (HITL doesn't
+    scale to every image). Scorers return a normalised score in ``[0, 1]``
+    (higher = better); the gate takes a ``weights``-weighted mean of the metrics
+    present (curator's weighted ``score_breakdown`` pattern) into a composite:
+    ``composite >= auto_pass`` → pass, ``<= auto_fail`` → fail, between → HITL.
+    ``hard_gates`` are absolute per-metric floors (e.g. a minimum identity) that
+    fail an image regardless of composite. A run passes when its group pass-rate
+    reaches ``run_pass_rate``.
+    """
+
+    weights: dict[str, float] = Field(
+        default_factory=lambda: {"identity": 1.0, "clip_score": 1.0, "aesthetic": 1.0, "preference": 1.0}
+    )
+    auto_pass: float = Field(default=0.7, ge=0.0, le=1.0)
+    auto_fail: float = Field(default=0.4, ge=0.0, le=1.0)
+    hard_gates: dict[str, float] = Field(default_factory=dict)
+    run_pass_rate: float = Field(default=0.75, ge=0.0, le=1.0)
 
 
 class EvalReport(_Versioned):
@@ -469,6 +506,7 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
     AggregateScores,
     ScorerProvenance,
     Verdict,
+    GateConfig,
     EvalReport,
     RejectRecord,
     RejectArchive,
