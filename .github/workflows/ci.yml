@@ -16,4 +16,5 @@ jobs:
     with:
       ruff-version: "0.15.16"
       test-extras: "dev,server,cli"
+      post-test: "uv run --no-sync argus-proof schema --check"
 
