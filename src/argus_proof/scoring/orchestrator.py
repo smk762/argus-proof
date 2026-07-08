@@ -41,9 +41,16 @@ def _score_images(images: list[GeneratedImage], scorers: Sequence[ImageScorer], 
     live = [s for s in scorers if s.is_available()]
     # Validate the scorers up front so a misconfigured metric fails fast with a
     # clear message, not an opaque pydantic error partway through the run.
+    seen_metrics: set[str] = set()
     for scorer in live:
         if scorer.metric not in METRIC_FIELDS:
             raise ValueError(f"scorer metric {scorer.metric!r} is not one of {METRIC_FIELDS}")
+        if scorer.metric in seen_metrics:
+            raise ValueError(
+                f"two available scorers both target metric {scorer.metric!r}; one would silently "
+                "overwrite the other — supply at most one scorer per metric"
+            )
+        seen_metrics.add(scorer.metric)
     rows: list[ImageScores] = []
     for img in images:
         metrics = MetricScores()

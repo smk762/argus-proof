@@ -18,20 +18,20 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from argus_proof.models import ScorerProvenance
+from argus_proof.scoring.scorers._util import module_available, phash_of
 
 if TYPE_CHECKING:
     from argus_proof.models import GeneratedImage
     from argus_proof.scoring.base import ScoreContext
 
 
-def _imagehash_available() -> bool:
+def _imagehash_version() -> str | None:
     try:
-        import imagehash  # noqa: F401
-        from PIL import Image  # noqa: F401
+        import imagehash
 
-        return True
+        return getattr(imagehash, "__version__", None)
     except ImportError:
-        return False
+        return None
 
 
 class _PhashMixin:
@@ -40,17 +40,12 @@ class _PhashMixin:
     hash_size: int = 8  # 8 -> a 64-bit hash
 
     def is_available(self) -> bool:
-        return _imagehash_available()
+        return module_available("imagehash", "PIL")
 
     def _phashes(self, images: list[GeneratedImage]):
-        import imagehash
-        from PIL import Image
-
-        hashes = []
-        for img in images:
-            with Image.open(img.path) as im:
-                hashes.append(imagehash.phash(im, hash_size=self.hash_size))
-        return hashes
+        # Cached by (path, mtime, hash_size): the deduper and diversity scorer
+        # each hash a given image at most once, not once per scorer per run.
+        return [phash_of(img.path, self.hash_size) for img in images]
 
     @property
     def _bits(self) -> int:
@@ -71,12 +66,10 @@ class PhashDeduper(_PhashMixin):
         self.hash_size = hash_size
 
     def provenance(self) -> ScorerProvenance:
-        import imagehash
-
         return ScorerProvenance(
             name="phash-dedup",
             metric="duplicate",
-            version=getattr(imagehash, "__version__", None),
+            version=_imagehash_version(),
             model=f"phash-{self._bits}bit@{self.threshold}",
         )
 
@@ -122,12 +115,10 @@ class PhashDiversityScorer(_PhashMixin):
         self.hash_size = hash_size
 
     def provenance(self) -> ScorerProvenance:
-        import imagehash
-
         return ScorerProvenance(
             name="phash-diversity",
             metric="diversity",
-            version=getattr(imagehash, "__version__", None),
+            version=_imagehash_version(),
             model=f"phash-{self._bits}bit",
         )
 
