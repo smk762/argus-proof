@@ -206,7 +206,7 @@
           "type": "array"
         },
         "proof_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Proof Version",
           "type": "string"
         },
@@ -600,7 +600,7 @@
       "type": "object"
     },
     "ImageScores": {
-      "description": "Per-image scores for one generated sample, keyed by ``(run_id, seed)``.\n\n``image_id`` is an opaque handle for the report to reference; the durable,\nreproducible key is ``seed`` (with the run's :class:`RunManifest`).\n``hitl_rating`` is a 1\u20135 star human rating when review has happened.",
+      "description": "Per-image scores for one generated sample, keyed by ``(run_id, seed)``.\n\n``image_id`` is an opaque handle for the report to reference; the durable,\nreproducible key is ``seed`` (with the run's :class:`RunManifest`).\n``hitl_rating`` is a 1\u20135 star human rating when review has happened;\n``hitl_rater`` records who gave it (an opaque rater id) so a report can be\nsplit per rater for inter-rater reliability.",
       "properties": {
         "duplicate_group": {
           "anyOf": [
@@ -613,6 +613,18 @@
           ],
           "default": null,
           "title": "Duplicate Group"
+        },
+        "hitl_rater": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hitl Rater"
         },
         "hitl_rating": {
           "anyOf": [
@@ -896,7 +908,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1046,7 +1058,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.0",
+          "default": "1.1",
           "title": "Proof Version",
           "type": "string"
         },
