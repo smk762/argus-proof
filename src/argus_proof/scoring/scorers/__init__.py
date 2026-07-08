@@ -17,16 +17,26 @@ from argus_proof.scoring.scorers.quality import (
     image_reward_scorer,
     pyiqa_scorer,
 )
+from argus_proof.scoring.scorers.safety import (
+    NudeNetDetector,
+    SafetyDetector,
+    SafetyScorer,
+    safety_tail_aggregate,
+)
 
 __all__ = [
     "Embedder",
     "IdentityScorer",
     "InsightFaceEmbedder",
     "ModelScorer",
+    "NudeNetDetector",
     "PhashDeduper",
     "PhashDiversityScorer",
+    "SafetyDetector",
+    "SafetyScorer",
     "ScoreModel",
     "clip_score_scorer",
     "image_reward_scorer",
     "pyiqa_scorer",
+    "safety_tail_aggregate",
 ]
