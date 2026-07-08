@@ -20,6 +20,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    # Shared suite foundation (taxonomy, wire-schema tooling, AI-backend contract).
+    "argus-cortex>=0.1.0",
     "pydantic>=2.7",
     "structlog>=24.0",
 ]
