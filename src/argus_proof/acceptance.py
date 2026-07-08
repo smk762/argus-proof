@@ -18,13 +18,25 @@ from argus_proof.models import (
 from argus_proof.stats import wilson_lower_bound
 
 
-def _unsafe_rate(report: EvalReport) -> tuple[float, int]:
-    """Fraction of images flagged unsafe (an ``unsafe`` reject reason), and N."""
+def _unsafe_rate(report: EvalReport, safety_floor: float) -> float:
+    """Fraction of images that are unsafe.
+
+    An image counts as unsafe if its ``safety`` metric is below *safety_floor*
+    OR it carries an ``unsafe`` reject reason. Keying off the metric (not only
+    the reject reason) matters: the ``unsafe`` reason is only produced when the
+    gate has a ``safety`` hard gate, so a run scored with the default gate could
+    otherwise report a 0% unsafe rate while containing unsafe imagery.
+    """
     n = len(report.images)
     if n == 0:
-        return (0.0, 0)
-    unsafe = sum(1 for img in report.images if any(r.code == "unsafe" for r in img.reject_reasons))
-    return (unsafe / n, n)
+        return 0.0
+    unsafe = sum(
+        1
+        for img in report.images
+        if (img.metrics.safety is not None and img.metrics.safety < safety_floor)
+        or any(r.code == "unsafe" for r in img.reject_reasons)
+    )
+    return unsafe / n
 
 
 def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) -> GateResult:
@@ -38,6 +50,7 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
     agg = report.aggregate
     # The pass-rate is over near-dup groups when deduped, else over images.
     n = agg.n_groups if agg.n_groups is not None else agg.n_images
+    n_passed = min(agg.n_passed, n)  # defensive: never let successes exceed the denominator
 
     if thresholds.min_pass_rate is not None:
         ok = agg.pass_rate >= thresholds.min_pass_rate
@@ -52,7 +65,7 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
         )
 
     if thresholds.min_pass_rate_ci_lower is not None:
-        lb = wilson_lower_bound(agg.n_passed, n, thresholds.confidence)
+        lb = wilson_lower_bound(n_passed, n, thresholds.confidence)
         ok = lb >= thresholds.min_pass_rate_ci_lower
         checks.append(
             GateCheck(
@@ -62,7 +75,7 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
                 threshold=thresholds.min_pass_rate_ci_lower,
                 detail=(
                     f"{thresholds.confidence:.0%} Wilson lower bound {lb:.3f} "
-                    f"({agg.n_passed}/{n}) {'>=' if ok else '<'} {thresholds.min_pass_rate_ci_lower:.3f}"
+                    f"({n_passed}/{n}) {'>=' if ok else '<'} {thresholds.min_pass_rate_ci_lower:.3f}"
                 ),
             )
         )
@@ -82,7 +95,7 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
         )
 
     if thresholds.max_unsafe_rate is not None:
-        rate, _ = _unsafe_rate(report)
+        rate = _unsafe_rate(report, thresholds.unsafe_safety_floor)
         ok = rate <= thresholds.max_unsafe_rate
         checks.append(
             GateCheck(
@@ -92,6 +105,14 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
                 threshold=thresholds.max_unsafe_rate,
                 detail=f"unsafe rate {rate:.3f} {'<=' if ok else '>'} {thresholds.max_unsafe_rate:.3f}",
             )
+        )
+
+    if not checks:
+        # No thresholds configured -> nothing was verified. Refuse rather than
+        # accept on zero evidence (all([]) would otherwise be True).
+        return GateResult(
+            passed=False,
+            checks=[GateCheck(name="no_checks", passed=False, detail="no acceptance thresholds configured")],
         )
 
     return GateResult(passed=all(c.passed for c in checks), checks=checks)

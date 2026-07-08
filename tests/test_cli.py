@@ -50,6 +50,13 @@ def test_gate_unreadable_report_exits_two(tmp_path: Path) -> None:
     assert result.exit_code == 2
 
 
+def test_gate_invalid_confidence_exits_two_cleanly(tmp_path: Path) -> None:
+    report = tmp_path / "eval_report.json"
+    _write_report(report, n_passed=90, n_groups=100, pass_rate=0.9)
+    result = runner.invoke(app, ["gate", str(report), "--confidence", "1.0"])
+    assert result.exit_code == 2  # clean exit, not an unhandled traceback
+
+
 @pytest.mark.parametrize(
     "argv",
     [

@@ -92,13 +92,18 @@ def gate(
         typer.echo(f"cannot read EvalReport {report_json}: {exc}", err=True)
         raise typer.Exit(2) from exc
 
-    thresholds = AcceptanceThresholds(
-        min_pass_rate=min_pass_rate,
-        min_pass_rate_ci_lower=min_pass_rate_ci_lower,
-        min_identity_mean=min_identity,
-        max_unsafe_rate=max_unsafe_rate,
-        confidence=confidence,
-    )
+    try:
+        thresholds = AcceptanceThresholds(
+            min_pass_rate=min_pass_rate,
+            min_pass_rate_ci_lower=min_pass_rate_ci_lower,
+            min_identity_mean=min_identity,
+            max_unsafe_rate=max_unsafe_rate,
+            confidence=confidence,
+        )
+    except ValueError as exc:  # out-of-range option (e.g. --confidence 1.0)
+        typer.echo(f"invalid threshold: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
     result = evaluate_acceptance(report, thresholds)
     for check in result.checks:
         typer.echo(f"[{'PASS' if check.passed else 'FAIL'}] {check.name}: {check.detail}")

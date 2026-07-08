@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import math
 
-# Acklam's inverse-normal-CDF coefficients (accurate to ~1.15e-9 over (0,1)).
+# Acklam's inverse-normal-CDF coefficients (rational approximation, ~1e-8 without
+# the optional Halley refinement — far tighter than any gate decision needs).
 _A = (
     -3.969683028665376e01,
     2.209460984245205e02,

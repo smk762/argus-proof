@@ -94,7 +94,7 @@ def test_identity_floor_fails_when_not_measured() -> None:
     assert "not measured" in check(result, "identity_mean").detail
 
 
-def test_unsafe_rate_ceiling() -> None:
+def test_unsafe_rate_ceiling_from_reject_reason() -> None:
     images = [
         ImageScores(image_id="a", seed=1, passed=True),
         ImageScores(image_id="b", seed=2, passed=False, reject_reasons=[RejectReason(code="unsafe")]),
@@ -102,6 +102,26 @@ def test_unsafe_rate_ceiling() -> None:
     r = report(n_passed=1, n_groups=2, pass_rate=0.5, images=images)
     assert check(evaluate_acceptance(r, AcceptanceThresholds(max_unsafe_rate=0.6)), "unsafe_rate").passed is True
     assert check(evaluate_acceptance(r, AcceptanceThresholds(max_unsafe_rate=0.1)), "unsafe_rate").passed is False
+
+
+def test_unsafe_rate_uses_safety_metric_not_only_reject_reason() -> None:
+    # low safety metric but NO "unsafe" reject reason (default gate has no safety
+    # hard gate) must still count as unsafe — else the gate green-lights unsafe output.
+    images = [
+        ImageScores(image_id="a", seed=1, passed=True, metrics=MetricScores(safety=0.9)),
+        ImageScores(image_id="b", seed=2, passed=True, metrics=MetricScores(safety=0.1)),
+    ]
+    r = report(n_passed=2, n_groups=2, pass_rate=1.0, images=images)
+    result = evaluate_acceptance(r, AcceptanceThresholds(min_pass_rate=None, max_unsafe_rate=0.0))
+    assert check(result, "unsafe_rate").actual == 0.5  # b caught by the safety-metric floor
+    assert result.passed is False
+
+
+def test_no_checks_configured_rejects() -> None:
+    r = report(n_passed=10, n_groups=10, pass_rate=1.0)
+    result = evaluate_acceptance(r, AcceptanceThresholds(min_pass_rate=None))  # all thresholds off
+    assert result.passed is False  # never accept on zero evidence
+    assert result.checks[0].name == "no_checks"
 
 
 def test_all_checks_must_pass() -> None:

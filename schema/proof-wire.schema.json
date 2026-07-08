@@ -1,7 +1,7 @@
 {
   "$defs": {
     "AcceptanceThresholds": {
-      "description": "Declared thresholds a run must clear to be accepted (the CI gate, #12).\n\nTurns \"was this LoRA/dataset good enough?\" into an automatable yes/no. Only\nthe configured checks run; leave a field ``None`` to skip it.\n``min_pass_rate_ci_lower`` is the stricter, small-N-safe version of\n``min_pass_rate`` \u2014 the Wilson lower bound must clear it, so a lucky 3/3\ndoesn't pass a bar that 300/400 would.",
+      "description": "Declared thresholds a run must clear to be accepted (the CI gate, #12).\n\nTurns \"was this LoRA/dataset good enough?\" into an automatable yes/no. Each\ncheck runs only when its threshold is set; ``min_pass_rate`` is **on by\ndefault** (set it ``None`` to skip), the rest default off. If no check is\nconfigured the gate rejects rather than accept on zero evidence.\n``min_pass_rate_ci_lower`` is the stricter, small-N-safe version of\n``min_pass_rate`` \u2014 the Wilson lower bound must clear it, so a lucky 3/3\ndoesn't pass a bar that 300/400 would. ``max_unsafe_rate`` counts an image\nunsafe when its ``safety`` metric is below ``unsafe_safety_floor`` or it\ncarries an ``unsafe`` reject reason.",
       "properties": {
         "confidence": {
           "default": 0.95,
@@ -65,6 +65,13 @@
           ],
           "default": null,
           "title": "Min Pass Rate Ci Lower"
+        },
+        "unsafe_safety_floor": {
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Unsafe Safety Floor",
+          "type": "number"
         }
       },
       "title": "AcceptanceThresholds",
