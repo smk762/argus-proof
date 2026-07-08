@@ -31,6 +31,47 @@
       "title": "AggregateScores",
       "type": "object"
     },
+    "BackendCapabilities": {
+      "description": "What a generation backend can do \u2014 its capability descriptor.\n\nLets a caller pick or validate a backend without hard-coding which one it\nis: swapping backends is a config change, not a code change.",
+      "properties": {
+        "max_loras": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Loras"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "reads_pnginfo": {
+          "default": false,
+          "title": "Reads Pnginfo",
+          "type": "boolean"
+        },
+        "streams_progress": {
+          "default": false,
+          "title": "Streams Progress",
+          "type": "boolean"
+        },
+        "supports_seed_set": {
+          "default": true,
+          "title": "Supports Seed Set",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "BackendCapabilities",
+      "type": "object"
+    },
     "EvalReport": {
       "description": "Scored evaluation of a generation run: per-image + aggregate + verdict.\n\nLinks to its :class:`RunManifest` by ``run_id`` rather than embedding it, so\nthe run dir stays the single source of truth for generation params.",
       "properties": {
@@ -82,6 +123,52 @@
         "verdict"
       ],
       "title": "EvalReport",
+      "type": "object"
+    },
+    "GeneratedImage": {
+      "description": "One image a backend produced, ready to be scored.\n\n``image_id`` is the opaque handle scores reference; ``(run_id, seed)`` is the\nreproducible key. ``pnginfo`` is the metadata read back from the PNG the\nengine embedded (ComfyUI PNGInfo), so the recorded params can be checked\nagainst what actually rendered rather than trusted blind.",
+      "properties": {
+        "height": {
+          "title": "Height",
+          "type": "integer"
+        },
+        "image_id": {
+          "title": "Image Id",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "pnginfo": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Pnginfo",
+          "type": "object"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "seed": {
+          "title": "Seed",
+          "type": "integer"
+        },
+        "width": {
+          "title": "Width",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "image_id",
+        "run_id",
+        "seed",
+        "path",
+        "width",
+        "height"
+      ],
+      "title": "GeneratedImage",
       "type": "object"
     },
     "ImageScores": {
@@ -140,7 +227,7 @@
       "type": "object"
     },
     "LoRARef": {
-      "description": "A LoRA applied during generation: a :class:`ModelRef` plus its weight.",
+      "description": "A LoRA applied during generation, as recorded in a resolved run: a\n:class:`ModelRef` (name pinned by SHA256) plus its weight.",
       "properties": {
         "name": {
           "title": "Name",
@@ -163,6 +250,25 @@
         "sha256"
       ],
       "title": "LoRARef",
+      "type": "object"
+    },
+    "LoRASpec": {
+      "description": "A LoRA to apply, as *requested* \u2014 name + weight, before the file is hashed.\n\nThe request-time counterpart of :class:`LoRARef`: a :class:`RunSpec` names a\nLoRA by filename; the backend resolves it to a file, hashes it, and records\nthe resulting :class:`LoRARef` in the :class:`RunManifest`.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "weight": {
+          "default": 1.0,
+          "title": "Weight",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "LoRASpec",
       "type": "object"
     },
     "MetricScores": {
@@ -251,6 +357,92 @@
         "sha256"
       ],
       "title": "ModelRef",
+      "type": "object"
+    },
+    "ProgressEvent": {
+      "description": "One NDJSON progress line streamed during generation (suite convention).\n\n``type`` selects which fields matter: ``start`` sets ``total`` (images to\nmake); ``progress`` sets ``completed``/``total``; ``image`` sets ``seed`` +\n``image_id`` as each finishes; ``done`` closes the run; ``error`` carries a\nfailure ``message``.",
+      "properties": {
+        "completed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed"
+        },
+        "image_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Id"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "total": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Total"
+        },
+        "type": {
+          "enum": [
+            "start",
+            "progress",
+            "image",
+            "done",
+            "error"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "type"
+      ],
+      "title": "ProgressEvent",
       "type": "object"
     },
     "RejectArchive": {
@@ -479,6 +671,103 @@
         "engine_version"
       ],
       "title": "RunManifest",
+      "type": "object"
+    },
+    "RunSpec": {
+      "description": "A generation request: what to generate, before a backend resolves it.\n\nThe prompt-grid builder (issue #3) emits a list of these; a\n:class:`~argus_proof.backends.base.GenBackend` turns one into images plus the\nresolved :class:`RunManifest`. Models are named (not yet hashed): the backend\nresolves each name to a file and records its SHA256 in the manifest.\n\n``seeds`` is the seed strategy made concrete \u2014 one fixed seed for a\nwithin-checkpoint sweep, or a fixed seed-set (so seed luck averages out) for\na cross-checkpoint comparison. One image is produced per seed.",
+      "properties": {
+        "base_checkpoint": {
+          "title": "Base Checkpoint",
+          "type": "string"
+        },
+        "loras": {
+          "items": {
+            "$ref": "#/$defs/LoRASpec"
+          },
+          "title": "Loras",
+          "type": "array"
+        },
+        "negative_prompt": {
+          "default": "",
+          "title": "Negative Prompt",
+          "type": "string"
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "sampling": {
+          "$ref": "#/$defs/SamplingParams"
+        },
+        "seeds": {
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Seeds",
+          "type": "array"
+        },
+        "source_manifest": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Manifest"
+        },
+        "source_manifest_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Manifest Version"
+        },
+        "training_run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Training Run Id"
+        },
+        "vae": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vae"
+        }
+      },
+      "required": [
+        "run_id",
+        "base_checkpoint",
+        "sampling",
+        "prompt",
+        "seeds"
+      ],
+      "title": "RunSpec",
       "type": "object"
     },
     "SamplingParams": {

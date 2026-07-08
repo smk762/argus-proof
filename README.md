@@ -28,6 +28,44 @@ argus-proof serve --port 8104 --cors   # peer to lens :8100, curator :8101, quar
 curl -s localhost:8104/health          # {"status":"ok","service":"argus-proof","version":"..."}
 ```
 
+## Generation backend (Phase 1)
+
+Generation is a pluggable backend (`argus_proof.backends`) so swapping the engine
+is a config change, not a code change — the **ComfyUI** adapter ships first:
+
+```python
+from pathlib import Path
+from argus_proof.backends import get_backend
+from argus_proof.backends.base import make_dir_resolver
+from argus_proof.backends.workflow import example_template
+from argus_proof.models import RunSpec, LoRASpec, SamplingParams
+
+backend = get_backend(
+    "comfyui",
+    workflow_template=example_template(),          # or workflow.load_template(path)
+    resolve_model=make_dir_resolver(Path("~/ComfyUI/models")),
+    base_url="http://127.0.0.1:8188",
+)
+spec = RunSpec(
+    run_id="run-1",
+    base_checkpoint="sdxl_base.safetensors",
+    loras=[LoRASpec(name="subject.safetensors", weight=0.8)],
+    sampling=SamplingParams(sampler="dpmpp_2m", scheduler="karras", steps=30,
+                            cfg=7.0, clip_skip=2, width=1024, height=1024),
+    prompt="a photo of sks person",
+    seeds=[1, 2, 3],                               # seed-set: one image per seed
+)
+result = backend.generate(spec, Path("out/run-1"))  # writes images + manifest.json
+```
+
+The ComfyUI adapter drives a **parametric workflow template** (an API-format graph
+with `$placeholder` values — `$base_checkpoint`, `$positive`, `$seed`, `$steps`,
+`$lora` / `$lora_weight`, `$clip_skip`, …), polls for completion, reads back each
+image's embedded **PNGInfo**, and emits a `RunManifest` that pins every
+checkpoint/LoRA by **SHA256** so the run reconstructs exactly. See
+[`templates/comfyui_sdxl_lora.json`](src/argus_proof/templates/comfyui_sdxl_lora.json)
+for the shipped example.
+
 ## Develop
 
 ```bash
