@@ -6,11 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PIL import Image
+from test_scoring import manifest
 
 from argus_proof.models import GeneratedImage
 from argus_proof.scoring import score_run
 from argus_proof.scoring.scorers._util import clamp01, module_available, phash_of
-from tests.test_scoring import manifest
 
 # --------------------------------------------------------------------------
 # clamp01

@@ -4,11 +4,11 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+from test_scoring import manifest  # reuse the RunManifest helper
 
 from argus_proof.models import GeneratedImage
 from argus_proof.scoring import score_run
 from argus_proof.scoring.scorers import PhashDeduper, PhashDiversityScorer
-from tests.test_scoring import manifest  # reuse the RunManifest helper
 
 
 def _save(path: Path, arr: np.ndarray) -> None:
