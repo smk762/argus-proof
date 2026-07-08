@@ -1,5 +1,75 @@
 {
   "$defs": {
+    "AcceptanceThresholds": {
+      "description": "Declared thresholds a run must clear to be accepted (the CI gate, #12).\n\nTurns \"was this LoRA/dataset good enough?\" into an automatable yes/no. Only\nthe configured checks run; leave a field ``None`` to skip it.\n``min_pass_rate_ci_lower`` is the stricter, small-N-safe version of\n``min_pass_rate`` \u2014 the Wilson lower bound must clear it, so a lucky 3/3\ndoesn't pass a bar that 300/400 would.",
+      "properties": {
+        "confidence": {
+          "default": 0.95,
+          "exclusiveMaximum": 1.0,
+          "exclusiveMinimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "max_unsafe_rate": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Unsafe Rate"
+        },
+        "min_identity_mean": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Identity Mean"
+        },
+        "min_pass_rate": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 0.75,
+          "title": "Min Pass Rate"
+        },
+        "min_pass_rate_ci_lower": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Pass Rate Ci Lower"
+        }
+      },
+      "title": "AcceptanceThresholds",
+      "type": "object"
+    },
     "AggregateScores": {
       "description": "Run-level roll-up: counts, pass rate, mean of each metric axis, diversity.\n\n``pass_rate`` is computed over near-duplicate *groups*, not raw frames, so a\ncluster of Monte-Carlo near-dups counts once: ``n_passed / n_groups``.\n``n_groups`` equals ``n_images`` when no deduper ran.",
       "properties": {
@@ -156,6 +226,54 @@
       "title": "EvalReport",
       "type": "object"
     },
+    "GateCheck": {
+      "description": "One threshold check's outcome, with the actual value vs the threshold.",
+      "properties": {
+        "actual": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Actual"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        }
+      },
+      "required": [
+        "name",
+        "passed"
+      ],
+      "title": "GateCheck",
+      "type": "object"
+    },
     "GateConfig": {
       "description": "Thresholds that route each image to auto-pass / auto-fail / needs-HITL.\n\nAn automated pre-pass so humans only rate the borderline band (HITL doesn't\nscale to every image). Scorers return a normalised score in ``[0, 1]``\n(higher = better); the gate takes a ``weights``-weighted mean of the metrics\npresent (curator's weighted ``score_breakdown`` pattern) into a composite:\n``composite >= auto_pass`` \u2192 pass, ``<= auto_fail`` \u2192 fail, between \u2192 HITL.\n``hard_gates`` are absolute per-metric floors (e.g. a minimum identity) that\nfail an image regardless of composite. A run passes when its group pass-rate\nreaches ``run_pass_rate``.\n\n``safety`` is in the default composite weights so an unsafe image is dragged\ndown once safety scoring lands (Phase 4); for a true veto, add ``safety`` to\n``hard_gates`` with your scorer's floor \u2014 the composite alone can let a\nhigh-quality-but-unsafe image through.",
       "properties": {
@@ -196,6 +314,27 @@
         }
       },
       "title": "GateConfig",
+      "type": "object"
+    },
+    "GateResult": {
+      "description": "The overall accept/reject decision \u2014 ``passed`` iff every check passed.",
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/GateCheck"
+          },
+          "title": "Checks",
+          "type": "array"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "passed"
+      ],
+      "title": "GateResult",
       "type": "object"
     },
     "GeneratedImage": {

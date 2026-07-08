@@ -477,6 +477,45 @@ class EvalReport(_Versioned):
 
 
 # ---------------------------------------------------------------------------
+# Acceptance gate — the CI-consumable pass/fail verdict against thresholds
+# ---------------------------------------------------------------------------
+
+
+class AcceptanceThresholds(BaseModel):
+    """Declared thresholds a run must clear to be accepted (the CI gate, #12).
+
+    Turns "was this LoRA/dataset good enough?" into an automatable yes/no. Only
+    the configured checks run; leave a field ``None`` to skip it.
+    ``min_pass_rate_ci_lower`` is the stricter, small-N-safe version of
+    ``min_pass_rate`` — the Wilson lower bound must clear it, so a lucky 3/3
+    doesn't pass a bar that 300/400 would.
+    """
+
+    min_pass_rate: float | None = Field(default=0.75, ge=0.0, le=1.0)
+    min_pass_rate_ci_lower: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_identity_mean: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_unsafe_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.95, gt=0.0, lt=1.0)
+
+
+class GateCheck(BaseModel):
+    """One threshold check's outcome, with the actual value vs the threshold."""
+
+    name: str
+    passed: bool
+    actual: float | None = None
+    threshold: float | None = None
+    detail: str = ""
+
+
+class GateResult(BaseModel):
+    """The overall accept/reject decision — ``passed`` iff every check passed."""
+
+    passed: bool
+    checks: list[GateCheck] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # RejectArchive — metadata-only archival of rejected / flagged outputs
 # ---------------------------------------------------------------------------
 
@@ -534,6 +573,9 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
     Verdict,
     GateConfig,
     EvalReport,
+    AcceptanceThresholds,
+    GateCheck,
+    GateResult,
     RejectRecord,
     RejectArchive,
 )
