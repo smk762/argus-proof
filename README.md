@@ -110,6 +110,24 @@ report = score_run(
 > variants build on `argus_cortex.backends.RemoteBackend` (point at a service by IP/port).
 > The spine itself is dependency-free and fully tested with fakes.
 
+## CI acceptance gate (Phase 6)
+
+Turn "was this LoRA/dataset good enough?" into an automatable yes/no. `argus-proof
+gate` evaluates a scored `EvalReport` against declared thresholds and **exits
+non-zero when rejected**, so it drops straight into CI:
+
+```bash
+argus-proof gate eval_report.json \
+  --min-pass-rate 0.75 \
+  --min-pass-rate-ci-lower 0.7 \   # Wilson lower bound — a lucky 3/3 won't pass
+  --min-identity 0.6 \
+  --max-unsafe-rate 0.0            # exit 0 = accepted, 1 = rejected, 2 = unreadable
+```
+
+The pass-rate lower bound uses a Wilson score interval (`argus_proof.stats`, no
+scipy), so acceptance is statistically defensible at small N. A configured metric
+that wasn't measured fails its check rather than passing silently.
+
 ## Develop
 
 ```bash

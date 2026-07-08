@@ -73,6 +73,44 @@ def report(
     _stub("report", "https://github.com/smk762/argus-studio/issues/19")
 
 
+@app.command()
+def gate(
+    report_json: Path = Argument(..., help="Scored EvalReport JSON to gate"),
+    min_pass_rate: float = Option(0.75, help="Minimum aggregate pass-rate"),
+    min_pass_rate_ci_lower: float | None = Option(None, help="Minimum Wilson lower bound on the pass-rate"),
+    min_identity: float | None = Option(None, help="Minimum mean identity score"),
+    max_unsafe_rate: float | None = Option(None, help="Maximum fraction of images flagged unsafe"),
+    confidence: float = Option(0.95, help="Confidence level for the CI lower bound"),
+) -> None:
+    """Gate a scored EvalReport against acceptance thresholds; exit non-zero if rejected (for CI)."""
+    from argus_proof.acceptance import evaluate_acceptance
+    from argus_proof.models import AcceptanceThresholds, EvalReport, ProofError
+
+    try:
+        report = EvalReport.model_validate_json(report_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ProofError) as exc:
+        typer.echo(f"cannot read EvalReport {report_json}: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+    try:
+        thresholds = AcceptanceThresholds(
+            min_pass_rate=min_pass_rate,
+            min_pass_rate_ci_lower=min_pass_rate_ci_lower,
+            min_identity_mean=min_identity,
+            max_unsafe_rate=max_unsafe_rate,
+            confidence=confidence,
+        )
+    except ValueError as exc:  # out-of-range option (e.g. --confidence 1.0)
+        typer.echo(f"invalid threshold: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+    result = evaluate_acceptance(report, thresholds)
+    for check in result.checks:
+        typer.echo(f"[{'PASS' if check.passed else 'FAIL'}] {check.name}: {check.detail}")
+    typer.echo("ACCEPTED" if result.passed else "REJECTED")
+    raise typer.Exit(0 if result.passed else 1)
+
+
 DEFAULT_SCHEMA_PATH = Path("schema/proof-wire.schema.json")
 
 
