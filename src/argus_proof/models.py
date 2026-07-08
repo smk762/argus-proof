@@ -39,7 +39,9 @@ from pydantic import BaseModel, Field, model_validator
 # incompatible major instead of misreading it.
 # 1.0: initial contract — reproducible RunManifest, per-image + aggregate
 #      EvalReport with structured reject reasons, image-free RejectArchive.
-PROOF_VERSION = "1.0"
+# 1.1: additive — ImageScores.hitl_rater records who rated an image, so a report
+#      can be split by rater for inter-rater reliability (issue #10).
+PROOF_VERSION = "1.1"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -357,13 +359,16 @@ class ImageScores(BaseModel):
 
     ``image_id`` is an opaque handle for the report to reference; the durable,
     reproducible key is ``seed`` (with the run's :class:`RunManifest`).
-    ``hitl_rating`` is a 1–5 star human rating when review has happened.
+    ``hitl_rating`` is a 1–5 star human rating when review has happened;
+    ``hitl_rater`` records who gave it (an opaque rater id) so a report can be
+    split per rater for inter-rater reliability.
     """
 
     image_id: str
     seed: int
     metrics: MetricScores = Field(default_factory=MetricScores)
     hitl_rating: int | None = Field(default=None, ge=1, le=5)
+    hitl_rater: str | None = None
     reject_reasons: list[RejectReason] = Field(default_factory=list)
     # None = undecided (routed to HITL by the gate); True/False = auto pass/fail.
     passed: bool | None = None
