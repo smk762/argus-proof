@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,22 @@ def test_model_scorer_normalizes_raw() -> None:
 def test_model_scorer_passes_none_through() -> None:
     scorer = ModelScorer("aesthetic", FakeModel({"gen": None}), lo=0.0, hi=1.0)
     assert scorer.score(Path("gen.png"), ctx=None) is None  # type: ignore[arg-type]
+
+
+def test_linear_normalize_nan_passes_through() -> None:
+    # NaN must NOT clamp to 1.0 (the review's headline bug) — it passes through
+    # so the orchestrator rejects it.
+    assert math.isnan(linear_normalize(float("nan"), 20.0, 35.0))
+
+
+def test_model_scorer_nan_not_scored_as_perfect() -> None:
+    scorer = ModelScorer("clip_score", FakeModel({"gen": float("nan")}), lo=20.0, hi=35.0)
+    assert math.isnan(scorer.score(Path("gen.png"), ctx=None))  # type: ignore[arg-type]
+
+
+def test_model_scorer_rejects_inverted_range() -> None:
+    with pytest.raises(ValueError, match="lo < hi"):
+        ModelScorer("clip_score", FakeModel({}), lo=35.0, hi=20.0)
 
 
 def test_model_scorer_availability_and_metric() -> None:

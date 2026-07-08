@@ -19,16 +19,22 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from argus_proof.models import ScorerProvenance
+from argus_proof.scoring.scorers._util import clamp01, module_available
 
 if TYPE_CHECKING:
     from argus_proof.scoring.base import ScoreContext
 
 
 def linear_normalize(raw: float, lo: float, hi: float) -> float:
-    """Map ``raw`` from ``[lo, hi]`` onto ``[0, 1]``, clamped. ``hi==lo`` → 0/1 step."""
+    """Map ``raw`` from ``[lo, hi]`` onto ``[0, 1]``, clamped. ``hi<=lo`` → 0/1 step.
+
+    A non-finite ``raw`` (NaN/inf from a broken model) passes through via
+    :func:`clamp01` so the orchestrator's ``[0, 1]`` guard rejects it, rather
+    than a NaN silently clamping to a perfect 1.0.
+    """
     if hi <= lo:
         return 1.0 if raw >= hi else 0.0
-    return max(0.0, min(1.0, (raw - lo) / (hi - lo)))
+    return clamp01((raw - lo) / (hi - lo))
 
 
 @runtime_checkable
@@ -50,6 +56,8 @@ class ModelScorer:
     """
 
     def __init__(self, metric: str, model: ScoreModel, lo: float, hi: float) -> None:
+        if hi <= lo:
+            raise ValueError(f"normalization needs lo < hi, got lo={lo}, hi={hi} (swapped calibration?)")
         self.metric = metric
         self.model = model
         self.lo = lo
@@ -83,14 +91,7 @@ class ClipScoreModel:
         self._metric = None
 
     def is_available(self) -> bool:
-        try:
-            import torch  # noqa: F401
-            import torchmetrics  # noqa: F401
-            from PIL import Image  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
+        return module_available("torch", "torchmetrics", "PIL", "numpy")
 
     def _load(self):  # noqa: ANN202
         if self._metric is None:
@@ -107,7 +108,9 @@ class ClipScoreModel:
         with Image.open(image_path) as im:
             arr = np.array(im.convert("RGB"))
         tensor = torch.from_numpy(arr).permute(2, 0, 1)  # HWC uint8 -> CHW
-        return float(self._load()(tensor, ctx.prompt))
+        metric = self._load()
+        metric.reset()  # CLIPScore accumulates state; reset so this is a per-image score, not a running mean
+        return float(metric(tensor, ctx.prompt))
 
 
 class PyiqaModel:
@@ -122,12 +125,7 @@ class PyiqaModel:
         return f"pyiqa-{self.metric_name}"
 
     def is_available(self) -> bool:
-        try:
-            import pyiqa  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
+        return module_available("pyiqa")
 
     def _load(self):  # noqa: ANN202
         if self._metric is None:
@@ -150,12 +148,7 @@ class ImageRewardModel:
         self._model = None
 
     def is_available(self) -> bool:
-        try:
-            import ImageReward  # noqa: F401
-
-            return True
-        except ImportError:
-            return False
+        return module_available("ImageReward")
 
     def _load(self):  # noqa: ANN202
         if self._model is None:
