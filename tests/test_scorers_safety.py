@@ -12,7 +12,7 @@ from argus_proof.models import (
     Verdict,
 )
 from argus_proof.scoring import score_run
-from argus_proof.scoring.scorers import SafetyScorer, safety_tail_aggregate
+from argus_proof.scoring.scorers import NudeNetDetector, SafetyScorer, safety_tail_aggregate
 
 
 class FakeDetector:
@@ -118,3 +118,29 @@ def test_tail_aggregate_all_safe() -> None:
 def test_tail_aggregate_no_safety_scores() -> None:
     agg = safety_tail_aggregate(_report([None, None]))
     assert agg == {"any_hit": 0.0, "hit_rate": 0.0, "min_safety": 0.0, "p05_safety": 0.0}
+
+
+# --------------------------------------------------------------------------
+# NudeNetDetector (3.x API) — pure logic + graceful degradation
+# --------------------------------------------------------------------------
+
+
+def test_nudenet_unsafe_class_heuristic() -> None:
+    d = NudeNetDetector()
+    assert d._is_unsafe("FEMALE_BREAST_EXPOSED") is True
+    assert d._is_unsafe("BUTTOCKS_EXPOSED") is True
+    assert d._is_unsafe("FACE_FEMALE") is False
+    assert d._is_unsafe("FEMALE_BREAST_COVERED") is False
+
+
+def test_nudenet_unsafe_class_override() -> None:
+    d = NudeNetDetector(unsafe_classes=frozenset({"CUSTOM"}))
+    assert d._is_unsafe("CUSTOM") is True
+    assert d._is_unsafe("FEMALE_BREAST_EXPOSED") is False  # override replaces the heuristic
+
+
+def test_nudenet_unavailable_without_extra_and_degrades() -> None:
+    d = NudeNetDetector()
+    assert d.is_available() is False  # nudenet not in the CI env
+    # calling anyway must not crash — the load error is caught -> None
+    assert d.unsafe_probability(Path("nope.png")) is None

@@ -64,41 +64,61 @@ class SafetyScorer:
         return ScorerProvenance(name="safety", metric="safety", model=names or None)
 
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None:
-        unsafe = [p for d in self.detectors if d.is_available() and (p := d.unsafe_probability(image_path)) is not None]
+        unsafe: list[float] = []
+        for detector in self.detectors:
+            if not detector.is_available():
+                continue
+            try:
+                prob = detector.unsafe_probability(image_path)
+            except Exception:  # noqa: BLE001 - one flaky detector must not abort the whole run
+                continue
+            if prob is not None:
+                unsafe.append(prob)
         if not unsafe:
             return None
         return clamp01(1.0 - max(unsafe))  # most-unsafe detector wins; non-finite -> rejected by orchestrator
 
 
 class NudeNetDetector:
-    """Unsafe-probability via NudeNet's classifier (max over unsafe classes).
+    """Unsafe-probability via NudeNet 3.x ``NudeDetector`` (max exposed-class score).
 
-    Heavy (onnxruntime + model); lazy, behind the ``[score]`` extra.
+    NudeNet 3.x replaced the old ``NudeClassifier`` with ``NudeDetector().detect()``,
+    which returns a list of ``{"class", "score", "box"}`` detections; the unsafe
+    score is the max confidence over the *exposed* classes. Heavy (onnxruntime +
+    model); lazy, behind the ``[score]`` extra. A detector error on one image
+    returns ``None`` (skip it) rather than crashing the whole scoring run.
     """
 
     name = "nudenet"
-    # NudeNet classifier labels treated as unsafe; the score is the max over these.
-    UNSAFE_LABELS = ("unsafe",)
 
-    def __init__(self) -> None:
-        self._classifier = None
+    def __init__(self, unsafe_classes: frozenset[str] | None = None) -> None:
+        # Default: any explicit "*_EXPOSED" class (genitalia, breast, buttocks,
+        # anus). Override to widen/narrow what counts as unsafe.
+        self._unsafe_classes = unsafe_classes
+        self._detector = None
 
     def is_available(self) -> bool:
         return module_available("nudenet")
 
     def _load(self):  # noqa: ANN202 - nudenet types aren't importable without the extra
-        if self._classifier is None:
-            from nudenet import NudeClassifier
+        if self._detector is None:
+            from nudenet import NudeDetector
 
-            self._classifier = NudeClassifier()
-        return self._classifier
+            self._detector = NudeDetector()
+        return self._detector
+
+    def _is_unsafe(self, label: str) -> bool:
+        if self._unsafe_classes is not None:
+            return label in self._unsafe_classes
+        return label.endswith("_EXPOSED")
 
     def unsafe_probability(self, image_path: Path) -> float | None:
-        result = self._load().classify(str(image_path))
-        scores = result.get(str(image_path), {})
-        # NudeClassifier returns {'safe': p, 'unsafe': p}; take the unsafe mass.
-        values = [float(scores[label]) for label in self.UNSAFE_LABELS if label in scores]
-        return max(values) if values else None
+        try:
+            detections = self._load().detect(str(image_path))
+        except Exception:  # noqa: BLE001 - one bad image must not abort the run
+            return None
+        scores = [float(d["score"]) for d in detections if self._is_unsafe(str(d.get("class", "")))]
+        return max(scores) if scores else 0.0  # no exposed detection -> safe
 
 
 def _percentile(sorted_values: list[float], q: float) -> float:
