@@ -83,9 +83,19 @@ report.aggregate.pass_rate   # computed over near-dup groups, not raw frames
 report.verdict.passed        # run pass/fail vs GateConfig.run_pass_rate
 ```
 
-Concrete scorers (InsightFace identity, torchmetrics CLIPScore, pyiqa,
-DreamSim/LPIPS, ImageReward/HPSv2, phash dedup) are heavy and land behind the
-`[score]` extra, implementing these protocols; remote/hosted variants build on
+Concrete scorers live in `argus_proof.scoring.scorers`, behind the `[score]`
+extra, and are lazy-imported (each reports `is_available()` so the orchestrator
+skips it when the extra is absent). Shipped so far — perceptual-hash **dedup +
+diversity** (`pip install "argus-proof[score]"`, CPU-only):
+
+```python
+from argus_proof.scoring import score_run
+from argus_proof.scoring.scorers import PhashDeduper, PhashDiversityScorer
+report = score_run(manifest, images, deduper=PhashDeduper(), diversity=PhashDiversityScorer())
+```
+
+Still to land: InsightFace identity, torchmetrics CLIPScore, pyiqa, DreamSim/LPIPS,
+ImageReward/HPSv2 (the torch stack) — with remote/hosted variants on
 `argus_cortex.backends.RemoteBackend` (point at a service by IP/port). The spine
 itself is dependency-free and fully tested with fakes.
 
