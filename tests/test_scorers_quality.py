@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 
 import pytest
+from test_scoring import manifest
 
 from argus_proof.models import GeneratedImage
 from argus_proof.scoring import ScoreContext, score_run
@@ -14,7 +15,6 @@ from argus_proof.scoring.scorers import (
     pyiqa_scorer,
 )
 from argus_proof.scoring.scorers.quality import linear_normalize
-from tests.test_scoring import manifest
 
 
 class FakeModel:
