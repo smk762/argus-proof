@@ -8,6 +8,13 @@ CPU-only); identity/quality scorers (the torch stack) follow with #4/#5.
 
 from __future__ import annotations
 
+from argus_proof.scoring.scorers.identity import Embedder, IdentityScorer, InsightFaceEmbedder
 from argus_proof.scoring.scorers.phash import PhashDeduper, PhashDiversityScorer
 
-__all__ = ["PhashDeduper", "PhashDiversityScorer"]
+__all__ = [
+    "Embedder",
+    "IdentityScorer",
+    "InsightFaceEmbedder",
+    "PhashDeduper",
+    "PhashDiversityScorer",
+]
