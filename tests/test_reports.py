@@ -128,6 +128,16 @@ def test_hitl_is_pure_does_not_mutate_original() -> None:
     assert report.images[0].hitl_rater is None
 
 
+def test_hitl_can_retract_a_rating() -> None:
+    # An update fully specifies the decision, so sending null/[] clears a prior
+    # rating (the reviewer can un-rate) rather than being ignored.
+    report = _report(rows=[_row("a", 1, passed=None)])
+    rated = apply_hitl(report, HitlRequest(updates=[HitlImageUpdate(image_id="a", hitl_rating=5)]))
+    assert rated.images[0].hitl_rating == 5
+    cleared = apply_hitl(rated, HitlRequest(updates=[HitlImageUpdate(image_id="a", hitl_rating=None)]))
+    assert cleared.images[0].hitl_rating is None  # retracted, not silently kept
+
+
 def test_hitl_untouched_image_carried_through() -> None:
     report = _report(rows=[_row("a", 1, passed=None), _row("b", 2, passed=None)])
     updated = apply_hitl(report, HitlRequest(updates=[HitlImageUpdate(image_id="a", hitl_rating=5)]))

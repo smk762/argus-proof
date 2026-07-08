@@ -49,9 +49,12 @@ class ReportSummary(BaseModel):
 class HitlImageUpdate(BaseModel):
     """A reviewer's verdict on one image: a star rating and/or reject reasons.
 
-    Addressed by ``image_id`` (the report's opaque handle). An omitted
-    ``hitl_rating`` leaves the existing rating; a non-empty ``reject_reasons``
-    marks the image rejected regardless of stars.
+    Addressed by ``image_id`` (the report's opaque handle). An update *fully
+    specifies* the reviewer's decision for that image: ``hitl_rating`` and
+    ``reject_reasons`` replace whatever the image had, so send the existing
+    values to keep them and send ``null`` / ``[]`` to clear them (letting a
+    reviewer retract a rating). A non-empty ``reject_reasons`` marks the image
+    rejected regardless of stars.
     """
 
     image_id: str
@@ -110,9 +113,13 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
 
     Each touched image gets the rating, reasons, and rater recorded, and its
     ``passed`` flag set from the human decision (a rated/rejected image is no
-    longer "needs review"). The aggregate and verdict are then recomputed over
-    the updated rows, so the run's pass-rate and pending/passed status reflect
-    the review. Untouched images are carried through unchanged.
+    longer "needs review"). An update fully specifies the reviewer's decision:
+    its ``hitl_rating`` and ``reject_reasons`` replace the image's values, so a
+    reviewer can *retract* a rating (send ``null`` / ``[]``) — a cleared image
+    with no human verdict falls back to the gate's auto ``passed``. The aggregate
+    and verdict are then recomputed over the updated rows, so the run's pass-rate
+    and pending/passed status reflect the review. Untouched images (not in the
+    batch) are carried through unchanged.
     """
     gate = request.gate or GateConfig()
     by_id = {u.image_id: u for u in request.updates}
@@ -121,14 +128,15 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
         upd = by_id.get(row.image_id)
         if upd is None:
             continue
-        reasons = upd.reject_reasons or row.reject_reasons
-        rating = upd.hitl_rating if upd.hitl_rating is not None else row.hitl_rating
-        decision = _hitl_decision(rating, upd.reject_reasons)
+        # Authoritative: the update's values are the reviewer's final decision
+        # for this image (the client sends the full intended state), so they
+        # replace the row's — otherwise a cleared rating/reason can't be honored.
+        decision = _hitl_decision(upd.hitl_rating, upd.reject_reasons)
         rows[i] = row.model_copy(
             update={
-                "hitl_rating": rating,
+                "hitl_rating": upd.hitl_rating,
                 "hitl_rater": request.rater if request.rater is not None else row.hitl_rater,
-                "reject_reasons": reasons,
+                "reject_reasons": upd.reject_reasons,
                 "passed": decision if decision is not None else row.passed,
             }
         )
