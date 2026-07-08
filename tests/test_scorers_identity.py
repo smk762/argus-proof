@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 from argus_cortex.taxonomy import TargetProfile
+from test_scoring import manifest
 
 from argus_proof.models import GeneratedImage
 from argus_proof.scoring import ScoreContext, score_run
 from argus_proof.scoring.scorers import IdentityScorer
 from argus_proof.scoring.scorers.identity import _ref_key, cosine
-from tests.test_scoring import manifest
 
 
 class FakeEmbedder:
