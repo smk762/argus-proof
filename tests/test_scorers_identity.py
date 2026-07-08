@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,7 @@ from argus_cortex.taxonomy import TargetProfile
 from argus_proof.models import GeneratedImage
 from argus_proof.scoring import ScoreContext, score_run
 from argus_proof.scoring.scorers import IdentityScorer
-from argus_proof.scoring.scorers.identity import cosine
+from argus_proof.scoring.scorers.identity import _ref_key, cosine
 from tests.test_scoring import manifest
 
 
@@ -102,6 +103,26 @@ def test_non_identity_category_returns_none() -> None:
 def test_negative_cosine_clamped_to_zero() -> None:
     emb = FakeEmbedder({"ref": [1.0, 0.0], "gen": [-1.0, 0.0]})  # cosine -1
     assert IdentityScorer(embedder=emb).score(Path("gen.png"), identity_ctx(["ref"])) == 0.0
+
+
+def test_nan_embedding_not_scored_as_perfect() -> None:
+    # a degenerate (NaN) embedding must NOT clamp to a perfect 1.0; it passes
+    # through as NaN so the orchestrator rejects it (the review's headline bug).
+    emb = FakeEmbedder({"ref": [1.0, 0.0], "gen": [float("nan"), 0.0]})
+    score = IdentityScorer(embedder=emb).score(Path("gen.png"), identity_ctx(["ref"]))
+    assert math.isnan(score)
+
+
+def test_ref_key_changes_with_file_content(tmp_path: Path) -> None:
+    p = tmp_path / "ref.png"
+    p.write_bytes(b"one")
+    key1 = _ref_key(p)
+    p.write_bytes(b"different content, new size")
+    assert _ref_key(p) != key1  # same path, changed content -> different cache key
+
+
+def test_ref_key_missing_file_is_stable() -> None:
+    assert _ref_key(Path("does-not-exist.png")) == ("does-not-exist.png", -1, -1)
 
 
 def test_reference_set_embedded_once_and_cached() -> None:
