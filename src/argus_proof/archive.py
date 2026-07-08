@@ -108,7 +108,14 @@ def archive_run(
     reject_path = run_dir / REJECT_ARCHIVE_NAME
     reject_path.write_text(reject_archive.model_dump_json(indent=2), encoding="utf-8")
 
-    # Zip the passing images (that still exist on disk).
+    # Warn about report images with no matching file — they can't be archived.
+    missing = [i.image_id for i in report.images if i.passed is not None and i.image_id not in by_id]
+    if missing:
+        logger.warning("archive.missing_images", run_id=report.run_id, image_ids=missing)
+
+    # Zip the passing images (that still exist on disk). Arcname is the unique
+    # image_id (+ suffix) so two passing images that share a basename in
+    # different dirs don't collide and silently drop one.
     passing = [img for img in images if verdict_by_id.get(img.image_id) is True]
     passing_zip: Path | None = None
     if passing:
@@ -117,13 +124,15 @@ def archive_run(
             for img in passing:
                 src = Path(img.path)
                 if src.is_file():
-                    zf.write(src, arcname=src.name)
+                    zf.write(src, arcname=f"{img.image_id}{src.suffix}")
 
+    run_resolved = run_dir.resolve()
     n_pending = sum(1 for img in report.images if img.passed is None)
     deleted: list[str] = []
     if blank_slate:
         # Delete the loose files that are now archived: passing (in the zip) and
         # rejected (recorded as metadata). Pending images are left for review.
+        # Only touch files inside run_dir — never delete an image the run doesn't own.
         for image_id, passed in verdict_by_id.items():
             if passed is None:
                 continue  # not yet reviewed
@@ -131,9 +140,13 @@ def archive_run(
             if img is None:
                 continue
             src = Path(img.path)
-            if src.is_file():
-                src.unlink()
-                deleted.append(src.name)
+            if not src.is_file():
+                continue
+            if not src.resolve().is_relative_to(run_resolved):
+                logger.warning("archive.skip_delete_outside_run_dir", run_id=report.run_id, path=str(src))
+                continue
+            src.unlink()
+            deleted.append(src.name)
 
     result = ArchiveResult(
         run_id=report.run_id,

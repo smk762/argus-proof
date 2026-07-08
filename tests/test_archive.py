@@ -145,3 +145,45 @@ def test_archive_run_writes_manifest_and_report(tmp_path: Path) -> None:
     archive_run(tmp_path, images, rpt, manifest())
     assert RunManifest.model_validate_json((tmp_path / "manifest.json").read_text()).run_id == "run-1"
     assert EvalReport.model_validate_json((tmp_path / "eval_report.json").read_text()).run_id == "run-1"
+
+
+def test_zip_arcname_is_unique_per_image_not_basename(tmp_path: Path) -> None:
+    # two passing images sharing a basename in different dirs must both survive
+    (tmp_path / "d1").mkdir()
+    (tmp_path / "d2").mkdir()
+    for d in ("d1", "d2"):
+        (tmp_path / d / "frame.png").write_bytes(b"x")
+    images = [
+        GeneratedImage(
+            image_id="a", run_id="run-1", seed=1, path=str(tmp_path / "d1" / "frame.png"), width=8, height=8
+        ),
+        GeneratedImage(
+            image_id="b", run_id="run-1", seed=2, path=str(tmp_path / "d2" / "frame.png"), width=8, height=8
+        ),
+    ]
+    rpt = report([ImageScores(image_id="a", seed=1, passed=True), ImageScores(image_id="b", seed=2, passed=True)])
+    archive_run(tmp_path, images, rpt, manifest(), blank_slate=False)
+    import zipfile
+
+    with zipfile.ZipFile(tmp_path / PASSING_ZIP_NAME) as zf:
+        assert sorted(zf.namelist()) == ["a.png", "b.png"]  # both retained, no collision
+
+
+def test_blank_slate_never_deletes_outside_run_dir(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    outside = tmp_path / "shared_source.png"  # not owned by the run
+    outside.write_bytes(b"precious")
+    images = [
+        GeneratedImage(image_id="x", run_id="run-1", seed=1, path=str(outside), width=8, height=8),
+    ]
+    rpt = report([ImageScores(image_id="x", seed=1, passed=False)])  # rejected -> would be deleted
+    archive_run(run_dir, images, rpt, manifest(), blank_slate=True)
+    assert outside.exists()  # a file outside run_dir is never unlinked
+
+
+def test_report_image_without_matching_file_does_not_crash(tmp_path: Path) -> None:
+    images = gen_images(tmp_path, [1])  # only run-1-1
+    rpt = report([image_scores(1, True), image_scores(2, True)])  # run-1-2 has no file
+    result = archive_run(tmp_path, images, rpt, manifest())
+    assert result.n_passing == 1  # only the image with a real file is zipped
