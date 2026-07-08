@@ -822,6 +822,18 @@
         "metrics": {
           "$ref": "#/$defs/MetricScores"
         },
+        "rater_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rater Id"
+        },
         "reasons": {
           "items": {
             "$ref": "#/$defs/RejectReason"

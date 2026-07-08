@@ -495,6 +495,8 @@ class RejectRecord(BaseModel):
     metrics: MetricScores = Field(default_factory=MetricScores)
     hitl_rating: int | None = Field(default=None, ge=1, le=5)
     reasons: list[RejectReason] = Field(default_factory=list)
+    # Who flagged/rated it, when a human was in the loop (for inter-rater analysis).
+    rater_id: str | None = None
 
 
 class RejectArchive(_Versioned):
