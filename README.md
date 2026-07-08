@@ -128,6 +128,26 @@ The pass-rate lower bound uses a Wilson score interval (`argus_proof.stats`, no
 scipy), so acceptance is statistically defensible at small N. A configured metric
 that wasn't measured fails its check rather than passing silently.
 
+## Cross-run stats (Phase 5)
+
+Per-run reports accumulate into a queryable store so "which checkpoint / LoRA
+weight / token wins?" is answered with evidence, not vibes (`argus_proof.crossrun`,
+`pip install "argus-proof[stats]"`):
+
+```python
+from argus_proof.crossrun import CrossRunStore, run_stats, krippendorff_alpha
+
+store = CrossRunStore("proof_stats.parquet")
+store.append(run_stats(manifest, report))          # one tidy row per run (re-append updates)
+for cell in store.slice_pass_rate("base_checkpoint"):
+    print(cell.value, cell.pass_rate, (cell.ci_low, cell.ci_high))   # pooled pass-rate + Wilson CI
+
+alpha = krippendorff_alpha([{"alice": 5, "bob": 4}, ...])   # inter-rater reliability
+```
+
+Pass-rate slices carry a **Wilson confidence interval**, so a lucky 3/3 cell reads
+as far less certain than 300/400; the store is parquet, keyed by `run_id` + versions.
+
 ## Develop
 
 ```bash
