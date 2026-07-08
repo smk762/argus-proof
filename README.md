@@ -85,19 +85,29 @@ report.verdict.passed        # run pass/fail vs GateConfig.run_pass_rate
 
 Concrete scorers live in `argus_proof.scoring.scorers`, behind the `[score]`
 extra, and are lazy-imported (each reports `is_available()` so the orchestrator
-skips it when the extra is absent). Shipped so far — perceptual-hash **dedup +
-diversity** (`pip install "argus-proof[score]"`, CPU-only):
+skips it when the extra is absent). Shipped:
+
+- **dedup + diversity** — `PhashDeduper`, `PhashDiversityScorer` (perceptual hash, CPU-only)
+- **identity** — `IdentityScorer` (InsightFace ArcFace cosine vs a held-out reference set)
+- **quality / adherence** — `clip_score_scorer()` (CLIPScore), `pyiqa_scorer()` (CLIP-IQA), `image_reward_scorer()` (ImageReward), each normalising its raw score to `[0,1]`
 
 ```python
 from argus_proof.scoring import score_run
-from argus_proof.scoring.scorers import PhashDeduper, PhashDiversityScorer
-report = score_run(manifest, images, deduper=PhashDeduper(), diversity=PhashDiversityScorer())
+from argus_proof.scoring.scorers import (
+    PhashDeduper, PhashDiversityScorer, IdentityScorer, clip_score_scorer, pyiqa_scorer,
+)
+report = score_run(
+    manifest, images,
+    scorers=[IdentityScorer(), clip_score_scorer(), pyiqa_scorer()],
+    deduper=PhashDeduper(), diversity=PhashDiversityScorer(),
+)
 ```
 
-Still to land: InsightFace identity, torchmetrics CLIPScore, pyiqa, DreamSim/LPIPS,
-ImageReward/HPSv2 (the torch stack) — with remote/hosted variants on
-`argus_cortex.backends.RemoteBackend` (point at a service by IP/port). The spine
-itself is dependency-free and fully tested with fakes.
+> The quality scorers' default `[0,1]` normalization ranges are **placeholders** —
+> calibrate `lo`/`hi` (e.g. `clip_score_scorer(lo=…, hi=…)`) against real
+> generations. Heavy backends need `pip install "argus-proof[score]"`; remote/hosted
+> variants build on `argus_cortex.backends.RemoteBackend` (point at a service by IP/port).
+> The spine itself is dependency-free and fully tested with fakes.
 
 ## Develop
 

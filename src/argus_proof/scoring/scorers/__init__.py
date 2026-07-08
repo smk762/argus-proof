@@ -10,11 +10,23 @@ from __future__ import annotations
 
 from argus_proof.scoring.scorers.identity import Embedder, IdentityScorer, InsightFaceEmbedder
 from argus_proof.scoring.scorers.phash import PhashDeduper, PhashDiversityScorer
+from argus_proof.scoring.scorers.quality import (
+    ModelScorer,
+    ScoreModel,
+    clip_score_scorer,
+    image_reward_scorer,
+    pyiqa_scorer,
+)
 
 __all__ = [
     "Embedder",
     "IdentityScorer",
     "InsightFaceEmbedder",
+    "ModelScorer",
     "PhashDeduper",
     "PhashDiversityScorer",
+    "ScoreModel",
+    "clip_score_scorer",
+    "image_reward_scorer",
+    "pyiqa_scorer",
 ]
