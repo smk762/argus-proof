@@ -30,8 +30,10 @@ dependencies = [
 server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7"]
 cli = ["typer>=0.12", "rich>=13.0"]
 # Concrete scorers (implement argus_proof.scoring protocols). Grows as scorers
-# land: dedup/diversity (phash) now; identity/quality (torch stack) with #4/#5.
-score = ["pillow>=10.0", "imagehash>=4.3"]
+# land: dedup/diversity (phash) + identity (InsightFace ArcFace) now; quality
+# (torch stack) with #5. CI's dev extra pulls only the light deps; the heavy
+# ones stay opt-in (their scorers report is_available()=False without them).
+score = ["pillow>=10.0", "imagehash>=4.3", "insightface>=0.7", "onnxruntime>=1.16"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff==0.15.16", "httpx>=0.27", "pillow>=10.0", "imagehash>=4.3"]
 
 [project.scripts]
