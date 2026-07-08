@@ -42,6 +42,7 @@ score = [
     "torchmetrics>=1.0",
     "pyiqa>=0.1.10",
     "image-reward>=1.5",
+    "nudenet>=3.0",
 ]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff==0.15.16", "httpx>=0.27", "pillow>=10.0", "imagehash>=4.3"]
 
