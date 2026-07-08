@@ -252,6 +252,72 @@ class ProgressEvent(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Prompt grid — the matrix of runs that systematically probes a LoRA
+# ---------------------------------------------------------------------------
+
+
+class GridConfig(BaseModel):
+    """The axes that expand a source export into a grid of :class:`RunSpec`s.
+
+    Base prompts come from the export's captions (the zeroshot caption variant,
+    falling back to the training ``.txt`` sidecar). Those are multiplied across
+    the axes below into a deterministic, reproducible set of runs; a control
+    ``seeds`` set is shared by every run so seed luck can't skew a comparison.
+
+    * ``lora_checkpoints`` — the LoRA(s) to sweep; supply saved epoch checkpoints
+      here to find the under/overtrained sweet spot (cheap, no retrain).
+    * ``lora_weights`` — the weight sweep (e.g. 0.6–1.0); optimal weight varies
+      per checkpoint and interacts with overtraining.
+    * ``token_axes`` — variable tokens (setting/wardrobe/pose …) combined into
+      Monte-Carlo combos appended to each base prompt, capped by
+      ``max_token_combos`` and sampled deterministically from ``combo_seed`` so
+      token effects stay attributable.
+    * ``flexibility_prompts`` — off-distribution prompts that require a novel
+      attribute, to catch an overfit LoRA that only reproduces its training set.
+    """
+
+    base_checkpoint: str
+    lora_checkpoints: list[str] = Field(min_length=1)
+    lora_weights: list[float] = Field(default_factory=lambda: [1.0], min_length=1)
+    sampling: SamplingParams
+    negative_prompt: str = ""
+    seeds: list[int] = Field(min_length=1)
+    token_axes: dict[str, list[str]] = Field(default_factory=dict)
+    max_token_combos: int | None = Field(default=None, ge=1)
+    max_base_prompts: int | None = Field(default=None, ge=1)
+    flexibility_prompts: list[str] = Field(default_factory=list)
+    combo_seed: int = 0
+    seconds_per_image: float = 6.0  # rough SDXL @ ~30 steps; basis for the GPU-hour estimate
+    run_id_prefix: str = "proof"
+    source_manifest: str | None = None
+    source_manifest_version: str | None = None
+    training_run_id: str | None = None
+
+
+class GridEstimate(BaseModel):
+    """The up-front count + GPU-hour estimate reported before any generation.
+
+    ``axes`` breaks the grid down (how many checkpoints × weights × prompts ×
+    seeds) so a caller sees why the count is what it is before committing GPU.
+    """
+
+    n_runs: int
+    n_images: int
+    seconds_per_image: float
+    est_gpu_seconds: float
+    est_gpu_hours: float
+    axes: dict[str, int] = Field(default_factory=dict)
+
+
+class GridPlan(BaseModel):
+    """A fully enumerated grid: the runs to generate plus their cost estimate."""
+
+    run_id_prefix: str
+    estimate: GridEstimate
+    specs: list[RunSpec] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # EvalReport — per-image + aggregate scores, verdict, provenance
 # ---------------------------------------------------------------------------
 
@@ -408,6 +474,9 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
     GeneratedImage,
     BackendCapabilities,
     ProgressEvent,
+    GridConfig,
+    GridEstimate,
+    GridPlan,
     MetricScores,
     RejectReason,
     ImageScores,
