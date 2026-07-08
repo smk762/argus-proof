@@ -21,10 +21,7 @@ classifiers = [
 ]
 dependencies = [
     # Shared suite foundation (taxonomy, wire-schema tooling, AI-backend contract).
-    # Pinned to an immutable argus-core commit so builds are reproducible (not a
-    # moving @main). Swap to a PyPI version constraint (e.g. "argus-core>=0.1")
-    # once argus-core is published — a direct URL like this blocks PyPI upload.
-    "argus-core @ git+https://github.com/smk762/argus-core@653a600b7561229707a17c2eee2db73ef90b67a5",
+    "argus-cortex>=0.1.0",
     "pydantic>=2.7",
     "structlog>=24.0",
 ]

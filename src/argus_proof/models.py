@@ -27,9 +27,9 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from argus_core.wire import check_version, make_versioned_base, schema_major
-from argus_core.wire import render_schema as _core_render_schema
-from argus_core.wire import wire_schema as _core_wire_schema
+from argus_cortex.wire import check_version, make_versioned_base, schema_major
+from argus_cortex.wire import render_schema as _core_render_schema
+from argus_cortex.wire import wire_schema as _core_wire_schema
 from pydantic import BaseModel, Field
 
 # Version of the proof wire contract (RunManifest / EvalReport / RejectArchive).
@@ -53,7 +53,7 @@ class ProofError(RuntimeError):
     """A user-facing failure: incompatible schema, bad input, malformed run."""
 
 
-# The version machinery is shared suite-wide via argus-core; proof supplies its
+# The version machinery is shared suite-wide via argus-cortex; proof supplies its
 # own field name, version, and error type so a version mismatch is a ProofError.
 proof_major = schema_major
 
@@ -483,7 +483,7 @@ def wire_schema() -> dict:
 def render_wire_schema() -> str:
     """The canonical committed-schema string (sorted, indented, newline-terminated).
 
-    Delegates to argus_core.wire.render_schema so proof's ``schema`` /
+    Delegates to argus_cortex.wire.render_schema so proof's ``schema`` /
     ``schema --check`` formatting stays identical to the rest of the suite.
     """
     return _core_render_schema(WIRE_MODELS, title=WIRE_TITLE)
