@@ -40,15 +40,22 @@ def _stub(verb: str, issue: str) -> None:
     raise typer.Exit(2)
 
 
-def _load_report(report_json: Path):  # noqa: ANN202 - EvalReport imported lazily
-    """Load a scored EvalReport, exiting 2 with a message if it can't be read."""
-    from argus_proof.models import EvalReport, ProofError
+def _load_model(path: Path, model_cls, label: str):  # noqa: ANN001, ANN202 - generic pydantic loader
+    """Load a pydantic model from JSON at *path*, exiting 2 with a message on failure."""
+    from argus_proof.models import ProofError
 
     try:
-        return EvalReport.model_validate_json(report_json.read_text(encoding="utf-8"))
+        return model_cls.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, ProofError) as exc:
-        typer.echo(f"cannot read EvalReport {report_json}: {exc}", err=True)
+        typer.echo(f"cannot read {label} {path}: {exc}", err=True)
         raise typer.Exit(2) from exc
+
+
+def _load_report(report_json: Path):  # noqa: ANN202 - EvalReport imported lazily
+    """Load a scored EvalReport, exiting 2 with a message if it can't be read."""
+    from argus_proof.models import EvalReport
+
+    return _load_model(report_json, EvalReport, "EvalReport")
 
 
 @app.command()
@@ -167,14 +174,8 @@ def experiment(
     """Expand an A/B experiment matrix and report the up-front per-cell cost estimate."""
     from argus_proof.experiment import ExperimentError, ExperimentMatrix, expand_experiment
     from argus_proof.grid import GridError, read_export_prompts
-    from argus_proof.models import ProofError
 
-    try:
-        matrix = ExperimentMatrix.model_validate_json(matrix_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError, ProofError) as exc:
-        typer.echo(f"cannot read ExperimentMatrix {matrix_json}: {exc}", err=True)
-        raise typer.Exit(2) from exc
-
+    matrix = _load_model(matrix_json, ExperimentMatrix, "ExperimentMatrix")
     prompts = read_export_prompts(export_dir)
 
     try:

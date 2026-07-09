@@ -16,8 +16,10 @@ silently queueing thousands of images.
 **Upstream factors** (caption strategy, source-image variation) are *not*
 proof's to vary — a LoRA is already trained under one caption strategy, so proof
 can only compare LoRAs trained under different ones. Those live in
-:attr:`ExperimentMatrix.labels` and ride along on each cell so the cross-run
-store can slice by them after scoring.
+:attr:`ExperimentMatrix.labels` and ride along on each cell. Note: the cross-run
+store's sliceable columns don't yet include ``labels``/``step_config``, so
+comparing arms by those is a follow-up (wire them into ``RunStats`` +
+``CrossRunStore.SLICEABLE``); today the labels are carried metadata for that.
 
 For a matrix too large to brute-force, :func:`optuna_search` (optional ``[opt]``
 extra) does sample-efficient search over the same factor levels.
@@ -31,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from argus_proof.grid import build_grid
+from argus_proof.grid import build_grid, count_prompt_items
 from argus_proof.models import GridConfig, GridPlan, ProofError, SamplingParams
 
 if TYPE_CHECKING:
@@ -43,14 +45,25 @@ class ExperimentError(ProofError):
 
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+# Only these are stripped as extensions; a bare version dot ("model_v2.5") is
+# NOT an extension and must survive into the slug (as "-") rather than be lost.
+_MODEL_EXTS = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf")
 
 
 def _slug(text: str) -> str:
-    """A filesystem/run-id-safe slug from an arbitrary checkpoint name."""
-    # Strip any directory + extension so "models/sdxl_v2.safetensors" -> "sdxl_v2".
-    stem = text.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-    stem = stem.rsplit(".", 1)[0] if "." in stem else stem
-    return _SLUG_RE.sub("-", stem.lower()).strip("-") or "x"
+    """A filesystem/run-id-safe slug from an arbitrary checkpoint or step name.
+
+    Strips a known model extension (``.safetensors`` …) but keeps version dots;
+    every other non-alphanumeric run — path separators, spaces, colons — collapses
+    to ``-`` (rather than being dropped), so no directory or unsafe char leaks into
+    a run_id and distinct inputs stay distinct (``a/sdxl`` vs ``b/sdxl``).
+    """
+    low = text.lower()
+    for ext in _MODEL_EXTS:  # strip a known model extension, but keep version dots
+        if low.endswith(ext):
+            text = text[: -len(ext)]
+            break
+    return _SLUG_RE.sub("-", text.lower()).strip("-") or "x"
 
 
 class StepConfig(BaseModel):
@@ -63,6 +76,10 @@ class StepConfig(BaseModel):
 
     name: str = Field(min_length=1)
     sampling: SamplingParams
+    # Per-step cost override: a 60-step "quality" pass renders slower than a
+    # 20-step "fast" one, so a single matrix-wide rate mis-costs the very axis
+    # this varies. None -> fall back to the matrix's seconds_per_image.
+    seconds_per_image: float | None = Field(default=None, gt=0)
 
 
 class ExperimentMatrix(BaseModel):
@@ -111,25 +128,32 @@ class ExperimentMatrix(BaseModel):
         names = [s.name for s in self.step_configs]
         if len(names) != len(set(names)):
             raise ValueError("step_configs must have unique names")
+        slugs = [_slug(s.name) for s in self.step_configs]
+        if len(slugs) != len(set(slugs)):
+            raise ValueError("step_configs names must stay distinct after slugification (e.g. 'hi res' vs 'hi-res')")
         return self
 
     def cell_configs(self) -> list[tuple[str, str, str, GridConfig]]:
         """Enumerate ``(cell_id, base_checkpoint, step_name, GridConfig)`` per cell.
 
-        One entry per ``base_checkpoint × step_config``. The ``cell_id`` embeds
-        the checkpoint index (so distinct checkpoints that slug identically stay
-        distinct) and the step name, and becomes the cell's ``run_id_prefix`` so
-        no two cells' :class:`RunSpec` ids collide.
+        One entry per ``base_checkpoint × step_config``. The ``cell_id`` is
+        ``{prefix}-c{index}-{checkpoint-slug}-{step-slug}`` — delimited (so the
+        index/slug boundary can't collide once the index needs 3 digits) and
+        fully slugged (so a step name with a slash/space can't produce an unsafe
+        ``RunSpec`` run_id) — and becomes the cell's ``run_id_prefix`` so no two
+        cells' :class:`RunSpec` ids collide.
         """
         cells: list[tuple[str, str, str, GridConfig]] = []
         for ci, checkpoint in enumerate(self.base_checkpoints):
             for step in self.step_configs:
-                cell_id = f"{self.run_id_prefix}-c{ci:02d}{_slug(checkpoint)}-{step.name}"
+                cell_id = f"{self.run_id_prefix}-c{ci:02d}-{_slug(checkpoint)}-{_slug(step.name)}"
                 config = GridConfig(
                     base_checkpoint=checkpoint,
                     lora_checkpoints=self.lora_checkpoints,
                     lora_weights=self.lora_weights,
-                    sampling=step.sampling,
+                    # copy so cells (and the specs they expand into) don't alias one
+                    # mutable SamplingParams — pydantic v2 doesn't copy nested models.
+                    sampling=step.sampling.model_copy(),
                     negative_prompt=self.negative_prompt,
                     seeds=self.seeds,
                     token_axes=self.token_axes,
@@ -137,7 +161,9 @@ class ExperimentMatrix(BaseModel):
                     max_base_prompts=self.max_base_prompts,
                     flexibility_prompts=self.flexibility_prompts,
                     combo_seed=self.combo_seed,
-                    seconds_per_image=self.seconds_per_image,
+                    seconds_per_image=step.seconds_per_image
+                    if step.seconds_per_image is not None
+                    else self.seconds_per_image,
                     run_id_prefix=cell_id,
                     source_manifest=self.source_manifest,
                     source_manifest_version=self.source_manifest_version,
@@ -198,19 +224,44 @@ def expand_experiment(
 ) -> ExperimentPlan:
     """Expand *matrix* over *base_prompts* into a deterministic :class:`ExperimentPlan`.
 
-    Builds one :class:`GridPlan` per cell (reusing the grid builder, so prompt
-    sourcing and per-cell estimation are identical to a single grid) and sums
-    their costs. Each cell carries ``labels`` (the matrix's upstream factors plus
-    its own ``step_config``) for later cross-run slicing.
+    The cost is computed **before any RunSpec is built** — from the axis
+    cardinalities, using each cell's per-step ``seconds_per_image`` — so an
+    intractable matrix is refused (``max_gpu_hours``) without first materializing
+    the millions of specs it would expand to. Only a within-budget matrix is then
+    built into per-cell :class:`GridPlan`\\ s (reusing the grid builder). Each
+    cell carries ``labels`` (the matrix's upstream factors plus its own
+    ``step_config``) as metadata.
 
-    Raises :class:`ExperimentError` if the aggregate exceeds ``max_gpu_hours`` —
-    the cost guardrail — or if the grid builder rejects a cell (e.g. no prompts).
+    Raises :class:`ExperimentError` if the aggregate exceeds ``max_gpu_hours``,
+    or if the expansion yields no prompts.
     """
+    configs = matrix.cell_configs()
+
+    # Pre-flight cost from cardinalities — no RunSpec is built yet. Prompt fields
+    # are matrix-level, so the prompt count is identical for every cell.
+    n_prompts = count_prompt_items(configs[0][3], base_prompts)
+    if n_prompts == 0:
+        raise ExperimentError(
+            "no prompts to generate — the export had no captions and no flexibility_prompts were given"
+        )
+    n_runs_per_cell = len(matrix.lora_checkpoints) * len(matrix.lora_weights) * n_prompts
+    n_images_per_cell = n_runs_per_cell * len(matrix.seeds)
+    gpu_seconds = sum(n_images_per_cell * cfg.seconds_per_image for *_, cfg in configs)
+    gpu_hours = gpu_seconds / 3600.0
+
+    if max_gpu_hours is not None and gpu_hours > max_gpu_hours:
+        raise ExperimentError(
+            f"experiment needs {gpu_hours:.1f} GPU-hours across {len(configs)} cells "
+            f"({n_images_per_cell * len(configs)} images) > budget {max_gpu_hours} — trim factors/levels, "
+            f"cap prompts (max_base_prompts), or use optuna_search for guided search"
+        )
+
+    # Within budget → materialize the grids for the returned plan.
     cells: list[ExperimentCell] = []
-    for cell_id, checkpoint, step_name, config in matrix.cell_configs():
+    for cell_id, checkpoint, step_name, config in configs:
         try:
             plan = build_grid(config, base_prompts)
-        except ProofError as exc:
+        except ProofError as exc:  # defensive: n_prompts > 0 means build_grid has prompts
             raise ExperimentError(f"cell {cell_id!r} could not be built: {exc}") from exc
         cells.append(
             ExperimentCell(
@@ -222,26 +273,14 @@ def expand_experiment(
             )
         )
 
-    n_runs = sum(c.plan.estimate.n_runs for c in cells)
-    n_images = sum(c.plan.estimate.n_images for c in cells)
-    gpu_seconds = sum(c.plan.estimate.est_gpu_seconds for c in cells)
-    gpu_hours = gpu_seconds / 3600.0
-
-    if max_gpu_hours is not None and gpu_hours > max_gpu_hours:
-        raise ExperimentError(
-            f"experiment needs {gpu_hours:.1f} GPU-hours across {len(cells)} cells "
-            f"({n_images} images) > budget {max_gpu_hours} — trim factors/levels, "
-            f"cap prompts (max_base_prompts), or use optuna_search for guided search"
-        )
-
     estimate = ExperimentEstimate(
         n_cells=len(cells),
-        n_runs=n_runs,
-        n_images=n_images,
+        n_runs=n_runs_per_cell * len(cells),
+        n_images=n_images_per_cell * len(cells),
         seconds_per_image=matrix.seconds_per_image,
         est_gpu_seconds=gpu_seconds,
         est_gpu_hours=gpu_hours,
-        per_cell={c.cell_id: c.plan.estimate.n_images for c in cells},
+        per_cell={c.cell_id: n_images_per_cell for c in cells},
     )
     return ExperimentPlan(run_id_prefix=matrix.run_id_prefix, estimate=estimate, cells=cells)
 

@@ -211,9 +211,10 @@ for cell in plan.cells:
 
 **Upstream factors** (caption strategy, source-image variation) are trained *into*
 a LoRA, so proof can't vary them — it lists them in `labels`, which ride on every
-cell so the cross-run store (`argus_proof.crossrun`) can slice results by them
-after scoring. For a matrix too large to brute-force, `optuna_search()`
-(optional `[opt]` extra) does sample-efficient search over the same factor levels.
+cell as metadata. (Slicing the cross-run store by `labels`/`step_config` is a
+follow-up — those aren't yet `CrossRunStore.SLICEABLE` columns.) For a matrix too
+large to brute-force, `optuna_search()` (optional `[opt]` extra) does
+sample-efficient search over the same factor levels.
 
 ## Develop
 
