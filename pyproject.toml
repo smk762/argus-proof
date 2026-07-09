@@ -44,7 +44,11 @@ score = [
     "image-reward>=1.5",
     "nudenet>=3.0",
 ]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff==0.15.16", "httpx>=0.27", "pillow>=10.0", "imagehash>=4.3"]
+# Cross-run stats store (pass-rate CIs use the dependency-free argus_proof.stats;
+# the parquet store needs polars, inter-rater reliability the krippendorff pkg).
+# Lightweight — pulled into dev so CI tests it.
+stats = ["polars>=1.0", "krippendorff>=0.6"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff==0.15.16", "httpx>=0.27", "pillow>=10.0", "imagehash>=4.3", "polars>=1.0", "krippendorff>=0.6"]
 
 [project.scripts]
 argus-proof = "argus_proof.cli:app"
