@@ -13,14 +13,19 @@ so the adapter is unit-testable without a live A1111.
 
 from __future__ import annotations
 
-import base64
-import binascii
 from pathlib import Path
 
 import structlog
 
-from argus_proof.backends.base import BackendError, GenResult, ModelResolver, ProgressSink, build_local_manifest
-from argus_proof.backends.http import Transport, UrllibTransport
+from argus_proof.backends.base import (
+    BackendError,
+    GenResult,
+    ModelResolver,
+    ProgressSink,
+    build_local_manifest,
+    write_manifest,
+)
+from argus_proof.backends.http import Transport, UrllibTransport, decode_base64_image
 from argus_proof.backends.pnginfo import read_dimensions
 from argus_proof.models import BackendCapabilities, GeneratedImage, ProgressEvent, RunSpec
 
@@ -84,7 +89,7 @@ class A1111Backend:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
 
-        (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        write_manifest(out_dir, manifest)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
 
@@ -95,7 +100,7 @@ class A1111Backend:
             raise BackendError(f"A1111 produced no images for seed {seed}")
         produced: list[GeneratedImage] = []
         for index, b64 in enumerate(encoded):
-            data = _decode_image(b64, seed)
+            data = decode_base64_image(b64, context=f"A1111 seed {seed}")
             suffix = "" if index == 0 else f"-{index}"
             image_id = f"{spec.run_id}-{seed}{suffix}"
             path = out_dir / f"{image_id}.png"
@@ -115,8 +120,19 @@ class A1111Backend:
         return produced
 
     def _payload(self, spec: RunSpec, seed: int) -> dict:
-        # A1111 applies LoRAs via the prompt: "<lora:filename-stem:weight>".
-        lora_tags = "".join(f" <lora:{Path(lo.name).stem}:{lo.weight}>" for lo in spec.loras)
+        # A1111 applies LoRAs via the prompt: "<lora:name:weight>" — keep any
+        # subdirectory (with_suffix drops only the extension) so a nested LoRA
+        # (loras/char/subject.safetensors) resolves as "<lora:char/subject:...>".
+        lora_tags = "".join(f" <lora:{Path(lo.name).with_suffix('')}:{lo.weight}>" for lo in spec.loras)
+        # Pin the checkpoint, VAE, and clip-skip via override_settings so the run
+        # matches the manifest; restore_afterwards=False keeps the checkpoint loaded
+        # across the run's seeds instead of reloading it per request.
+        override: dict = {
+            "sd_model_checkpoint": spec.base_checkpoint,
+            "CLIP_stop_at_last_layers": spec.sampling.clip_skip,
+        }
+        if spec.vae:
+            override["sd_vae"] = spec.vae
         return {
             "prompt": spec.prompt + lora_tags,
             "negative_prompt": spec.negative_prompt,
@@ -129,16 +145,6 @@ class A1111Backend:
             "scheduler": spec.sampling.scheduler,
             "batch_size": 1,
             "n_iter": 1,
-            "override_settings": {"sd_model_checkpoint": spec.base_checkpoint},
-            "override_settings_restore_afterwards": True,
+            "override_settings": override,
+            "override_settings_restore_afterwards": False,
         }
-
-
-def _decode_image(b64: str, seed: int) -> bytes:
-    # A1111 returns raw base64; SD.Next may prefix a "data:image/png;base64," header.
-    if "," in b64 and b64.lstrip().startswith("data:"):
-        b64 = b64.split(",", 1)[1]
-    try:
-        return base64.b64decode(b64, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise BackendError(f"A1111 returned an undecodable image for seed {seed}: {exc}") from exc

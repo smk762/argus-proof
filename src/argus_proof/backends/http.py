@@ -10,12 +10,25 @@ caller sees one error type whether the server is down or a request was malformed
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import urllib.error
 import urllib.request
 from typing import Protocol
 
 from argus_proof.backends.base import BackendError
+
+
+def decode_base64_image(encoded: str, *, context: str) -> bytes:
+    """Decode a base64 image (tolerating a ``data:...;base64,`` prefix), or raise
+    :class:`BackendError` — the shared decoder for the base64-over-HTTP backends."""
+    if "," in encoded and encoded.lstrip().startswith("data:"):
+        encoded = encoded.split(",", 1)[1]
+    try:
+        return base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise BackendError(f"{context}: undecodable base64 image: {exc}") from exc
 
 
 class Transport(Protocol):
@@ -62,14 +75,20 @@ class UrllibTransport:
         req = urllib.request.Request(self.base + path, data=data, headers=headers, method=method)
         return self._open(req)
 
+    def _loads(self, raw: bytes) -> dict:
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise BackendError(f"{self.label} returned a non-JSON response: {exc}") from exc
+
     def post_json(self, path: str, payload: dict) -> dict:
         raw = self._request(
             path, data=json.dumps(payload).encode("utf-8"), method="POST", content_type="application/json"
         )
-        return json.loads(raw)
+        return self._loads(raw)
 
     def get_json(self, path: str) -> dict:
-        return json.loads(self._request(path))
+        return self._loads(self._request(path))
 
     def get_bytes(self, path: str) -> bytes:
         return self._request(path)

@@ -100,6 +100,31 @@ class GenBackend(Protocol):
         ...
 
 
+# The per-run manifest filename every backend writes into its out_dir.
+MANIFEST_NAME = "manifest.json"
+
+
+def write_manifest(out_dir: Path, manifest: RunManifest) -> Path:
+    """Write *manifest* as ``manifest.json`` under *out_dir* (the shared final step
+    of every backend's ``generate``)."""
+    path = out_dir / MANIFEST_NAME
+    path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    return path
+
+
+def safe_image_id(image_id: str) -> str:
+    """Validate a backend-supplied *image_id* that will become a filename.
+
+    Raises :class:`BackendError` for anything that could escape the run's output
+    directory (path separators, ``..``, absolute/NUL) — a backend the caller
+    doesn't fully control (a remote/cloud service) must not be able to dictate an
+    arbitrary write path. Returns the id unchanged when it is safe.
+    """
+    if not image_id or image_id in {".", ".."} or "/" in image_id or "\\" in image_id or "\x00" in image_id:
+        raise BackendError(f"unsafe image_id {image_id!r} from backend")
+    return image_id
+
+
 def hash_model(resolve_model: ModelResolver, name: str) -> str:
     """Resolve *name* to a local file and return its SHA256, or raise
     :class:`BackendError` if it can't be resolved/hashed."""

@@ -18,15 +18,13 @@ hashes it reports. Credentials are an ``Authorization: Bearer`` header via
 
 from __future__ import annotations
 
-import base64
-import binascii
 from pathlib import Path
 
 import structlog
 from pydantic import ValidationError
 
-from argus_proof.backends.base import BackendError, GenResult, ProgressSink
-from argus_proof.backends.http import Transport, UrllibTransport
+from argus_proof.backends.base import BackendError, GenResult, ProgressSink, safe_image_id, write_manifest
+from argus_proof.backends.http import Transport, UrllibTransport, decode_base64_image
 from argus_proof.backends.pnginfo import read_dimensions
 from argus_proof.models import BackendCapabilities, GeneratedImage, ProgressEvent, ProofError, RunManifest, RunSpec
 
@@ -89,7 +87,7 @@ class RemoteBackend:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=error))
             raise BackendError(error)
 
-        (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        write_manifest(out_dir, manifest)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
 
@@ -103,16 +101,50 @@ class RemoteBackend:
             raise BackendError(f"remote service returned an invalid manifest: {exc}") from exc
         if manifest.run_id != spec.run_id:
             raise BackendError(f"remote manifest run_id {manifest.run_id!r} != requested {spec.run_id!r}")
+        self._check_matches_spec(manifest, spec)
         return manifest
+
+    @staticmethod
+    def _check_matches_spec(manifest: RunManifest, spec: RunSpec) -> None:
+        """The service is trusted for the model *hashes* it reports, not for
+        silently substituting the request — the recorded manifest must describe the
+        run that was asked for, or reproducibility is a fiction."""
+        manifest_vae = manifest.vae.name if manifest.vae else None
+        mismatches = [
+            field
+            for field, want, got in (
+                ("base_checkpoint", spec.base_checkpoint, manifest.base_checkpoint.name),
+                ("vae", spec.vae, manifest_vae),
+                ("prompt", spec.prompt, manifest.prompt),
+                ("negative_prompt", spec.negative_prompt, manifest.negative_prompt),
+                ("sampling", spec.sampling, manifest.sampling),
+                ("seeds", list(spec.seeds), list(manifest.seeds)),
+                (
+                    "loras",
+                    [(lo.name, lo.weight) for lo in spec.loras],
+                    [(lo.name, lo.weight) for lo in manifest.loras],
+                ),
+            )
+            if want != got
+        ]
+        if mismatches:
+            raise BackendError(f"remote manifest does not match the requested spec: {mismatches}")
 
     def _collect_images(self, resp: dict, spec: RunSpec, out_dir: Path, emit: ProgressSink) -> list[GeneratedImage]:
         produced: list[GeneratedImage] = []
+        seen: set[str] = set()
         for index, item in enumerate(resp.get("images") or []):
-            if "seed" not in item or "content_base64" not in item:
-                raise BackendError(f"remote image {index} is missing 'seed' or 'content_base64'")
-            data = _decode_image(item["content_base64"], index)
+            if not isinstance(item, dict) or "seed" not in item or "content_base64" not in item:
+                raise BackendError(f"remote image {index} must be an object with 'seed' and 'content_base64'")
+            data = decode_base64_image(item["content_base64"], context=f"remote image {index}")
             seed = item["seed"]
-            image_id = item.get("image_id") or f"{spec.run_id}-{seed}"
+            # Validate a service-supplied image_id before it becomes a filename
+            # (a hostile/buggy endpoint must not dictate a write path); disambiguate
+            # a collision (e.g. two images for one seed) so neither overwrites.
+            image_id = safe_image_id(str(item.get("image_id") or f"{spec.run_id}-{seed}"))
+            if image_id in seen:
+                image_id = f"{image_id}-{index}"
+            seen.add(image_id)
             path = out_dir / f"{image_id}.png"
             path.write_bytes(data)
             dims = read_dimensions(data) or (spec.sampling.width, spec.sampling.height)
@@ -123,12 +155,3 @@ class RemoteBackend:
             )
             emit(ProgressEvent(run_id=spec.run_id, type="image", seed=seed, image_id=image_id))
         return produced
-
-
-def _decode_image(b64: str, index: int) -> bytes:
-    if "," in b64 and b64.lstrip().startswith("data:"):
-        b64 = b64.split(",", 1)[1]
-    try:
-        return base64.b64decode(b64, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise BackendError(f"remote image {index} is not valid base64: {exc}") from exc

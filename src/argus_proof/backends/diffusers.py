@@ -23,7 +23,14 @@ from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
-from argus_proof.backends.base import BackendError, GenResult, ModelResolver, ProgressSink, build_local_manifest
+from argus_proof.backends.base import (
+    BackendError,
+    GenResult,
+    ModelResolver,
+    ProgressSink,
+    build_local_manifest,
+    write_manifest,
+)
 from argus_proof.models import BackendCapabilities, GeneratedImage, ProgressEvent, RunSpec
 
 if TYPE_CHECKING:
@@ -118,8 +125,12 @@ class DiffusersBackend:
         except BackendError as exc:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
+        except Exception as exc:  # torch OOM, disk-full on save, … -> uniform BackendError (GenBackend contract)
+            error = f"diffusers generation failed: {exc}"
+            emit(ProgressEvent(run_id=spec.run_id, type="error", message=error))
+            raise BackendError(error) from exc
 
-        (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        write_manifest(out_dir, manifest)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
 
@@ -130,14 +141,16 @@ class DiffusersBackend:
         return self._engine_version
 
 
-# Common sampler/scheduler names -> diffusers scheduler class names (best-effort).
+# Common sampler names -> diffusers scheduler class names (best-effort). Only names
+# whose diffusers default config faithfully matches are listed — e.g. the SDE
+# variant (dpmpp_2m_sde) is intentionally omitted rather than silently rendered as
+# its non-SDE cousin; an unlisted sampler falls back to the pipeline default.
 _SCHEDULERS: dict[str, str] = {
     "euler": "EulerDiscreteScheduler",
     "euler_a": "EulerAncestralDiscreteScheduler",
     "euler_ancestral": "EulerAncestralDiscreteScheduler",
     "ddim": "DDIMScheduler",
     "dpmpp_2m": "DPMSolverMultistepScheduler",
-    "dpmpp_2m_sde": "DPMSolverMultistepScheduler",
     "unipc": "UniPCMultistepScheduler",
 }
 
@@ -168,22 +181,36 @@ class _DiffusersRenderer:
 
     def _build(self, spec: RunSpec):  # noqa: ANN202 - returns a diffusers pipeline
         try:
+            import diffusers
             import torch
-            from diffusers import StableDiffusionXLPipeline
         except ImportError as exc:  # pragma: no cover - exercised only without the extra
             raise BackendError("diffusers backend requires: pip install 'argus-proof[diffusers]'") from exc
 
         device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
-        dtype = getattr(torch, self._dtype) if self._dtype else (torch.float16 if device == "cuda" else torch.float32)
+        if self._dtype is not None:
+            dtype = getattr(torch, self._dtype, None)
+            if dtype is None:
+                raise BackendError(f"unknown torch dtype {self._dtype!r} (e.g. 'float16', 'float32', 'bfloat16')")
+        else:
+            dtype = torch.float16 if device == "cuda" else torch.float32
+
         base_path = self.resolve_model(spec.base_checkpoint)
-        pipe = StableDiffusionXLPipeline.from_single_file(str(base_path), torch_dtype=dtype).to(device)
+        # Load the requested VAE explicitly so it's actually applied — otherwise the
+        # manifest would SHA256-pin a VAE the checkpoint's baked-in one silently
+        # replaced (build_local_manifest records spec.vae).
+        extra = {}
+        if spec.vae:
+            extra["vae"] = diffusers.AutoencoderKL.from_single_file(
+                str(self.resolve_model(spec.vae)), torch_dtype=dtype
+            )
+        pipe = diffusers.StableDiffusionXLPipeline.from_single_file(str(base_path), torch_dtype=dtype, **extra).to(
+            device
+        )
 
         scheduler = _SCHEDULERS.get(spec.sampling.sampler)
         if scheduler is not None:
-            import diffusers as _diffusers
-
             use_karras = spec.sampling.scheduler.lower() == "karras"
-            pipe.scheduler = getattr(_diffusers, scheduler).from_config(
+            pipe.scheduler = getattr(diffusers, scheduler).from_config(
                 pipe.scheduler.config, use_karras_sigmas=use_karras
             )
 
@@ -196,11 +223,24 @@ class _DiffusersRenderer:
         self._built_device = device
         return pipe
 
+    def _key(self, spec: RunSpec) -> tuple:
+        # Everything baked into the pipeline at build time: base, VAE, the
+        # scheduler (sampler + karras flag), and the LoRA set + weights. Omitting
+        # any of these would serve a stale pipeline on renderer reuse.
+        return (
+            spec.base_checkpoint,
+            spec.vae,
+            spec.sampling.sampler,
+            spec.sampling.scheduler,
+            tuple((lo.name, lo.weight) for lo in spec.loras),
+        )
+
     def render(self, spec: RunSpec, seed: int) -> Image:
         import torch
 
-        key = (spec.base_checkpoint, spec.sampling.sampler, tuple((lo.name, lo.weight) for lo in spec.loras))
+        key = self._key(spec)
         if self._pipe is None or self._pipe_key != key:
+            self._pipe = None  # free the previous pipeline before building the next (avoid 2x VRAM)
             self._pipe = self._build(spec)
             self._pipe_key = key
         generator = torch.Generator(device=self._built_device).manual_seed(seed)

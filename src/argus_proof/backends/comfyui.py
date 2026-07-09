@@ -18,7 +18,14 @@ from pathlib import Path
 
 import structlog
 
-from argus_proof.backends.base import BackendError, GenResult, ModelResolver, ProgressSink, build_local_manifest
+from argus_proof.backends.base import (
+    BackendError,
+    GenResult,
+    ModelResolver,
+    ProgressSink,
+    build_local_manifest,
+    write_manifest,
+)
 from argus_proof.backends.http import Transport, UrllibTransport
 from argus_proof.backends.pnginfo import read_dimensions, read_text_chunks
 from argus_proof.backends.workflow import render_workflow
@@ -101,7 +108,7 @@ class ComfyUIBackend:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
 
-        (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        write_manifest(out_dir, manifest)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
 

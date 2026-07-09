@@ -78,8 +78,36 @@ def test_payload_carries_lora_syntax_seed_and_checkpoint_override(models: Path, 
     payload = transport.payloads[0]
     assert payload["seed"] == 7
     assert "<lora:subject:0.8>" in payload["prompt"]
+    assert payload["sampler_name"] == "DPM++ 2M" and payload["scheduler"] == "karras"
     assert payload["override_settings"]["sd_model_checkpoint"] == "base.safetensors"
+    # clip_skip is a setting, not a txt2img field, so it must ride override_settings
+    assert payload["override_settings"]["CLIP_stop_at_last_layers"] == 2
     assert payload["negative_prompt"] == "blurry"
+
+
+def test_payload_pins_vae_and_keeps_lora_subdirectory(tmp_path: Path) -> None:
+    (tmp_path / "base.safetensors").write_bytes(b"base")
+    (tmp_path / "char").mkdir()
+    (tmp_path / "char" / "subject.safetensors").write_bytes(b"lora")
+    (tmp_path / "sdxl_vae.safetensors").write_bytes(b"vae")
+    from argus_proof.models import SamplingParams
+
+    spec = RunSpec(
+        run_id="run-1",
+        base_checkpoint="base.safetensors",
+        vae="sdxl_vae.safetensors",
+        loras=[LoRASpec(name="char/subject.safetensors", weight=0.7)],
+        sampling=SamplingParams(
+            sampler="euler", scheduler="normal", steps=4, cfg=7.0, clip_skip=1, width=64, height=64
+        ),
+        prompt="sks",
+        seeds=[1],
+    )
+    transport = FakeTransport(make_png())
+    _backend(tmp_path, transport).generate(spec, tmp_path / "run")
+    payload = transport.payloads[0]
+    assert "<lora:char/subject:0.7>" in payload["prompt"]  # subdir kept, extension dropped
+    assert payload["override_settings"]["sd_vae"] == "sdxl_vae.safetensors"
 
 
 def test_data_uri_prefixed_image_is_decoded(models: Path, tmp_path: Path) -> None:

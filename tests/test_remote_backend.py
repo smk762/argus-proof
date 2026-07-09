@@ -113,3 +113,34 @@ def test_image_missing_fields_raises(tmp_path: Path) -> None:
     transport = FakeTransport(images=[{"seed": 1}])  # no content_base64
     with pytest.raises(BackendError, match="content_base64"):
         RemoteBackend("http://svc", transport=transport).generate(_spec([1]), tmp_path / "run")
+
+
+def test_malformed_image_item_raises_backend_error(tmp_path: Path) -> None:
+    transport = FakeTransport(images=[None])  # not an object -> BackendError, not raw TypeError
+    with pytest.raises(BackendError, match="must be an object"):
+        RemoteBackend("http://svc", transport=transport).generate(_spec([1]), tmp_path / "run")
+
+
+def test_manifest_not_matching_spec_raises(tmp_path: Path) -> None:
+    bad = _manifest_json()
+    bad["prompt"] = "a completely different prompt"  # service substituted the request
+    transport = FakeTransport(manifest=bad)
+    with pytest.raises(BackendError, match="does not match the requested spec"):
+        RemoteBackend("http://svc", transport=transport).generate(_spec([1]), tmp_path / "run")
+
+
+def test_unsafe_image_id_is_rejected(tmp_path: Path) -> None:
+    png_b64 = base64.b64encode(make_png()).decode()
+    transport = FakeTransport(images=[{"seed": 1, "image_id": "../../evil", "content_base64": png_b64}])
+    with pytest.raises(BackendError, match="unsafe image_id"):
+        RemoteBackend("http://svc", transport=transport).generate(_spec([1]), tmp_path / "run")
+
+
+def test_duplicate_seed_images_do_not_overwrite(tmp_path: Path) -> None:
+    png_b64 = base64.b64encode(make_png()).decode()
+    transport = FakeTransport(
+        images=[{"seed": 1, "content_base64": png_b64}, {"seed": 1, "content_base64": png_b64}]  # same seed, no id
+    )
+    result = RemoteBackend("http://svc", transport=transport).generate(_spec([1]), tmp_path / "run")
+    paths = {i.path for i in result.images}
+    assert len(paths) == 2 and all(Path(p).is_file() for p in paths)  # neither clobbered the other
