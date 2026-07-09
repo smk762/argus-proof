@@ -148,6 +148,33 @@ alpha = krippendorff_alpha([{"alice": 5, "bob": 4}, ...])   # inter-rater reliab
 Pass-rate slices carry a **Wilson confidence interval**, so a lucky 3/3 cell reads
 as far less certain than 300/400; the store is parquet, keyed by `run_id` + versions.
 
+## Recommendations (Phase 6)
+
+The gate says *did it pass?*; `argus_proof.recommend` says *what to change, and
+where* — mapping weak metrics to the suite stage that owns the fix:
+
+```bash
+argus-proof recommend eval_report.json --store proof_stats.parquet
+# [lens]  unsafe outputs [unsafe_rate 0.04 vs 0.00]: filter/re-caption training data…   (safety first)
+# [forge] identity didn't transfer [identity 0.41 vs 0.60]: add/curate more identity images…
+# [lens]  prompt adherence low [clip_score 0.32 vs 0.50]: revisit the captioning strategy…
+# [grid]  prompt adherence low [clip_score 0.32 vs 0.50]: try different prompt/token combinations…
+# [checkpoint] base_checkpoint outcome varies across runs: prefer base_checkpoint='sdxl_v2'…
+```
+
+```python
+from argus_proof.recommend import RecommendConfig, recommend
+# keep the floors in lock-step with the CI gate so the two can't disagree:
+cfg = RecommendConfig.from_acceptance(thresholds)
+for rec in recommend(report, config=cfg, store=cross_run_store):   # store optional
+    print(rec.stage, rec.metric, rec.value, rec.action)
+```
+
+Safety first, then: low identity/aesthetic → **forge** (training), low adherence →
+**lens** + **grid**, low diversity → **grid**, borderline → **refine** (HITL). With a
+cross-run store it also surfaces the best checkpoint / LoRA weight — but only when
+the evidence separates a clear winner (non-overlapping CIs), never on a tie.
+
 ## Develop
 
 ```bash
