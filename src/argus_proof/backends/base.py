@@ -15,9 +15,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from argus_proof.hashing import sha256_cached
 from argus_proof.models import (
     BackendCapabilities,
     GeneratedImage,
+    LoRARef,
+    ModelRef,
     ProgressEvent,
     ProofError,
     RunManifest,
@@ -95,3 +98,48 @@ class GenBackend(Protocol):
     def generate(self, spec: RunSpec, out_dir: Path, progress: ProgressSink | None = None) -> GenResult:
         """Run *spec*, writing images under *out_dir*; return manifest + images."""
         ...
+
+
+def hash_model(resolve_model: ModelResolver, name: str) -> str:
+    """Resolve *name* to a local file and return its SHA256, or raise
+    :class:`BackendError` if it can't be resolved/hashed."""
+    try:
+        path = resolve_model(name)
+    except Exception as exc:  # resolver signals "not found" however it likes
+        raise BackendError(f"cannot hash {name!r} for the manifest: {exc}") from exc
+    if not path.is_file():
+        raise BackendError(f"cannot hash {name!r}: resolved path {path} is not a file")
+    return sha256_cached(path)
+
+
+def build_local_manifest(
+    spec: RunSpec,
+    *,
+    resolve_model: ModelResolver,
+    engine: str,
+    engine_version: str,
+) -> RunManifest:
+    """A reproducible :class:`RunManifest` for a backend whose weights are on disk.
+
+    Resolves and SHA256-pins the base checkpoint, VAE, and every LoRA (via
+    *resolve_model*) so the run reconstructs exactly — the shared path for the
+    local backends (ComfyUI, diffusers, A1111). A missing/unresolvable model
+    raises :class:`BackendError` here, before any generation. (A purely remote
+    backend, whose weights aren't local, builds its manifest from the service's
+    own response instead — see :mod:`argus_proof.backends.remote`.)
+    """
+    return RunManifest(
+        run_id=spec.run_id,
+        base_checkpoint=ModelRef(name=spec.base_checkpoint, sha256=hash_model(resolve_model, spec.base_checkpoint)),
+        vae=ModelRef(name=spec.vae, sha256=hash_model(resolve_model, spec.vae)) if spec.vae else None,
+        loras=[LoRARef(name=lo.name, sha256=hash_model(resolve_model, lo.name), weight=lo.weight) for lo in spec.loras],
+        sampling=spec.sampling,
+        prompt=spec.prompt,
+        negative_prompt=spec.negative_prompt,
+        seeds=list(spec.seeds),
+        engine=engine,
+        engine_version=engine_version,
+        source_manifest=spec.source_manifest,
+        source_manifest_version=spec.source_manifest_version,
+        training_run_id=spec.training_run_id,
+    )

@@ -56,6 +56,10 @@ opt = ["optuna>=3.0"]
 # FiftyOne dataset for embedding viz + tag triage. Heavy + power-user-only, so
 # NOT in dev — argus_proof.explore lazy-imports it and is_available()-guards.
 fiftyone = ["fiftyone>=0.23", "umap-learn>=0.5"]  # umap-learn powers the --umap brain visualisation
+# In-process diffusers generation backend (issue #13). Heavy (torch), so opt-in;
+# the a1111/remote backends need no extra (stdlib HTTP). Lazy-imported by
+# argus_proof.backends.diffusers; absent -> a clear install hint.
+diffusers = ["diffusers>=0.27", "torch>=2.0", "transformers>=4.38", "accelerate>=0.27", "safetensors>=0.4", "pillow>=10.0"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff==0.15.16", "httpx>=0.27", "pillow>=10.0", "imagehash>=4.3", "polars>=1.0", "krippendorff>=0.6", "optuna>=3.0"]
 
 [project.scripts]
