@@ -58,6 +58,18 @@ def test_sample_tags_verdict_and_reject_codes() -> None:
     assert sample_tags(img) == ["failed", "reject:unsafe"]
 
 
+def test_sample_fields_and_tags_export_refinement() -> None:
+    from argus_proof.models import Refinement
+
+    img = _img("a", passed=True, refinement=Refinement(rank=5, notes="cleanest"))
+    fields = sample_fields(img)
+    assert fields["refined_rank"] == 5 and fields["refined_notes"] == "cleanest"
+    assert "refined" in sample_tags(img)
+    # no refinement -> no refined fields/tag
+    plain = _img("b", passed=True)
+    assert "refined_rank" not in sample_fields(plain) and "refined" not in sample_tags(plain)
+
+
 def test_ingest_rating_tag_sets_hitl_and_recomputes_verdict() -> None:
     report = _report([_img("a", passed=None)])
     out = ingest_tags(report, {"a": ["rating:5"]}, rater="alice")

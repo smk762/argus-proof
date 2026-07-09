@@ -62,12 +62,20 @@ def sample_fields(img: ImageScores) -> dict[str, Any]:
         fields["duplicate_group"] = img.duplicate_group
     if img.reject_reasons:
         fields["reject_reasons"] = [r.code for r in img.reject_reasons]
+    if img.refinement is not None:
+        fields["refined_rank"] = img.refinement.rank
+        if img.refinement.notes is not None:
+            fields["refined_notes"] = img.refinement.notes
     return fields
 
 
 def sample_tags(img: ImageScores) -> list[str]:
-    """Triage tags for one image: its verdict plus a ``reject:<code>`` per reason."""
-    return [_verdict_label(img.passed), *(f"{_REJECT_TAG}{r.code}" for r in img.reject_reasons)]
+    """Triage tags for one image: its verdict, a ``reject:<code>`` per reason, and
+    ``refined`` when a second-pass re-rank is present."""
+    tags = [_verdict_label(img.passed), *(f"{_REJECT_TAG}{r.code}" for r in img.reject_reasons)]
+    if img.refinement is not None:
+        tags.append("refined")
+    return tags
 
 
 def _parse_rating(tags: list[str]) -> int | None:
