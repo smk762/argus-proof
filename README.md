@@ -148,6 +148,29 @@ alpha = krippendorff_alpha([{"alice": 5, "bob": 4}, ...])   # inter-rater reliab
 Pass-rate slices carry a **Wilson confidence interval**, so a lucky 3/3 cell reads
 as far less certain than 300/400; the store is parquet, keyed by `run_id` + versions.
 
+## Recommendations (Phase 6)
+
+The gate says *did it pass?*; `argus_proof.recommend` says *what to change, and
+where* — mapping weak metrics to the suite stage that owns the fix:
+
+```bash
+argus-proof recommend eval_report.json
+# [forge] identity didn't transfer: add/curate more identity-representative training images…
+# [lens]  prompt adherence low: revisit the captioning strategy…
+# [grid]  low output diversity: widen the token/prompt axes…
+```
+
+```python
+from argus_proof.recommend import recommend
+for rec in recommend(report, store=cross_run_store):   # store optional: best checkpoint/weight
+    print(rec.stage, rec.action)
+```
+
+Low identity/aesthetic → **forge** (training), low adherence → **lens** + **grid**,
+low diversity → **grid**, unsafe → **lens**, borderline → **refine** (HITL); with a
+cross-run store it also surfaces the best checkpoint / LoRA weight by
+evidence-adjusted pass-rate.
+
 ## Develop
 
 ```bash

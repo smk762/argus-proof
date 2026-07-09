@@ -14,7 +14,7 @@ runner = CliRunner()
 def test_help_lists_verbs() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for verb in ("inspect", "run", "score", "report", "gate", "schema", "serve"):
+    for verb in ("inspect", "run", "score", "report", "gate", "recommend", "schema", "serve"):
         assert verb in result.output
 
 
@@ -55,6 +55,25 @@ def test_gate_invalid_confidence_exits_two_cleanly(tmp_path: Path) -> None:
     _write_report(report, n_passed=90, n_groups=100, pass_rate=0.9)
     result = runner.invoke(app, ["gate", str(report), "--confidence", "1.0"])
     assert result.exit_code == 2  # clean exit, not an unhandled traceback
+
+
+def test_recommend_prints_routed_suggestions(tmp_path: Path) -> None:
+    from argus_proof.models import AggregateScores, EvalReport, MetricScores, Verdict
+
+    report = tmp_path / "eval_report.json"
+    low_identity = EvalReport(
+        run_id="run-1",
+        aggregate=AggregateScores(n_images=1, n_groups=1, n_passed=0, pass_rate=0.0, means=MetricScores(identity=0.2)),
+        verdict=Verdict(passed=False),
+    )
+    report.write_text(low_identity.model_dump_json(), encoding="utf-8")
+    result = runner.invoke(app, ["recommend", str(report)])
+    assert result.exit_code == 0
+    assert "forge" in result.output  # low identity routes to forge
+
+
+def test_recommend_unreadable_exits_two(tmp_path: Path) -> None:
+    assert runner.invoke(app, ["recommend", str(tmp_path / "nope.json")]).exit_code == 2
 
 
 @pytest.mark.parametrize(

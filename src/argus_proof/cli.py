@@ -111,6 +111,28 @@ def gate(
     raise typer.Exit(0 if result.passed else 1)
 
 
+@app.command()
+def recommend(
+    report_json: Path = Argument(..., help="Scored EvalReport JSON to analyse"),
+) -> None:
+    """Suggest routed fixes (which suite stage to act on) from a scored EvalReport."""
+    from argus_proof.models import EvalReport, ProofError
+    from argus_proof.recommend import recommend as _recommend
+
+    try:
+        report = EvalReport.model_validate_json(report_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ProofError) as exc:
+        typer.echo(f"cannot read EvalReport {report_json}: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+    recommendations = _recommend(report)
+    if not recommendations:
+        typer.echo("no recommendations — nothing actionable")
+        return
+    for rec in recommendations:
+        typer.echo(f"[{rec.stage}] {rec.issue}: {rec.action}")
+
+
 DEFAULT_SCHEMA_PATH = Path("schema/proof-wire.schema.json")
 
 
