@@ -158,6 +158,38 @@ def _format_recommendation(rec) -> str:  # noqa: ANN001 - Recommendation, avoids
     return f"[{rec.stage}] {rec.issue}{detail}: {rec.action}"
 
 
+@app.command()
+def experiment(
+    matrix_json: Path = Argument(..., help="ExperimentMatrix JSON (factors × levels)"),
+    export_dir: Path = Option(..., "--export", help="Curator export dir to source base prompts from"),
+    max_gpu_hours: float | None = Option(None, help="Refuse to expand if the matrix exceeds this GPU-hour budget"),
+) -> None:
+    """Expand an A/B experiment matrix and report the up-front per-cell cost estimate."""
+    from argus_proof.experiment import ExperimentError, ExperimentMatrix, expand_experiment
+    from argus_proof.grid import GridError, read_export_prompts
+    from argus_proof.models import ProofError
+
+    try:
+        matrix = ExperimentMatrix.model_validate_json(matrix_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ProofError) as exc:
+        typer.echo(f"cannot read ExperimentMatrix {matrix_json}: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+    prompts = read_export_prompts(export_dir)
+
+    try:
+        plan = expand_experiment(matrix, prompts, max_gpu_hours=max_gpu_hours)
+    except (ExperimentError, GridError) as exc:
+        typer.echo(f"cannot expand experiment: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    est = plan.estimate
+    typer.echo(f"experiment {plan.run_id_prefix}: {est.n_cells} cells, {est.n_runs} runs, {est.n_images} images")
+    for cell in plan.cells:
+        typer.echo(f"  [{cell.cell_id}] {cell.plan.estimate.n_images} images ({cell.plan.estimate.n_runs} runs)")
+    typer.echo(f"est. {est.est_gpu_hours:.1f} GPU-hours @ {est.seconds_per_image:g}s/image")
+
+
 DEFAULT_SCHEMA_PATH = Path("schema/proof-wire.schema.json")
 
 
