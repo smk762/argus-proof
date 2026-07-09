@@ -73,7 +73,31 @@ def test_recommend_prints_routed_suggestions(tmp_path: Path) -> None:
 
 
 def test_recommend_unreadable_exits_two(tmp_path: Path) -> None:
-    assert runner.invoke(app, ["recommend", str(tmp_path / "nope.json")]).exit_code == 2
+    result = runner.invoke(app, ["recommend", str(tmp_path / "nope.json")])
+    assert result.exit_code == 2
+    assert "cannot read EvalReport" in result.output
+
+
+def test_recommend_healthy_reports_nothing_actionable(tmp_path: Path) -> None:
+    from argus_proof.models import AggregateScores, EvalReport, MetricScores, Verdict
+
+    report = tmp_path / "eval_report.json"
+    healthy = EvalReport(
+        run_id="run-1",
+        aggregate=AggregateScores(
+            n_images=1,
+            n_groups=1,
+            n_passed=1,
+            pass_rate=1.0,
+            means=MetricScores(identity=0.9, clip_score=0.9, aesthetic=0.9),
+            diversity=0.9,
+        ),
+        verdict=Verdict(passed=True),
+    )
+    report.write_text(healthy.model_dump_json(), encoding="utf-8")
+    result = runner.invoke(app, ["recommend", str(report)])
+    assert result.exit_code == 0
+    assert "nothing actionable" in result.output
 
 
 @pytest.mark.parametrize(

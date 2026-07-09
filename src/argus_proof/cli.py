@@ -40,6 +40,17 @@ def _stub(verb: str, issue: str) -> None:
     raise typer.Exit(2)
 
 
+def _load_report(report_json: Path):  # noqa: ANN202 - EvalReport imported lazily
+    """Load a scored EvalReport, exiting 2 with a message if it can't be read."""
+    from argus_proof.models import EvalReport, ProofError
+
+    try:
+        return EvalReport.model_validate_json(report_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ProofError) as exc:
+        typer.echo(f"cannot read EvalReport {report_json}: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+
 @app.command()
 def inspect(
     run_dir: Path = Argument(..., help="Proof run dir (or export dir + LoRA pair) to summarise"),
@@ -84,13 +95,9 @@ def gate(
 ) -> None:
     """Gate a scored EvalReport against acceptance thresholds; exit non-zero if rejected (for CI)."""
     from argus_proof.acceptance import evaluate_acceptance
-    from argus_proof.models import AcceptanceThresholds, EvalReport, ProofError
+    from argus_proof.models import AcceptanceThresholds
 
-    try:
-        report = EvalReport.model_validate_json(report_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError, ProofError) as exc:
-        typer.echo(f"cannot read EvalReport {report_json}: {exc}", err=True)
-        raise typer.Exit(2) from exc
+    report = _load_report(report_json)
 
     try:
         thresholds = AcceptanceThresholds(
@@ -114,23 +121,41 @@ def gate(
 @app.command()
 def recommend(
     report_json: Path = Argument(..., help="Scored EvalReport JSON to analyse"),
+    store: Path | None = Option(
+        None, "--store", help="CrossRunStore parquet: also recommend the best checkpoint / LoRA weight (needs [stats])"
+    ),
 ) -> None:
     """Suggest routed fixes (which suite stage to act on) from a scored EvalReport."""
-    from argus_proof.models import EvalReport, ProofError
     from argus_proof.recommend import recommend as _recommend
 
-    try:
-        report = EvalReport.model_validate_json(report_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError, ProofError) as exc:
-        typer.echo(f"cannot read EvalReport {report_json}: {exc}", err=True)
-        raise typer.Exit(2) from exc
+    report = _load_report(report_json)
 
-    recommendations = _recommend(report)
+    cross_run = None
+    if store is not None:
+        try:
+            import polars  # noqa: F401  (the store needs the [stats] extra)
+        except ImportError as exc:
+            typer.echo("--store needs the stats extra: pip install 'argus-proof[stats]'", err=True)
+            raise typer.Exit(2) from exc
+        from argus_proof.crossrun import CrossRunStore
+
+        cross_run = CrossRunStore(store)
+
+    recommendations = _recommend(report, store=cross_run)
     if not recommendations:
         typer.echo("no recommendations — nothing actionable")
         return
     for rec in recommendations:
-        typer.echo(f"[{rec.stage}] {rec.issue}: {rec.action}")
+        typer.echo(_format_recommendation(rec))
+
+
+def _format_recommendation(rec) -> str:  # noqa: ANN001 - Recommendation, avoids an import at module load
+    """One line per recommendation, surfacing the numeric evidence when present."""
+    detail = ""
+    if rec.metric is not None and rec.value is not None:
+        threshold = f" vs {rec.threshold:.2f}" if rec.threshold is not None else ""
+        detail = f" [{rec.metric} {rec.value:.2f}{threshold}]"
+    return f"[{rec.stage}] {rec.issue}{detail}: {rec.action}"
 
 
 DEFAULT_SCHEMA_PATH = Path("schema/proof-wire.schema.json")
