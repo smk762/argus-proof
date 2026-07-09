@@ -22,13 +22,14 @@ krippendorff); the pass-rate CIs themselves use the dependency-free
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable, Sequence
+import tempfile
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from argus_proof.scoring.scorers.safety import safety_tail_aggregate
 from argus_proof.stats import wilson_interval
 
 if TYPE_CHECKING:
@@ -65,7 +66,7 @@ class SliceStats(BaseModel):
     """Pooled pass-rate + CI for one cell of a cross-run slice (e.g. one checkpoint)."""
 
     dimension: str
-    value: str
+    value: str | None  # None is kept distinct from a literal "" dimension value
     n_runs: int
     n_groups: int
     n_passed: int
@@ -84,11 +85,21 @@ def run_stats(manifest: RunManifest, report: EvalReport, *, confidence: float = 
     """
     agg = report.aggregate
     n_groups = agg.n_groups if agg.n_groups is not None else agg.n_images
-    ci_low, ci_high = wilson_interval(min(agg.n_passed, n_groups), n_groups, confidence)
-    lora = manifest.loras[0] if manifest.loras else None
+    n_passed = min(agg.n_passed, n_groups)  # clamp so pass_rate, CI, and n_passed stay consistent
+    ci_low, ci_high = wilson_interval(n_passed, n_groups, confidence)
+
+    # A stacked (multi-LoRA) run is its OWN comparison cell, not the same as its
+    # first LoRA alone — key it by the full set so slicing can't misattribute it.
+    loras = manifest.loras
+    lora = "+".join(lo.name for lo in loras) or None
+    single = loras[0] if len(loras) == 1 else None
+    lora_sha = single.sha256 if single else None
+    lora_weight = round(single.weight, 4) if single else None
 
     safety_min = safety_hit_rate = None
     if any(img.metrics.safety is not None for img in report.images):
+        from argus_proof.scoring.scorers.safety import safety_tail_aggregate  # lazy: keeps [stats] off scoring
+
         tail = safety_tail_aggregate(report)
         safety_min, safety_hit_rate = tail["min_safety"], tail["hit_rate"]
 
@@ -98,15 +109,15 @@ def run_stats(manifest: RunManifest, report: EvalReport, *, confidence: float = 
         training_run_id=manifest.training_run_id,
         base_checkpoint=manifest.base_checkpoint.name,
         base_checkpoint_sha=manifest.base_checkpoint.sha256,
-        lora=lora.name if lora else None,
-        lora_sha=lora.sha256 if lora else None,
-        lora_weight=lora.weight if lora else None,
+        lora=lora,
+        lora_sha=lora_sha,
+        lora_weight=lora_weight,
         prompt=manifest.prompt,
         n_images=agg.n_images,
         n_groups=n_groups,
-        n_passed=agg.n_passed,
+        n_passed=n_passed,
         n_needs_hitl=agg.n_needs_hitl,
-        pass_rate=agg.pass_rate,
+        pass_rate=n_passed / n_groups if n_groups else 0.0,
         pass_rate_ci_low=ci_low,
         pass_rate_ci_high=ci_high,
         diversity=agg.diversity,
@@ -127,21 +138,54 @@ class CrossRunStore:
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
 
+    @contextmanager
+    def _lock(self) -> Iterator[None]:
+        """Serialize the read-modify-write against concurrent appenders (unix flock).
+
+        Parallel eval workers sharing one store would otherwise each read the same
+        snapshot and last-writer-wins would drop rows. Best-effort: platforms
+        without ``fcntl`` (Windows) fall back to no locking.
+        """
+        try:
+            import fcntl
+        except ImportError:  # pragma: no cover - non-unix
+            yield
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path.with_name(f"{self.path.name}.lock"), "w") as lockfile:
+            fcntl.flock(lockfile, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lockfile, fcntl.LOCK_UN)
+
     def append(self, stats: RunStats | Iterable[RunStats]) -> None:
-        """Add row(s); a run_id already present is replaced (latest wins)."""
+        """Add row(s); a run_id already present is replaced (latest wins).
+
+        Concurrency-safe: the read-modify-write is flock-guarded and the write is
+        atomic (unique temp + ``os.replace``), so parallel appends don't lose rows
+        or leave a torn file. Note: re-reads the whole store per call (O(n)), fine
+        for accumulating hundreds–thousands of runs.
+        """
         import polars as pl
 
         rows = [stats] if isinstance(stats, RunStats) else list(stats)
         if not rows:
             return
-        frame = pl.DataFrame([s.model_dump() for s in rows])
-        if self.path.exists():
-            frame = pl.concat([pl.read_parquet(self.path), frame], how="diagonal_relaxed")
-        frame = frame.unique(subset=["run_id"], keep="last", maintain_order=True)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(f"{self.path.name}.tmp")
-        frame.write_parquet(tmp)
-        os.replace(tmp, self.path)
+        with self._lock():
+            frame = pl.DataFrame([s.model_dump() for s in rows])
+            if self.path.exists():
+                frame = pl.concat([pl.read_parquet(self.path), frame], how="diagonal_relaxed")
+            frame = frame.unique(subset=["run_id"], keep="last", maintain_order=True)
+            fd, tmp_name = tempfile.mkstemp(dir=self.path.parent, prefix=f".{self.path.name}.", suffix=".tmp")
+            os.close(fd)
+            tmp = Path(tmp_name)
+            try:
+                frame.write_parquet(tmp)
+                os.replace(tmp, self.path)
+            finally:
+                tmp.unlink(missing_ok=True)  # no-op after a successful replace; cleans a partial write
 
     def frame(self):  # noqa: ANN201 - polars is optional; avoid importing it at module load
         """The store as a polars DataFrame (empty if nothing stored yet)."""
@@ -152,9 +196,11 @@ class CrossRunStore:
     def slice_pass_rate(self, dimension: str, *, confidence: float = 0.95) -> list[SliceStats]:
         """Pooled pass-rate + Wilson CI per value of *dimension*, across all runs.
 
-        Pools ``n_passed`` / ``n_groups`` within each cell (so cells with more
-        runs get tighter intervals) and sorts by pass-rate descending — the
-        "which wins?" ordering, but with the CI to show how much to trust it.
+        Cells are **ranked by the CI lower bound** (not the point estimate), so a
+        well-evidenced 380/400 outranks a lucky 3/3 — the ranking honours the
+        uncertainty. The CI pools every group in the cell as one sample, so it
+        reflects within-sample sampling error but NOT between-run variance: for a
+        handful of disagreeing runs, inspect the per-run rows (``frame()``) too.
         """
         if dimension not in self.SLICEABLE:
             raise ValueError(f"cannot slice by {dimension!r}; choose one of {self.SLICEABLE}")
@@ -173,7 +219,7 @@ class CrossRunStore:
             out.append(
                 SliceStats(
                     dimension=dimension,
-                    value="" if row[dimension] is None else str(row[dimension]),
+                    value=None if row[dimension] is None else str(row[dimension]),
                     n_runs=row["n_runs"],
                     n_groups=n_groups,
                     n_passed=n_passed,
@@ -182,7 +228,8 @@ class CrossRunStore:
                     ci_high=hi,
                 )
             )
-        return sorted(out, key=lambda s: s.pass_rate, reverse=True)
+        # Rank by the CI lower bound (evidence-adjusted), tie-break on point estimate.
+        return sorted(out, key=lambda s: (s.ci_low, s.pass_rate), reverse=True)
 
 
 def krippendorff_alpha(units: Sequence[dict[str, float]], *, level: str = "interval") -> float:

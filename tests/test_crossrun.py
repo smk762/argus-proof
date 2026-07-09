@@ -128,6 +128,37 @@ def test_slice_invalid_dimension_raises(tmp_path: Path) -> None:
         store.slice_pass_rate("pass_rate")
 
 
+def test_slice_ranks_by_ci_lower_bound_not_point_estimate(tmp_path: Path) -> None:
+    # lucky 3/3 (pass 1.0, wide CI) must NOT outrank well-evidenced 380/400 (0.95)
+    store = CrossRunStore(tmp_path / "s.parquet")
+    store.append(run_stats(manifest("lucky", checkpoint="Lucky"), report("lucky", n_passed=3, n_groups=3)))
+    store.append(run_stats(manifest("solid", checkpoint="Solid"), report("solid", n_passed=380, n_groups=400)))
+    assert [s.value for s in store.slice_pass_rate("base_checkpoint")] == ["Solid", "Lucky"]
+
+
+def test_slice_keeps_none_distinct_from_empty(tmp_path: Path) -> None:
+    store = CrossRunStore(tmp_path / "s.parquet")
+    m = manifest("r1").model_copy(update={"loras": []})  # a run with no LoRA -> lora is None
+    store.append(run_stats(m, report("r1", n_passed=1, n_groups=1)))
+    assert store.slice_pass_rate("lora")[0].value is None  # never coerced to ""
+
+
+def test_multi_lora_is_its_own_cell() -> None:
+    from argus_proof.models import LoRARef
+
+    m = manifest("r1").model_copy(
+        update={"loras": [LoRARef(name="style", sha256=SHB, weight=0.8), LoRARef(name="subj", sha256=SHA, weight=0.5)]}
+    )
+    s = run_stats(m, report("r1", n_passed=1, n_groups=1))
+    assert s.lora == "style+subj"  # full set, not just the first
+    assert s.lora_weight is None  # weight only recorded for a single-LoRA run
+
+
+def test_run_stats_pass_rate_matches_ci_bounds() -> None:
+    s = run_stats(manifest("r1"), report("r1", n_passed=3, n_groups=4))
+    assert s.pass_rate_ci_low <= s.pass_rate <= s.pass_rate_ci_high  # internally consistent row
+
+
 # --------------------------------------------------------------------------
 # krippendorff_alpha
 # --------------------------------------------------------------------------
