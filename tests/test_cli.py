@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,7 @@ runner = CliRunner()
 def test_help_lists_verbs() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for verb in ("inspect", "run", "score", "report", "gate", "recommend", "schema", "serve"):
+    for verb in ("inspect", "run", "score", "report", "gate", "recommend", "experiment", "schema", "serve"):
         assert verb in result.output
 
 
@@ -98,6 +99,63 @@ def test_recommend_healthy_reports_nothing_actionable(tmp_path: Path) -> None:
     result = runner.invoke(app, ["recommend", str(report)])
     assert result.exit_code == 0
     assert "nothing actionable" in result.output
+
+
+def _write_matrix(path: Path, *, seconds_per_image: float = 6.0) -> None:
+    matrix = {
+        "base_checkpoints": ["sdxl.safetensors"],
+        "step_configs": [
+            {
+                "name": "quality",
+                "sampling": {
+                    "sampler": "dpmpp_2m",
+                    "scheduler": "karras",
+                    "steps": 30,
+                    "cfg": 7.0,
+                    "clip_skip": 2,
+                    "width": 1024,
+                    "height": 1024,
+                },
+            }
+        ],
+        "lora_checkpoints": ["e10.safetensors"],
+        "lora_weights": [1.0],
+        "seeds": [1, 2],
+        "seconds_per_image": seconds_per_image,
+    }
+    path.write_text(json.dumps(matrix), encoding="utf-8")
+
+
+def _export_with_prompt(tmp_path: Path) -> Path:
+    export = tmp_path / "export"
+    export.mkdir()
+    (export / "img.txt").write_text("a photo of sks person", encoding="utf-8")
+    return export
+
+
+def test_experiment_reports_cost_estimate(tmp_path: Path) -> None:
+    matrix = tmp_path / "matrix.json"
+    _write_matrix(matrix)
+    export = _export_with_prompt(tmp_path)
+    result = runner.invoke(app, ["experiment", str(matrix), "--export", str(export)])
+    assert result.exit_code == 0
+    assert "1 cells" in result.output
+    assert "GPU-hours" in result.output
+
+
+def test_experiment_over_budget_exits_one(tmp_path: Path) -> None:
+    matrix = tmp_path / "matrix.json"
+    _write_matrix(matrix, seconds_per_image=1000.0)
+    export = _export_with_prompt(tmp_path)
+    result = runner.invoke(app, ["experiment", str(matrix), "--export", str(export), "--max-gpu-hours", "0.001"])
+    assert result.exit_code == 1
+    assert "cannot expand experiment" in result.output
+
+
+def test_experiment_unreadable_matrix_exits_two(tmp_path: Path) -> None:
+    export = _export_with_prompt(tmp_path)
+    result = runner.invoke(app, ["experiment", str(tmp_path / "nope.json"), "--export", str(export)])
+    assert result.exit_code == 2
 
 
 @pytest.mark.parametrize(

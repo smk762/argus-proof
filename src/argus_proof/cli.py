@@ -40,15 +40,22 @@ def _stub(verb: str, issue: str) -> None:
     raise typer.Exit(2)
 
 
-def _load_report(report_json: Path):  # noqa: ANN202 - EvalReport imported lazily
-    """Load a scored EvalReport, exiting 2 with a message if it can't be read."""
-    from argus_proof.models import EvalReport, ProofError
+def _load_model(path: Path, model_cls, label: str):  # noqa: ANN001, ANN202 - generic pydantic loader
+    """Load a pydantic model from JSON at *path*, exiting 2 with a message on failure."""
+    from argus_proof.models import ProofError
 
     try:
-        return EvalReport.model_validate_json(report_json.read_text(encoding="utf-8"))
+        return model_cls.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, ProofError) as exc:
-        typer.echo(f"cannot read EvalReport {report_json}: {exc}", err=True)
+        typer.echo(f"cannot read {label} {path}: {exc}", err=True)
         raise typer.Exit(2) from exc
+
+
+def _load_report(report_json: Path):  # noqa: ANN202 - EvalReport imported lazily
+    """Load a scored EvalReport, exiting 2 with a message if it can't be read."""
+    from argus_proof.models import EvalReport
+
+    return _load_model(report_json, EvalReport, "EvalReport")
 
 
 @app.command()
@@ -156,6 +163,32 @@ def _format_recommendation(rec) -> str:  # noqa: ANN001 - Recommendation, avoids
         threshold = f" vs {rec.threshold:.2f}" if rec.threshold is not None else ""
         detail = f" [{rec.metric} {rec.value:.2f}{threshold}]"
     return f"[{rec.stage}] {rec.issue}{detail}: {rec.action}"
+
+
+@app.command()
+def experiment(
+    matrix_json: Path = Argument(..., help="ExperimentMatrix JSON (factors × levels)"),
+    export_dir: Path = Option(..., "--export", help="Curator export dir to source base prompts from"),
+    max_gpu_hours: float | None = Option(None, help="Refuse to expand if the matrix exceeds this GPU-hour budget"),
+) -> None:
+    """Expand an A/B experiment matrix and report the up-front per-cell cost estimate."""
+    from argus_proof.experiment import ExperimentError, ExperimentMatrix, expand_experiment
+    from argus_proof.grid import GridError, read_export_prompts
+
+    matrix = _load_model(matrix_json, ExperimentMatrix, "ExperimentMatrix")
+    prompts = read_export_prompts(export_dir)
+
+    try:
+        plan = expand_experiment(matrix, prompts, max_gpu_hours=max_gpu_hours)
+    except (ExperimentError, GridError) as exc:
+        typer.echo(f"cannot expand experiment: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    est = plan.estimate
+    typer.echo(f"experiment {plan.run_id_prefix}: {est.n_cells} cells, {est.n_runs} runs, {est.n_images} images")
+    for cell in plan.cells:
+        typer.echo(f"  [{cell.cell_id}] {cell.plan.estimate.n_images} images ({cell.plan.estimate.n_runs} runs)")
+    typer.echo(f"est. {est.est_gpu_hours:.1f} GPU-hours @ {est.seconds_per_image:g}s/image")
 
 
 DEFAULT_SCHEMA_PATH = Path("schema/proof-wire.schema.json")

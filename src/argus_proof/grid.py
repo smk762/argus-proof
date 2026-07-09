@@ -199,6 +199,29 @@ def _expand_prompts(base_prompts: list[str], config: GridConfig) -> list[_Prompt
     return items
 
 
+def count_prompt_items(config: GridConfig, base_prompts: list[str]) -> int:
+    """How many prompt items :func:`build_grid` would expand to — computed
+    **arithmetically**, without materializing the token cartesian.
+
+    For a pre-flight cost estimate (e.g. :mod:`argus_proof.experiment`'s budget
+    guardrail) that must not build the very expansion it is trying to size up.
+    Kept in lock-step with :func:`_expand_prompts` (a test asserts they agree).
+    """
+    base = _dedup([p.strip() for p in base_prompts if p.strip()])
+    if config.max_base_prompts is not None:
+        base = base[: config.max_base_prompts]
+
+    axes = {k: v for k, v in config.token_axes.items() if v}
+    n_combos = 1
+    for values in axes.values():
+        n_combos *= len(values)
+    if axes and config.max_token_combos is not None:
+        n_combos = min(n_combos, config.max_token_combos)
+
+    n_flexibility = sum(1 for p in config.flexibility_prompts if p.strip())
+    return len(base) * n_combos + n_flexibility
+
+
 def _estimate(config: GridConfig, n_runs: int, n_prompts: int) -> GridEstimate:
     n_images = n_runs * len(config.seeds)
     gpu_seconds = n_images * config.seconds_per_image

@@ -175,6 +175,47 @@ Safety first, then: low identity/aesthetic → **forge** (training), low adheren
 cross-run store it also surfaces the best checkpoint / LoRA weight — but only when
 the evidence separates a clear winner (non-overlapping CIs), never on a tie.
 
+## A/B experiment matrix (Phase 6)
+
+Compare LoRAs across more than one axis at once. An `ExperimentMatrix`
+(`argus_proof.experiment`) declares factors × levels and expands to a cell per
+`base_checkpoint × step_config`, each a full grid (LoRA checkpoint × weight ×
+prompt × seed). Cost is aggregated across cells and estimated **before launch**,
+with a `--max-gpu-hours` guardrail that refuses an intractable matrix:
+
+```bash
+argus-proof experiment matrix.json --export ./curated_export --max-gpu-hours 40
+# experiment exp: 4 cells, 32 runs, 96 images
+#   [exp-c00sdxl-a-fast] 24 images (8 runs)
+#   ...
+# est. 0.2 GPU-hours @ 6s/image
+```
+
+```python
+from argus_proof.experiment import ExperimentMatrix, StepConfig, expand_experiment
+from argus_proof.grid import read_export_prompts
+from argus_proof.models import SamplingParams
+
+matrix = ExperimentMatrix(
+    base_checkpoints=["sdxl_a.safetensors", "sdxl_b.safetensors"],
+    step_configs=[StepConfig(name="quality", sampling=SamplingParams(...))],
+    lora_checkpoints=["e10.safetensors", "e20.safetensors"],  # epoch sweep
+    lora_weights=[0.8, 1.0],
+    seeds=[1, 2, 3],
+    labels={"caption_strategy": "florence"},  # upstream factor, carried for cross-run slicing
+)
+plan = expand_experiment(matrix, read_export_prompts(export_dir), max_gpu_hours=40)
+for cell in plan.cells:
+    ...  # generate + score each cell.plan; cell.labels feed the cross-run store
+```
+
+**Upstream factors** (caption strategy, source-image variation) are trained *into*
+a LoRA, so proof can't vary them — it lists them in `labels`, which ride on every
+cell as metadata. (Slicing the cross-run store by `labels`/`step_config` is a
+follow-up — those aren't yet `CrossRunStore.SLICEABLE` columns.) For a matrix too
+large to brute-force, `optuna_search()` (optional `[opt]` extra) does
+sample-efficient search over the same factor levels.
+
 ## Develop
 
 ```bash
