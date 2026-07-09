@@ -252,22 +252,29 @@ embeddings (UMAP/t-SNE) to spot mode collapse / clusters / outliers, run the
 uniqueness/near-dup brain, and triage by tag (`pip install "argus-proof[fiftyone]"`):
 
 ```bash
-argus-proof explore eval_report.json --images ./run-1/images --umap   # opens the FiftyOne App
+# open the App, then fold the tags you added back into a new report on close
+argus-proof explore eval_report.json --images ./run-1/images --umap \
+  --ingest reviewed.json --rater alice
 ```
 
 ```python
 from argus_proof.explore import to_fiftyone_dataset, compute_visualization, ingest_from_dataset
 
 ds = to_fiftyone_dataset(report, {"img-1": "run-1/images/img-1.png", ...})
-compute_visualization(ds)                       # UMAP embedding viz (fiftyone-brain)
+compute_visualization(ds)                       # UMAP embedding viz (needs umap-learn)
 report = ingest_from_dataset(ds, report)         # round-trip: fold tags back as ratings/reasons
 ```
 
-The **round-trip** reads `rating:<1-5>` and `reject:<code>` tags off the dataset and
-folds them into the report through the same `apply_hitl` path a review uses (so the
-verdict recomputes identically). The mapping (`sample_fields`/`sample_tags`/
-`ingest_tags`) is dependency-free and unit-tested; only the dataset/brain/App
-adapters need the extra, and `explore.is_available()` guards them.
+The **round-trip** is tag-driven: in the App you add `rating:<1-5>` / `reject:<code>`
+tags (these are the *input* channel — exported samples carry the scores as fields
+and only a `verdict`/`refined` display tag, so a round-trip never re-ingests the
+run's own auto-computed rejects). Ingest is **authoritative** — an image's tags are
+its full decision, so a `rating:5` with no `reject:` tag *un-rejects* it — and folds
+through the same `apply_hitl` path a review uses (the verdict recomputes identically;
+pass the original `gate` to keep non-default thresholds). The mapping
+(`sample_fields`/`sample_tags`/`ingest_tags`) is dependency-free and unit-tested;
+only the dataset/brain/App adapters need the extra, and `explore.is_available()`
+guards them.
 
 ## Develop
 

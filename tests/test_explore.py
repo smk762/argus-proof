@@ -55,7 +55,10 @@ def test_sample_fields_reject_reasons_as_codes() -> None:
 
 def test_sample_tags_verdict_and_reject_codes() -> None:
     img = _img("a", passed=False, reject_reasons=[RejectReason(code="unsafe")])
-    assert sample_tags(img) == ["failed", "reject:unsafe"]
+    # reject:/rating: are the INPUT vocabulary — never seeded, else a round-trip
+    # re-ingests the run's own auto-rejects as human decisions.
+    assert sample_tags(img) == ["failed"]
+    assert not any(t.startswith("reject:") for t in sample_tags(img))
 
 
 def test_sample_fields_and_tags_export_refinement() -> None:
@@ -86,11 +89,20 @@ def test_ingest_reject_tag_fails_image() -> None:
     assert row.passed is False
 
 
-def test_ingest_reject_only_keeps_existing_rating() -> None:
-    report = _report([_img("a", passed=True, hitl_rating=4)])
-    out = ingest_tags(report, {"a": ["reject:low_quality"]})  # no rating tag
+def test_ingest_is_authoritative_rating_unrejects() -> None:
+    # A rating tag with no reject tag CLEARS a prior reject (un-reject), so tagging
+    # a previously-failed image rating:5 in the App actually passes it.
+    report = _report([_img("a", passed=False, reject_reasons=[RejectReason(code="anatomy")])])
+    out = ingest_tags(report, {"a": ["rating:5"]})
     row = next(i for i in out.images if i.image_id == "a")
-    assert row.hitl_rating == 4  # preserved, not wiped
+    assert row.reject_reasons == [] and row.hitl_rating == 5 and row.passed is True
+
+
+def test_ingest_both_rating_and_reject_reject_wins() -> None:
+    report = _report([_img("a", passed=True)])
+    out = ingest_tags(report, {"a": ["rating:5", "reject:anatomy"]})
+    row = next(i for i in out.images if i.image_id == "a")
+    assert [r.code for r in row.reject_reasons] == ["anatomy"] and row.passed is False
 
 
 def test_ingest_ignores_unknown_image_and_unknown_tags() -> None:
@@ -101,20 +113,56 @@ def test_ingest_ignores_unknown_image_and_unknown_tags() -> None:
     assert row.hitl_rating == 5 and row.reject_reasons == []
 
 
-def test_ingest_only_last_valid_rating_tag_wins() -> None:
+def test_ingest_last_valid_rating_tag_wins() -> None:
     report = _report([_img("a", passed=None)])
-    out = ingest_tags(report, {"a": ["rating:2", "rating:9", "rating:4"]})  # 9 invalid, ignored
-    assert next(i for i in out.images if i.image_id == "a").hitl_rating == 4
+    # decreasing sequence so "last wins" is distinguishable from "max wins"
+    out = ingest_tags(report, {"a": ["rating:4", "rating:9", "rating:2"]})  # 9 invalid, ignored
+    assert next(i for i in out.images if i.image_id == "a").hitl_rating == 2
 
 
-def test_image_paths_from_dir_keys_by_stem(tmp_path) -> None:  # noqa: ANN001
+class _FakeSample:
+    def __init__(self, image_id, tags) -> None:  # noqa: ANN001
+        self._image_id = image_id
+        self.tags = tags
+
+    def get_field(self, name):  # noqa: ANN001, ANN202 - duck-types fiftyone.Sample
+        return self._image_id if name == "image_id" else None
+
+
+def test_dataset_tags_skips_samples_without_image_id() -> None:
+    from argus_proof.explore import dataset_tags
+
+    dataset = [_FakeSample("a", ["rating:5"]), _FakeSample(None, ["rating:1"])]  # second has no image_id
+    assert dataset_tags(dataset) == {"a": ["rating:5"]}
+
+
+def test_round_trip_via_dataset_tags() -> None:
+    from argus_proof.explore import ingest_from_dataset
+
+    report = _report([_img("a", passed=True), _img("b", passed=True)])
+    dataset = [_FakeSample("a", ["reject:anatomy"]), _FakeSample("b", ["rating:5"])]
+    out = ingest_from_dataset(dataset, report, rater="alice")
+    a = next(i for i in out.images if i.image_id == "a")
+    b = next(i for i in out.images if i.image_id == "b")
+    assert a.passed is False and [r.code for r in a.reject_reasons] == ["anatomy"]
+    assert b.passed is True and b.hitl_rating == 5 and b.hitl_rater == "alice"
+
+
+def test_image_paths_from_dir_keys_by_stem_and_ignores_sidecars(tmp_path) -> None:  # noqa: ANN001
     (tmp_path / "img-1.png").write_bytes(b"x")
+    (tmp_path / "img-1.json").write_text("{}")  # sidecar must NOT shadow the image
     (tmp_path / "img-2.jpg").write_bytes(b"x")
     (tmp_path / ".hidden.png").write_bytes(b"x")
     paths = image_paths_from_dir(tmp_path)
-    assert set(paths) == {"img-1", "img-2"}  # hidden skipped
-    assert paths["img-1"].endswith("img-1.png")
+    assert set(paths) == {"img-1", "img-2"}  # hidden + non-image skipped
+    assert paths["img-1"].endswith("img-1.png")  # the image, not the .json sidecar
 
 
-def test_is_available_returns_bool() -> None:
-    assert isinstance(is_available(), bool)
+def test_is_available_false_without_extra() -> None:
+    import importlib.util
+
+    if importlib.util.find_spec("fiftyone") is not None:  # pragma: no cover - dev has the extra
+        import pytest
+
+        pytest.skip("fiftyone installed")
+    assert is_available() is False

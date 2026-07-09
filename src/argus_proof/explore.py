@@ -21,17 +21,28 @@ import importlib.util
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
-from argus_proof.models import EvalReport, ImageScores, ProofError, RejectReason, RejectReasonCode
+from argus_proof.models import (
+    EvalReport,
+    GateConfig,
+    ImageScores,
+    MetricScores,
+    ProofError,
+    RejectReason,
+    RejectReasonCode,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-# The numeric scoring axes carried on MetricScores, exported one FiftyOne field each.
-_METRIC_FIELDS: tuple[str, ...] = ("identity", "clip_score", "aesthetic", "preference", "safety")
+# The numeric scoring axes carried on MetricScores, exported one FiftyOne field
+# each — derived from the model so a new axis can't silently drift out of the export.
+_METRIC_FIELDS: tuple[str, ...] = tuple(MetricScores.model_fields)
 _REJECT_CODES: frozenset[str] = frozenset(get_args(RejectReasonCode))
 
-# Tag conventions for the round-trip: "reject:<code>" -> a reject reason,
-# "rating:<1-5>" -> a HITL star rating.
+# Round-trip INPUT vocabulary: the analyst adds "rating:<1-5>" / "reject:<code>"
+# tags in the App and they fold back via ingest_tags. These are deliberately NOT
+# seeded onto exported samples (see sample_tags) — otherwise a round-trip would
+# re-ingest the run's own auto-computed state as if it were a human decision.
 _REJECT_TAG = "reject:"
 _RATING_TAG = "rating:"
 
@@ -70,9 +81,16 @@ def sample_fields(img: ImageScores) -> dict[str, Any]:
 
 
 def sample_tags(img: ImageScores) -> list[str]:
-    """Triage tags for one image: its verdict, a ``reject:<code>`` per reason, and
-    ``refined`` when a second-pass re-rank is present."""
-    tags = [_verdict_label(img.passed), *(f"{_REJECT_TAG}{r.code}" for r in img.reject_reasons)]
+    """Display/filter tags for one image: its verdict, and ``refined`` when a
+    second-pass re-rank is present.
+
+    Deliberately does NOT seed the ``reject:``/``rating:`` round-trip vocabulary:
+    those are the analyst's *input* channel (see :func:`ingest_tags`), and seeding
+    them would make a round-trip re-ingest the run's own auto-computed rejects as
+    if a human had entered them. The existing reject reasons remain visible as the
+    ``reject_reasons`` sample field.
+    """
+    tags = [_verdict_label(img.passed)]
     if img.refinement is not None:
         tags.append("refined")
     return tags
@@ -110,49 +128,54 @@ def ingest_tags(
     tags_by_image: Mapping[str, list[str]],
     *,
     rater: str | None = None,
-    gate: Any = None,
+    gate: GateConfig | None = None,
 ) -> EvalReport:
     """Fold FiftyOne triage *tags* back into *report* as ratings / reject reasons.
 
-    Recognises ``rating:<1-5>`` and ``reject:<code>`` tags. Only images that carry
-    a recognised tag are touched; for those, an absent rating/reject tag keeps the
-    image's existing value (so a reject-only triage doesn't wipe a prior rating).
-    Unknown image_ids (samples not from this run) are ignored. Delegates to
-    :func:`~argus_proof.reports.apply_hitl`, so the aggregate pass-rate and verdict
-    are recomputed exactly as a HITL review would.
+    Recognises ``rating:<1-5>`` and ``reject:<code>`` tags. Only images carrying at
+    least one recognised tag are touched, and for those the tags are
+    **authoritative** — they are the analyst's full decision for the image, so an
+    absent ``reject:`` tag clears any prior reject (letting a ``rating:5`` tag
+    *un-reject* a previously-failed image) and an absent ``rating:`` tag clears a
+    prior star. Unknown image_ids (samples not from this run) are ignored.
+
+    Delegates to :func:`~argus_proof.reports.apply_hitl`, so the pass-rate and
+    verdict recompute exactly as a HITL review would. *gate* re-rolls the verdict
+    under those thresholds; since an ``EvalReport`` doesn't persist the gate it was
+    scored with, pass the original :class:`~argus_proof.models.GateConfig` here to
+    avoid a silent shift to the defaults (same caveat as ``apply_hitl``).
     """
     from argus_proof.reports import HitlImageUpdate, HitlRequest, apply_hitl
 
     existing = {img.image_id: img for img in report.images}
     updates: list[HitlImageUpdate] = []
     for image_id, tags in tags_by_image.items():
-        img = existing.get(image_id)
-        if img is None:
+        if image_id not in existing:
             continue
         rating = _parse_rating(tags)
         rejects = _parse_rejects(tags)
         if rating is None and not rejects:
-            continue  # no actionable tag for this image
-        updates.append(
-            HitlImageUpdate(
-                image_id=image_id,
-                hitl_rating=rating if rating is not None else img.hitl_rating,
-                reject_reasons=rejects if rejects else img.reject_reasons,
-            )
-        )
+            continue  # analyst added no rating/reject tag for this image
+        updates.append(HitlImageUpdate(image_id=image_id, hitl_rating=rating, reject_reasons=rejects))
     return apply_hitl(report, HitlRequest(rater=rater, gate=gate, updates=updates))
+
+
+# Image file extensions FiftyOne can display; a same-stem sidecar (img-1.json,
+# img-1.npy, a thumbnail) must not shadow the real image (issue #14 review).
+_IMAGE_EXTS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"})
 
 
 def image_paths_from_dir(directory: str | Path) -> dict[str, str]:
     """Map ``image_id -> filepath`` for a run's images, keyed by filename **stem**.
 
     A convenience for the common layout where each generated image is written as
-    ``<image_id>.<ext>``. Hidden files are skipped; on a stem collision the first
-    (sorted) path wins.
+    ``<image_id>.<ext>``. Only image files are considered (so a same-stem sidecar
+    like ``<image_id>.json`` can't shadow the image); hidden files are skipped; on
+    a stem collision the first (sorted) path wins.
     """
     paths: dict[str, str] = {}
     for path in sorted(Path(directory).iterdir()):
-        if path.is_file() and not path.name.startswith("."):
+        if path.is_file() and not path.name.startswith(".") and path.suffix.lower() in _IMAGE_EXTS:
             paths.setdefault(path.stem, str(path))
     return paths
 
@@ -181,17 +204,19 @@ def to_fiftyone_dataset(
     *,
     name: str | None = None,
     persistent: bool = False,
+    overwrite: bool = False,
 ):  # noqa: ANN201 - returns a fiftyone.Dataset
     """Build a FiftyOne dataset from *report*, one sample per image with a known path.
 
     *image_paths* maps ``image_id -> filepath`` (see :func:`image_paths_from_dir`);
     an image with no path is skipped (you can't show a sample without a file).
     Every computed field rides on the sample (:func:`sample_fields`) with triage
-    tags (:func:`sample_tags`). Raises :class:`~argus_proof.models.ProofError` if
-    FiftyOne isn't installed.
+    tags (:func:`sample_tags`). ``overwrite`` replaces an existing dataset of the
+    same *name* (else FiftyOne raises on a name clash). Raises
+    :class:`~argus_proof.models.ProofError` if FiftyOne isn't installed.
     """
     fo = _fiftyone()
-    dataset = fo.Dataset(name=name, persistent=persistent)
+    dataset = fo.Dataset(name=name, persistent=persistent, overwrite=overwrite)
     samples = []
     for img in report.images:
         path = image_paths.get(img.image_id)
@@ -206,32 +231,50 @@ def to_fiftyone_dataset(
 
 
 def dataset_tags(dataset) -> dict[str, list[str]]:  # noqa: ANN001 - a fiftyone.Dataset
-    """Read each sample's tags back out, keyed by its ``image_id`` field."""
-    return {sample["image_id"]: list(sample.tags) for sample in dataset}
+    """Read each sample's tags back out, keyed by its ``image_id`` field.
+
+    Samples with no ``image_id`` (e.g. added in the App, or from a merged dataset)
+    are skipped rather than crashing the ingest; on a duplicate ``image_id`` the
+    last sample's tags win.
+    """
+    tags: dict[str, list[str]] = {}
+    for sample in dataset:
+        image_id = sample.get_field("image_id")
+        if image_id is not None:
+            tags[image_id] = list(sample.tags)
+    return tags
 
 
-def ingest_from_dataset(dataset, report: EvalReport, *, rater: str | None = None, gate: Any = None) -> EvalReport:  # noqa: ANN001
+def ingest_from_dataset(
+    dataset, report: EvalReport, *, rater: str | None = None, gate: GateConfig | None = None
+) -> EvalReport:  # noqa: ANN001
     """Round-trip: pull tags off *dataset* and fold them into *report* via :func:`ingest_tags`."""
     return ingest_tags(report, dataset_tags(dataset), rater=rater, gate=gate)
+
+
+def _fiftyone_brain():  # noqa: ANN202 - the fiftyone.brain module, imported lazily
+    _fiftyone()
+    try:
+        import fiftyone.brain as fob
+    except ImportError as exc:
+        raise ProofError(
+            "FiftyOne Brain (embeddings/uniqueness) needs its extra deps — e.g. pip install fiftyone umap-learn"
+        ) from exc
+    return fob
 
 
 def compute_visualization(dataset, *, brain_key: str = "proof_viz", method: str = "umap", **kwargs):  # noqa: ANN001, ANN201
     """Compute an embedding visualisation (UMAP/t-SNE) via the FiftyOne Brain, so
     clusters / mode collapse / outliers are visible in the App. Thin passthrough to
-    ``fiftyone.brain.compute_visualization``; needs the ``[fiftyone]`` extra."""
-    _fiftyone()
-    import fiftyone.brain as fob
-
-    return fob.compute_visualization(dataset, brain_key=brain_key, method=method, **kwargs)
+    ``fiftyone.brain.compute_visualization``; UMAP additionally needs ``umap-learn``
+    (in the ``[fiftyone]`` extra)."""
+    return _fiftyone_brain().compute_visualization(dataset, brain_key=brain_key, method=method, **kwargs)
 
 
 def compute_uniqueness(dataset, *, uniqueness_field: str = "uniqueness"):  # noqa: ANN001, ANN201
     """Score per-sample uniqueness (surfaces near-duplicates / redundancy) via the
     FiftyOne Brain. Thin passthrough to ``fiftyone.brain.compute_uniqueness``."""
-    _fiftyone()
-    import fiftyone.brain as fob
-
-    return fob.compute_uniqueness(dataset, uniqueness_field=uniqueness_field)
+    return _fiftyone_brain().compute_uniqueness(dataset, uniqueness_field=uniqueness_field)
 
 
 def launch_app(dataset, **kwargs):  # noqa: ANN001, ANN201
