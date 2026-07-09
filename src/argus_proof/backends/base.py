@@ -15,9 +15,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from argus_proof.hashing import sha256_cached
 from argus_proof.models import (
     BackendCapabilities,
     GeneratedImage,
+    LoRARef,
+    ModelRef,
     ProgressEvent,
     ProofError,
     RunManifest,
@@ -95,3 +98,73 @@ class GenBackend(Protocol):
     def generate(self, spec: RunSpec, out_dir: Path, progress: ProgressSink | None = None) -> GenResult:
         """Run *spec*, writing images under *out_dir*; return manifest + images."""
         ...
+
+
+# The per-run manifest filename every backend writes into its out_dir.
+MANIFEST_NAME = "manifest.json"
+
+
+def write_manifest(out_dir: Path, manifest: RunManifest) -> Path:
+    """Write *manifest* as ``manifest.json`` under *out_dir* (the shared final step
+    of every backend's ``generate``)."""
+    path = out_dir / MANIFEST_NAME
+    path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    return path
+
+
+def safe_image_id(image_id: str) -> str:
+    """Validate a backend-supplied *image_id* that will become a filename.
+
+    Raises :class:`BackendError` for anything that could escape the run's output
+    directory (path separators, ``..``, absolute/NUL) — a backend the caller
+    doesn't fully control (a remote/cloud service) must not be able to dictate an
+    arbitrary write path. Returns the id unchanged when it is safe.
+    """
+    if not image_id or image_id in {".", ".."} or "/" in image_id or "\\" in image_id or "\x00" in image_id:
+        raise BackendError(f"unsafe image_id {image_id!r} from backend")
+    return image_id
+
+
+def hash_model(resolve_model: ModelResolver, name: str) -> str:
+    """Resolve *name* to a local file and return its SHA256, or raise
+    :class:`BackendError` if it can't be resolved/hashed."""
+    try:
+        path = resolve_model(name)
+    except Exception as exc:  # resolver signals "not found" however it likes
+        raise BackendError(f"cannot hash {name!r} for the manifest: {exc}") from exc
+    if not path.is_file():
+        raise BackendError(f"cannot hash {name!r}: resolved path {path} is not a file")
+    return sha256_cached(path)
+
+
+def build_local_manifest(
+    spec: RunSpec,
+    *,
+    resolve_model: ModelResolver,
+    engine: str,
+    engine_version: str,
+) -> RunManifest:
+    """A reproducible :class:`RunManifest` for a backend whose weights are on disk.
+
+    Resolves and SHA256-pins the base checkpoint, VAE, and every LoRA (via
+    *resolve_model*) so the run reconstructs exactly — the shared path for the
+    local backends (ComfyUI, diffusers, A1111). A missing/unresolvable model
+    raises :class:`BackendError` here, before any generation. (A purely remote
+    backend, whose weights aren't local, builds its manifest from the service's
+    own response instead — see :mod:`argus_proof.backends.remote`.)
+    """
+    return RunManifest(
+        run_id=spec.run_id,
+        base_checkpoint=ModelRef(name=spec.base_checkpoint, sha256=hash_model(resolve_model, spec.base_checkpoint)),
+        vae=ModelRef(name=spec.vae, sha256=hash_model(resolve_model, spec.vae)) if spec.vae else None,
+        loras=[LoRARef(name=lo.name, sha256=hash_model(resolve_model, lo.name), weight=lo.weight) for lo in spec.loras],
+        sampling=spec.sampling,
+        prompt=spec.prompt,
+        negative_prompt=spec.negative_prompt,
+        seeds=list(spec.seeds),
+        engine=engine,
+        engine_version=engine_version,
+        source_manifest=spec.source_manifest,
+        source_manifest_version=spec.source_manifest_version,
+        training_run_id=spec.training_run_id,
+    )

@@ -6,31 +6,32 @@ completion in short loops, download each image, read back its PNGInfo, and emit
 a fully populated :class:`~argus_proof.models.RunManifest` with the SHA256 of
 every checkpoint/LoRA and the engine version — so the run reconstructs exactly.
 
-The HTTP layer is a small injectable :class:`Transport` (default: stdlib
-``urllib``), so the adapter is unit-testable without a live ComfyUI.
+The HTTP layer is a small injectable :class:`~argus_proof.backends.http.Transport`
+(default: stdlib ``urllib``), so the adapter is unit-testable without a live ComfyUI.
 """
 
 from __future__ import annotations
 
-import json
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
-from typing import Protocol
 
 import structlog
 
-from argus_proof.backends.base import BackendError, GenResult, ModelResolver, ProgressSink
+from argus_proof.backends.base import (
+    BackendError,
+    GenResult,
+    ModelResolver,
+    ProgressSink,
+    build_local_manifest,
+    write_manifest,
+)
+from argus_proof.backends.http import Transport, UrllibTransport
 from argus_proof.backends.pnginfo import read_dimensions, read_text_chunks
 from argus_proof.backends.workflow import render_workflow
-from argus_proof.hashing import sha256_cached
 from argus_proof.models import (
     BackendCapabilities,
     GeneratedImage,
-    LoRARef,
-    ModelRef,
     ProgressEvent,
     RunManifest,
     RunSpec,
@@ -40,49 +41,6 @@ logger = structlog.get_logger()
 
 BACKEND_NAME = "comfyui"
 DEFAULT_BASE_URL = "http://127.0.0.1:8188"
-
-
-class Transport(Protocol):
-    """The tiny HTTP surface the ComfyUI adapter needs, so tests can fake it."""
-
-    def post_json(self, path: str, payload: dict) -> dict: ...
-    def get_json(self, path: str) -> dict: ...
-    def get_bytes(self, path: str) -> bytes: ...
-
-
-class UrllibTransport:
-    """Default :class:`Transport` over stdlib ``urllib`` — no runtime deps.
-
-    Wraps transport-level failures as :class:`BackendError` so callers get one
-    error type whether the engine is down or a request was malformed.
-    """
-
-    def __init__(self, base_url: str = DEFAULT_BASE_URL, timeout: float = 30.0) -> None:
-        self.base = base_url.rstrip("/")
-        self.timeout = timeout
-
-    def _open(self, req: urllib.request.Request | str) -> bytes:
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return resp.read()
-        except (urllib.error.URLError, OSError) as exc:
-            url = req.full_url if isinstance(req, urllib.request.Request) else req
-            raise BackendError(f"ComfyUI request to {url} failed: {exc}") from exc
-
-    def post_json(self, path: str, payload: dict) -> dict:
-        req = urllib.request.Request(
-            self.base + path,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        return json.loads(self._open(req))
-
-    def get_json(self, path: str) -> dict:
-        return json.loads(self._open(self.base + path))
-
-    def get_bytes(self, path: str) -> bytes:
-        return self._open(self.base + path)
 
 
 class ComfyUIBackend:
@@ -108,7 +66,7 @@ class ComfyUIBackend:
     ) -> None:
         self.template = workflow_template
         self.resolve_model = resolve_model
-        self.transport = transport or UrllibTransport(base_url)
+        self.transport = transport or UrllibTransport(base_url, label="ComfyUI")
         self.client_id = client_id
         self.poll_interval = poll_interval
         self.timeout = timeout
@@ -150,7 +108,7 @@ class ComfyUIBackend:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
 
-        (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        write_manifest(out_dir, manifest)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
 
@@ -233,33 +191,9 @@ class ComfyUIBackend:
     # -- manifest ----------------------------------------------------------
 
     def _build_manifest(self, spec: RunSpec) -> RunManifest:
-        base = ModelRef(name=spec.base_checkpoint, sha256=self._hash(spec.base_checkpoint))
-        vae = ModelRef(name=spec.vae, sha256=self._hash(spec.vae)) if spec.vae else None
-        loras = [LoRARef(name=lo.name, sha256=self._hash(lo.name), weight=lo.weight) for lo in spec.loras]
-        return RunManifest(
-            run_id=spec.run_id,
-            base_checkpoint=base,
-            vae=vae,
-            loras=loras,
-            sampling=spec.sampling,
-            prompt=spec.prompt,
-            negative_prompt=spec.negative_prompt,
-            seeds=list(spec.seeds),
-            engine=BACKEND_NAME,
-            engine_version=self.engine_version(),
-            source_manifest=spec.source_manifest,
-            source_manifest_version=spec.source_manifest_version,
-            training_run_id=spec.training_run_id,
+        return build_local_manifest(
+            spec, resolve_model=self.resolve_model, engine=BACKEND_NAME, engine_version=self.engine_version()
         )
-
-    def _hash(self, name: str) -> str:
-        try:
-            path = self.resolve_model(name)
-        except Exception as exc:  # resolver signals "not found" however it likes
-            raise BackendError(f"cannot hash {name!r} for the manifest: {exc}") from exc
-        if not path.is_file():
-            raise BackendError(f"cannot hash {name!r}: resolved path {path} is not a file")
-        return sha256_cached(path)
 
     def engine_version(self) -> str:
         """The ComfyUI version, queried once from /system_stats (best-effort)."""

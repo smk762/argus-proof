@@ -66,6 +66,24 @@ checkpoint/LoRA by **SHA256** so the run reconstructs exactly. See
 [`templates/comfyui_sdxl_lora.json`](src/argus_proof/templates/comfyui_sdxl_lora.json)
 for the shipped example.
 
+**More backends (Phase 7).** `get_backend(name, ...)` selects the engine by config
+(`PROOF_BACKEND` in [`.env.example`](.env.example)); scoring/report code is
+unchanged regardless of which produced the run, and the `RunManifest` records the
+engine + version:
+
+- **`diffusers`** — in-process diffusers SDXL pipeline: deterministic, no external
+  service, weights hashed from disk (`pip install "argus-proof[diffusers]"`).
+- **`a1111`** — an AUTOMATIC1111 / SD.Next `/sdapi` server (checkpoint via
+  `override_settings`, LoRAs via `<lora:…>` prompt syntax; models hashed from disk).
+- **`remote`** — a hosted/cloud endpoint that speaks the proof wire (`POST /generate`
+  → `RunManifest` + base64 images). The weights live remotely, so the **service**
+  supplies the manifest and it's validated at the boundary; a bearer `api_key`
+  authenticates. Point it at a self-hosted proof-gen service or a thin wrapper in
+  front of Replicate / fal.
+
+The `a1111` / `remote` adapters need no extra (stdlib HTTP); all three reuse the
+shared manifest + transport helpers and are unit-tested with fakes.
+
 ## Scoring (Phase 2)
 
 Generated images are scored into an `EvalReport` by a pluggable framework
