@@ -59,6 +59,11 @@ def apply_refinement(report: EvalReport, request: RefinementRequest) -> EvalRepo
     update must target an image in the passing subset — a non-passing or unknown
     ``image_id`` raises :class:`RefinementError` rather than silently no-op, since
     refinement is a deliberate second pass over a known set.
+
+    An update's ``rank`` always replaces the prior rank; an omitted ``notes`` or
+    ``rater`` (``None``) keeps the existing value rather than clearing it, so a
+    bare rank correction can't silently drop a reviewer's note or authorship
+    (matching how :func:`~argus_proof.reports.apply_hitl` carries the rater).
     """
     passing_ids = {img.image_id for img in passing_subset(report)}
     stray = [u.image_id for u in request.updates if u.image_id not in passing_ids]
@@ -67,12 +72,22 @@ def apply_refinement(report: EvalReport, request: RefinementRequest) -> EvalRepo
 
     by_id = {u.image_id: u for u in request.updates}
     rows = [
-        row.model_copy(update={"refinement": Refinement(rank=upd.rank, notes=upd.notes, rater=request.rater)})
+        row.model_copy(update={"refinement": _merge_refinement(row.refinement, upd, request.rater)})
         if (upd := by_id.get(row.image_id)) is not None
         else row
         for row in report.images
     ]
     return report.model_copy(update={"images": rows})
+
+
+def _merge_refinement(prior: Refinement | None, upd: RefinementImageUpdate, rater: str | None) -> Refinement:
+    """Build the new refinement for an image: ``rank`` replaces, but ``notes``/
+    ``rater`` fall back to the prior refinement when this update omits them."""
+    return Refinement(
+        rank=upd.rank,
+        notes=upd.notes if upd.notes is not None else (prior.notes if prior else None),
+        rater=rater if rater is not None else (prior.rater if prior else None),
+    )
 
 
 def refined_ranking(report: EvalReport) -> list[ImageScores]:

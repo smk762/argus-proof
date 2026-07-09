@@ -206,7 +206,7 @@
           "type": "array"
         },
         "proof_version": {
-          "default": "1.1",
+          "default": "1.2",
           "title": "Proof Version",
           "type": "string"
         },
@@ -959,7 +959,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.1",
+          "default": "1.2",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1109,7 +1109,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.1",
+          "default": "1.2",
           "title": "Proof Version",
           "type": "string"
         },

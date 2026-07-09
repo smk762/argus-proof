@@ -15,6 +15,7 @@ is trivially inspectable and portable (the CLI ``gate`` verb reads the same JSON
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -136,14 +137,18 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
         # for this image (the client sends the full intended state), so they
         # replace the row's — otherwise a cleared rating/reason can't be honored.
         decision = _hitl_decision(upd.hitl_rating, upd.reject_reasons)
-        rows[i] = row.model_copy(
-            update={
-                "hitl_rating": upd.hitl_rating,
-                "hitl_rater": request.rater if request.rater is not None else row.hitl_rater,
-                "reject_reasons": upd.reject_reasons,
-                "passed": decision if decision is not None else row.passed,
-            }
-        )
+        new_passed = decision if decision is not None else row.passed
+        update = {
+            "hitl_rating": upd.hitl_rating,
+            "hitl_rater": request.rater if request.rater is not None else row.hitl_rater,
+            "reject_reasons": upd.reject_reasons,
+            "passed": new_passed,
+        }
+        # A re-review that downgrades the image out of "passing" drops any
+        # second-pass refinement, so the layer never orphans onto a failing image.
+        if new_passed is not True and row.refinement is not None:
+            update["refinement"] = None
+        rows[i] = row.model_copy(update=update)
     aggregate, verdict = summarise(
         rows, gate=gate, diversity=report.aggregate.diversity, n_images=report.aggregate.n_images
     )
@@ -185,10 +190,21 @@ class ReportStore:
         return EvalReport.model_validate_json(path.read_text(encoding="utf-8"))
 
     def save(self, report: EvalReport) -> Path:
-        """Write (or overwrite) a report, keyed by its ``run_id``."""
+        """Write (or overwrite) a report, keyed by its ``run_id``.
+
+        Atomic: the JSON is written to a unique temp file and ``os.replace``d over
+        the target, so a crash (or a concurrent reader) never sees a torn report.
+        """
         self.root.mkdir(parents=True, exist_ok=True)
         path = self._path(report.run_id)
-        path.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        fd, tmp_name = tempfile.mkstemp(dir=self.root, prefix=f".{path.name}.", suffix=".tmp")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(report.model_dump_json(indent=2) + "\n")
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)  # no-op after a successful replace; cleans a partial write
         return path
 
     def review(self, run_id: str, request: HitlRequest) -> EvalReport:

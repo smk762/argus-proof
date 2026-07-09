@@ -108,6 +108,58 @@ def test_refined_ranking_tie_breaks_on_hitl_then_id() -> None:
     assert ranked == ["b", "a"]  # equal rank -> higher hitl_rating (b) first
 
 
+def test_refined_ranking_all_unrefined_falls_back_to_hitl_then_id() -> None:
+    report = _report([_img("a", passed=True, hitl=3), _img("b", passed=True, hitl=5), _img("c", passed=True, hitl=5)])
+    ranked = [i.image_id for i in refined_ranking(report)]  # nothing refined yet
+    assert ranked == ["b", "c", "a"]  # higher hitl first, then image_id A->Z for the tie
+
+
+def test_re_refine_preserves_prior_rater_and_notes_when_omitted() -> None:
+    report = _report([_img("a", passed=True)])
+    first = apply_refinement(
+        report, RefinementRequest(rater="alice", updates=[RefinementImageUpdate(image_id="a", rank=5, notes="crisp")])
+    )
+    # a bare rank correction (no rater, no notes) must not wipe alice's authorship/note
+    second = apply_refinement(first, RefinementRequest(updates=[RefinementImageUpdate(image_id="a", rank=3)]))
+    ref = next(i for i in second.images if i.image_id == "a").refinement
+    assert ref.rank == 3  # rank replaced
+    assert ref.rater == "alice" and ref.notes == "crisp"  # preserved
+
+
+def test_re_refine_can_overwrite_notes_and_rater() -> None:
+    report = _report([_img("a", passed=True)])
+    first = apply_refinement(
+        report, RefinementRequest(rater="alice", updates=[RefinementImageUpdate(image_id="a", rank=5, notes="crisp")])
+    )
+    second = apply_refinement(
+        first, RefinementRequest(rater="bob", updates=[RefinementImageUpdate(image_id="a", rank=2, notes="blurry")])
+    )
+    ref = next(i for i in second.images if i.image_id == "a").refinement
+    assert (ref.rank, ref.rater, ref.notes) == (2, "bob", "blurry")
+
+
+def test_duplicate_image_ids_last_wins() -> None:
+    report = _report([_img("a", passed=True)])
+    out = apply_refinement(report, _req(("a", 5), ("a", 2)))  # conflicting ranks for one image
+    assert next(i for i in out.images if i.image_id == "a").refinement.rank == 2  # last update wins
+
+
+def test_hitl_downgrade_clears_orphaned_refinement() -> None:
+    from argus_proof.models import RejectReason
+    from argus_proof.reports import HitlImageUpdate, HitlRequest, apply_hitl
+
+    report = _report([_img("a", passed=True), _img("b", passed=True)])
+    refined = apply_refinement(report, _req(("a", 5), ("b", 4)))
+    # a later review rejects image "a" -> it's no longer passing, so its refinement is dropped
+    downgraded = apply_hitl(
+        refined, HitlRequest(updates=[HitlImageUpdate(image_id="a", reject_reasons=[RejectReason(code="anatomy")])])
+    )
+    a = next(i for i in downgraded.images if i.image_id == "a")
+    b = next(i for i in downgraded.images if i.image_id == "b")
+    assert a.passed is False and a.refinement is None  # orphan cleared
+    assert b.refinement.rank == 4  # untouched image keeps its refinement
+
+
 def test_rank_out_of_range_rejected() -> None:
     with pytest.raises(ValueError, match="less than or equal to 5"):
         RefinementImageUpdate(image_id="a", rank=6)
