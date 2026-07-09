@@ -110,6 +110,33 @@ report = score_run(
 > variants build on `argus_cortex.backends.RemoteBackend` (point at a service by IP/port).
 > The spine itself is dependency-free and fully tested with fakes.
 
+## HITL review & refinement (Phase 3)
+
+Reports are stored per-run (`argus_proof.reports.ReportStore`, a directory of
+`<run_id>.json`) and reviewed over the server (peer to the argus-studio `/proof`
+view):
+
+```
+POST /report/{run_id}/hitl     # 5-star ratings + reject reasons; recomputes pass-rate + verdict
+POST /report/{run_id}/refine   # optional second pass: re-rank the passing subset 1-5 + notes
+```
+
+The **refinement** stage (`argus_proof.refinement`) is a finer re-rank of just
+the images that already passed — a **separate layer** (`ImageScores.refinement`)
+that never overwrites the first-pass `hitl_rating`/`reject_reasons` or the run's
+verdict, so both the original decision and the refined ordering are kept.
+`refined_ranking(report)` surfaces the passing subset best-first; refining an
+image that isn't in the passing subset is refused.
+
+```python
+from argus_proof.refinement import RefinementRequest, RefinementImageUpdate, apply_refinement, refined_ranking
+
+refined = apply_refinement(report, RefinementRequest(
+    rater="alice", updates=[RefinementImageUpdate(image_id="img-3", rank=5, notes="cleanest hands")],
+))
+best_first = refined_ranking(refined)   # passing subset, refined re-ranks on top
+```
+
 ## CI acceptance gate (Phase 6)
 
 Turn "was this LoRA/dataset good enough?" into an automatable yes/no. `argus-proof

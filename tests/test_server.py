@@ -82,3 +82,31 @@ def test_hitl_recomputes_verdict(report_client: TestClient) -> None:
 def test_hitl_missing_report_404(report_client: TestClient) -> None:
     resp = report_client.post("/report/nope/hitl", json={"updates": []})
     assert resp.status_code == 404
+
+
+def test_refine_adds_layer_without_touching_verdict(report_client: TestClient) -> None:
+    report_client.put("/report/run-1", json=_report("run-1"))
+    before = report_client.get("/report/run-1").json()["verdict"]
+    resp = report_client.post(
+        "/report/run-1/refine",
+        json={"rater": "bob", "updates": [{"image_id": "a", "rank": 5, "notes": "crisp"}]},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    row_a = next(r for r in body["images"] if r["image_id"] == "a")
+    assert row_a["refinement"]["rank"] == 5 and row_a["refinement"]["rater"] == "bob"
+    assert body["verdict"] == before  # refinement is additive, verdict unchanged
+    # persisted
+    assert report_client.get("/report/run-1").json()["images"][0]["refinement"]["notes"] == "crisp"
+
+
+def test_refine_non_passing_image_400(report_client: TestClient) -> None:
+    report_client.put("/report/run-1", json=_report("run-1"))
+    # image "b" did not pass -> refining it is a 400
+    resp = report_client.post("/report/run-1/refine", json={"updates": [{"image_id": "b", "rank": 3}]})
+    assert resp.status_code == 400
+
+
+def test_refine_missing_report_404(report_client: TestClient) -> None:
+    resp = report_client.post("/report/nope/refine", json={"updates": []})
+    assert resp.status_code == 404

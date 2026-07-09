@@ -7,6 +7,7 @@ Routes:
     GET  /report/{run_id}        -> EvalReport
     PUT  /report/{run_id}        -> EvalReport   (store/overwrite a scored report)
     POST /report/{run_id}/hitl   -> EvalReport   (apply a HITL review, recompute)
+    POST /report/{run_id}/refine -> EvalReport   (apply a second-pass re-rank of the passing subset)
 
 Reports are served from a directory of ``<run_id>.json`` files
 (``$ARGUS_PROOF_REPORTS_DIR``, default ``reports/``). The generate/score verbs
@@ -23,6 +24,7 @@ except ImportError as exc:  # pragma: no cover
 
 from argus_proof import __version__
 from argus_proof.models import EvalReport, ProofError
+from argus_proof.refinement import RefinementRequest
 from argus_proof.reports import HitlRequest, ReportStore, ReportSummary
 
 
@@ -95,6 +97,18 @@ def create_app(
         report (aggregate pass-rate and verdict fold the human decisions in)."""
         try:
             return store.review(run_id, request)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"no report for run {run_id!r}") from exc
+        except ProofError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/report/{run_id}/refine")
+    async def refine_report(run_id: str, request: RefinementRequest) -> EvalReport:
+        """Apply a second-pass re-rank of the passing subset (1–5 + notes) and
+        return the report with the refinement layer added — first-pass ratings,
+        aggregate, and verdict are left unchanged."""
+        try:
+            return store.refine(run_id, request)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=f"no report for run {run_id!r}") from exc
         except ProofError as exc:

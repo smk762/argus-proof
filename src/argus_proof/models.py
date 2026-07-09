@@ -41,7 +41,9 @@ from pydantic import BaseModel, Field, model_validator
 #      EvalReport with structured reject reasons, image-free RejectArchive.
 # 1.1: additive — ImageScores.hitl_rater records who rated an image, so a report
 #      can be split by rater for inter-rater reliability (issue #10).
-PROOF_VERSION = "1.1"
+# 1.2: additive — Refinement + ImageScores.refinement carry the optional
+#      second-pass re-rank of the passing subset (issue #7).
+PROOF_VERSION = "1.2"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -354,6 +356,21 @@ class RejectReason(BaseModel):
     note: str | None = None
 
 
+class Refinement(BaseModel):
+    """A second-pass refined rating for one image (the optional refinement stage).
+
+    A finer 1–5 re-rank of the images that *already passed* the quality stage,
+    with free-text ``notes`` — a **separate layer** from the first-pass
+    ``hitl_rating``/``reject_reasons`` (it never overwrites them), so both the
+    original verdict and the refined ordering are retained. ``rater`` records who
+    refined it.
+    """
+
+    rank: int = Field(ge=1, le=5)
+    notes: str | None = None
+    rater: str | None = None
+
+
 class ImageScores(BaseModel):
     """Per-image scores for one generated sample, keyed by ``(run_id, seed)``.
 
@@ -361,7 +378,8 @@ class ImageScores(BaseModel):
     reproducible key is ``seed`` (with the run's :class:`RunManifest`).
     ``hitl_rating`` is a 1–5 star human rating when review has happened;
     ``hitl_rater`` records who gave it (an opaque rater id) so a report can be
-    split per rater for inter-rater reliability.
+    split per rater for inter-rater reliability. ``refinement`` is the optional
+    second-pass re-rank over the passing subset, kept distinct from the first pass.
     """
 
     image_id: str
@@ -375,6 +393,8 @@ class ImageScores(BaseModel):
     # Near-duplicate group id; images sharing an id collapse to one unit for the
     # pass-rate math. None when no deduper ran (each image is its own group).
     duplicate_group: int | None = None
+    # Optional second-pass refinement over the passing subset (see Refinement).
+    refinement: Refinement | None = None
 
 
 class AggregateScores(BaseModel):
@@ -579,6 +599,7 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
     GridPlan,
     MetricScores,
     RejectReason,
+    Refinement,
     ImageScores,
     AggregateScores,
     ScorerProvenance,
