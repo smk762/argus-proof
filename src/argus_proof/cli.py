@@ -191,6 +191,45 @@ def experiment(
     typer.echo(f"est. {est.est_gpu_hours:.1f} GPU-hours @ {est.seconds_per_image:g}s/image")
 
 
+@app.command()
+def explore(
+    report_json: Path = Argument(..., help="Scored EvalReport JSON to open in FiftyOne"),
+    images: Path = Option(..., "--images", help="Dir of generated images named <image_id>.<ext>"),
+    name: str | None = Option(None, "--name", help="FiftyOne dataset name (default: auto)"),
+    umap: bool = Option(False, "--umap", help="Compute a UMAP embedding visualisation (needs umap-learn)"),
+    launch: bool = Option(True, "--launch/--no-launch", help="Open the FiftyOne App (blocks until closed)"),
+    ingest: Path | None = Option(
+        None, "--ingest", help="After the App closes, fold rating:/reject: tags back and write the report here"
+    ),
+    rater: str | None = Option(None, "--rater", help="Rater id stamped on ingested tags"),
+) -> None:
+    """Open a scored run in FiftyOne with metrics attached, for embedding viz + tag triage."""
+    from argus_proof import explore as fo_explore
+    from argus_proof.models import ProofError
+
+    if not fo_explore.is_available():
+        typer.echo("explore needs the fiftyone extra: pip install 'argus-proof[fiftyone]'", err=True)
+        raise typer.Exit(2)
+
+    report = _load_report(report_json)
+    try:
+        paths = fo_explore.image_paths_from_dir(images)
+        dataset = fo_explore.to_fiftyone_dataset(report, paths, name=name, overwrite=True)
+        typer.echo(f"dataset {dataset.name!r}: {len(dataset)} samples ({len(paths)} images found)")
+        if umap:
+            fo_explore.compute_visualization(dataset)
+            typer.echo("computed UMAP visualisation (brain_key='proof_viz')")
+        if launch:
+            fo_explore.launch_app(dataset).wait()  # block until the App is closed
+        if ingest is not None:
+            updated = fo_explore.ingest_from_dataset(dataset, report, rater=rater)
+            ingest.write_text(updated.model_dump_json(indent=2) + "\n", encoding="utf-8")
+            typer.echo(f"ingested tags -> {ingest} (verdict: {'pass' if updated.verdict.passed else 'fail'})")
+    except (OSError, ProofError) as exc:
+        typer.echo(f"explore failed: {exc}", err=True)
+        raise typer.Exit(2) from exc
+
+
 DEFAULT_SCHEMA_PATH = Path("schema/proof-wire.schema.json")
 
 

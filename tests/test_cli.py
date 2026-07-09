@@ -15,7 +15,7 @@ runner = CliRunner()
 def test_help_lists_verbs() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for verb in ("inspect", "run", "score", "report", "gate", "recommend", "experiment", "schema", "serve"):
+    for verb in ("inspect", "run", "score", "report", "gate", "recommend", "experiment", "explore", "schema", "serve"):
         assert verb in result.output
 
 
@@ -156,6 +156,17 @@ def test_experiment_unreadable_matrix_exits_two(tmp_path: Path) -> None:
     export = _export_with_prompt(tmp_path)
     result = runner.invoke(app, ["experiment", str(tmp_path / "nope.json"), "--export", str(export)])
     assert result.exit_code == 2
+
+
+def test_explore_without_fiftyone_exits_two(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    # When the [fiftyone] extra is absent, the verb should exit 2 with an install hint
+    # (not crash). Force is_available() False so the test is deterministic in CI.
+    import argus_proof.explore as fo_explore
+
+    monkeypatch.setattr(fo_explore, "is_available", lambda: False)
+    result = runner.invoke(app, ["explore", str(tmp_path / "r.json"), "--images", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "fiftyone extra" in result.output
 
 
 @pytest.mark.parametrize(
