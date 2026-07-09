@@ -600,7 +600,7 @@
       "type": "object"
     },
     "ImageScores": {
-      "description": "Per-image scores for one generated sample, keyed by ``(run_id, seed)``.\n\n``image_id`` is an opaque handle for the report to reference; the durable,\nreproducible key is ``seed`` (with the run's :class:`RunManifest`).\n``hitl_rating`` is a 1\u20135 star human rating when review has happened;\n``hitl_rater`` records who gave it (an opaque rater id) so a report can be\nsplit per rater for inter-rater reliability.",
+      "description": "Per-image scores for one generated sample, keyed by ``(run_id, seed)``.\n\n``image_id`` is an opaque handle for the report to reference; the durable,\nreproducible key is ``seed`` (with the run's :class:`RunManifest`).\n``hitl_rating`` is a 1\u20135 star human rating when review has happened;\n``hitl_rater`` records who gave it (an opaque rater id) so a report can be\nsplit per rater for inter-rater reliability. ``refinement`` is the optional\nsecond-pass re-rank over the passing subset, kept distinct from the first pass.",
       "properties": {
         "duplicate_group": {
           "anyOf": [
@@ -658,6 +658,17 @@
           ],
           "default": null,
           "title": "Passed"
+        },
+        "refinement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Refinement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "reject_reasons": {
           "items": {
@@ -895,6 +906,46 @@
         "type"
       ],
       "title": "ProgressEvent",
+      "type": "object"
+    },
+    "Refinement": {
+      "description": "A second-pass refined rating for one image (the optional refinement stage).\n\nA finer 1\u20135 re-rank of the images that *already passed* the quality stage,\nwith free-text ``notes`` \u2014 a **separate layer** from the first-pass\n``hitl_rating``/``reject_reasons`` (it never overwrites them), so both the\noriginal verdict and the refined ordering are retained. ``rater`` records who\nrefined it.",
+      "properties": {
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "rank": {
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "rater": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rater"
+        }
+      },
+      "required": [
+        "rank"
+      ],
+      "title": "Refinement",
       "type": "object"
     },
     "RejectArchive": {

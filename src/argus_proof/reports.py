@@ -16,11 +16,15 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
 from argus_proof.models import EvalReport, GateConfig, ProofError, RejectReason
 from argus_proof.scoring.summary import summarise
+
+if TYPE_CHECKING:
+    from argus_proof.refinement import RefinementRequest
 
 # Where reports live when the server/CLI isn't told otherwise. Override per
 # deployment (compose mounts a volume here) with ARGUS_PROOF_REPORTS_DIR.
@@ -190,5 +194,13 @@ class ReportStore:
     def review(self, run_id: str, request: HitlRequest) -> EvalReport:
         """Apply a HITL batch to a stored report and persist the result."""
         updated = apply_hitl(self.get(run_id), request)
+        self.save(updated)
+        return updated
+
+    def refine(self, run_id: str, request: RefinementRequest) -> EvalReport:
+        """Apply a refinement batch (second-pass re-rank) to a stored report and persist it."""
+        from argus_proof.refinement import apply_refinement
+
+        updated = apply_refinement(self.get(run_id), request)
         self.save(updated)
         return updated
