@@ -243,6 +243,32 @@ follow-up — those aren't yet `CrossRunStore.SLICEABLE` columns.) For a matrix 
 large to brute-force, `optuna_search()` (optional `[opt]` extra) does
 sample-efficient search over the same factor levels.
 
+## FiftyOne exploration (Phase 7, optional)
+
+A power-user surface over a scored run, complementing the `/proof` HITL view.
+`argus_proof.explore` turns an `EvalReport` into a [FiftyOne](https://docs.voxel51.com)
+dataset — every computed field attached to its image — so you can visualise
+embeddings (UMAP/t-SNE) to spot mode collapse / clusters / outliers, run the
+uniqueness/near-dup brain, and triage by tag (`pip install "argus-proof[fiftyone]"`):
+
+```bash
+argus-proof explore eval_report.json --images ./run-1/images --umap   # opens the FiftyOne App
+```
+
+```python
+from argus_proof.explore import to_fiftyone_dataset, compute_visualization, ingest_from_dataset
+
+ds = to_fiftyone_dataset(report, {"img-1": "run-1/images/img-1.png", ...})
+compute_visualization(ds)                       # UMAP embedding viz (fiftyone-brain)
+report = ingest_from_dataset(ds, report)         # round-trip: fold tags back as ratings/reasons
+```
+
+The **round-trip** reads `rating:<1-5>` and `reject:<code>` tags off the dataset and
+folds them into the report through the same `apply_hitl` path a review uses (so the
+verdict recomputes identically). The mapping (`sample_fields`/`sample_tags`/
+`ingest_tags`) is dependency-free and unit-tested; only the dataset/brain/App
+adapters need the extra, and `explore.is_available()` guards them.
+
 ## Develop
 
 ```bash

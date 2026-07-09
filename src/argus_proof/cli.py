@@ -191,6 +191,33 @@ def experiment(
     typer.echo(f"est. {est.est_gpu_hours:.1f} GPU-hours @ {est.seconds_per_image:g}s/image")
 
 
+@app.command()
+def explore(
+    report_json: Path = Argument(..., help="Scored EvalReport JSON to open in FiftyOne"),
+    images: Path = Option(..., "--images", help="Dir of generated images named <image_id>.<ext>"),
+    name: str | None = Option(None, "--name", help="FiftyOne dataset name (default: auto)"),
+    umap: bool = Option(False, "--umap", help="Compute a UMAP embedding visualisation (needs fiftyone-brain)"),
+    launch: bool = Option(True, "--launch/--no-launch", help="Open the FiftyOne App (blocks until closed)"),
+) -> None:
+    """Open a scored run in FiftyOne with metrics attached, for embedding viz + tag triage."""
+    from argus_proof import explore as fo_explore
+
+    if not fo_explore.is_available():
+        typer.echo("explore needs the fiftyone extra: pip install 'argus-proof[fiftyone]'", err=True)
+        raise typer.Exit(2)
+
+    report = _load_report(report_json)
+    paths = fo_explore.image_paths_from_dir(images)
+    dataset = fo_explore.to_fiftyone_dataset(report, paths, name=name)
+    typer.echo(f"dataset {dataset.name!r}: {len(dataset)} samples ({len(paths)} images found)")
+    if umap:
+        fo_explore.compute_visualization(dataset)
+        typer.echo("computed UMAP visualisation (brain_key='proof_viz')")
+    if launch:
+        session = fo_explore.launch_app(dataset)
+        session.wait()  # block until the App is closed
+
+
 DEFAULT_SCHEMA_PATH = Path("schema/proof-wire.schema.json")
 
 
