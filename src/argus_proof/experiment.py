@@ -16,10 +16,10 @@ silently queueing thousands of images.
 **Upstream factors** (caption strategy, source-image variation) are *not*
 proof's to vary — a LoRA is already trained under one caption strategy, so proof
 can only compare LoRAs trained under different ones. Those live in
-:attr:`ExperimentMatrix.labels` and ride along on each cell. Note: the cross-run
-store's sliceable columns don't yet include ``labels``/``step_config``, so
-comparing arms by those is a follow-up (wire them into ``RunStats`` +
-``CrossRunStore.SLICEABLE``); today the labels are carried metadata for that.
+:attr:`ExperimentMatrix.labels` and ride along on each cell. Feed a cell's
+``step_config``/``labels`` to :func:`~argus_proof.crossrun.run_stats` and the
+cross-run store compares the arms directly —
+``slice_pass_rate("step_config")`` / ``slice_pass_rate("label:caption_strategy")``.
 
 For a matrix too large to brute-force, :func:`optuna_search` (optional ``[opt]``
 extra) does sample-efficient search over the same factor levels.
