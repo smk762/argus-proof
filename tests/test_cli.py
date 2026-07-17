@@ -169,17 +169,140 @@ def test_explore_without_fiftyone_exits_two(tmp_path: Path, monkeypatch) -> None
     assert "fiftyone extra" in result.output
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["inspect", "/tmp/run"],
-        ["run", "/tmp/lora.safetensors", "/tmp/manifest.jsonl"],
-        ["score", "/tmp/run"],
-        ["report", "/tmp/run"],
-    ],
-)
-def test_stub_verbs_exit_2_and_point_at_tracking_issue(argv: list[str]) -> None:
-    result = runner.invoke(app, argv)
+# ---------------------------------------------------------------------------
+# run / score / report / inspect — the executing eval verbs
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_backend(monkeypatch):  # noqa: ANN201
+    """Route the run verb's backend construction to the in-memory FakeBackend."""
+    from fakebackend import FakeBackend
+
+    import argus_proof.evaluate as evaluate
+
+    backend = FakeBackend()
+    monkeypatch.setattr(evaluate, "backend_from_env", lambda *a, **k: backend)
+    return backend
+
+
+def _run_grid(tmp_path: Path) -> tuple[Path, Path]:
+    """Invoke `run` against a one-prompt export; return (runs_root, run_dir)."""
+    export = _export_with_prompt(tmp_path)
+    out = tmp_path / "runs"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "subject.safetensors",
+            str(export),
+            "--checkpoint",
+            "sdxl.safetensors",
+            "--out",
+            str(out),
+            "--seed",
+            "1",
+            "--seed",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    run_dirs = [p for p in out.iterdir() if p.is_dir()]
+    assert len(run_dirs) == 1
+    return out, run_dirs[0]
+
+
+def test_run_generates_grid_and_manifest(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
+    _, run_dir = _run_grid(tmp_path)
+    assert (run_dir / "manifest.json").is_file()
+    assert len(list(run_dir.glob("*.png"))) == 2
+    (spec,) = fake_backend.generated
+    assert spec.loras[0].name == "subject.safetensors"
+    assert spec.prompt == "a photo of sks person"
+
+
+def test_run_explicit_prompt_skips_export_captions(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
+    export = _export_with_prompt(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "l.safetensors",
+            str(export),
+            "-c",
+            "ckpt.safetensors",
+            "--out",
+            str(tmp_path / "r"),
+            "--prompt",
+            "override",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert fake_backend.generated[0].prompt == "override"
+
+
+def test_run_empty_export_exits_one(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    result = runner.invoke(
+        app, ["run", "l.safetensors", str(empty), "-c", "c.safetensors", "--out", str(tmp_path / "r")]
+    )
+    assert result.exit_code == 1
+    assert "no prompts" in result.output
+
+
+def test_run_bad_prefix_exits_two(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
+    export = _export_with_prompt(tmp_path)
+    result = runner.invoke(
+        app, ["run", "l", str(export), "-c", "c", "--out", str(tmp_path / "r"), "--run-prefix", "../evil"]
+    )
     assert result.exit_code == 2
-    assert "not implemented yet" in result.output
-    assert "github.com/smk762/argus-studio" in result.output
+    assert "run-prefix" in result.output
+
+
+def test_score_then_report_round_trip(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
+    _, run_dir = _run_grid(tmp_path)
+    reports = tmp_path / "reports"
+
+    scored = runner.invoke(app, ["score", str(run_dir), "--reports-dir", str(reports)])
+    assert scored.exit_code == 0, scored.output
+    assert "pass rate" in scored.output
+    assert len(list(reports.glob("*.json"))) == 1
+
+    listed = runner.invoke(app, ["report", "--reports-dir", str(reports)])
+    assert listed.exit_code == 0
+    assert run_dir.name in listed.output
+
+    detail = runner.invoke(app, ["report", run_dir.name, "--reports-dir", str(reports), "--json"])
+    assert detail.exit_code == 0
+    assert json.loads(detail.output)["run_id"] == run_dir.name
+
+
+def test_score_missing_run_dir_exits_one(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["score", str(tmp_path / "nope")])
+    assert result.exit_code == 1
+    assert "manifest.json" in result.output
+
+
+def test_report_unknown_run_exits_two(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["report", "ghost", "--reports-dir", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "ghost" in result.output
+
+
+def test_inspect_run_and_export_dirs(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
+    _, run_dir = _run_grid(tmp_path)
+    inspected = runner.invoke(app, ["inspect", str(run_dir)])
+    assert inspected.exit_code == 0, inspected.output
+    assert "sdxl.safetensors" in inspected.output
+    assert "2 image(s)" in inspected.output
+
+    export = tmp_path / "export"  # created by _run_grid
+    inspected = runner.invoke(app, ["inspect", str(export)])
+    assert inspected.exit_code == 0
+    assert "1 base prompt(s)" in inspected.output
+
+
+def test_inspect_unrecognised_dir_exits_two(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["inspect", str(tmp_path)])
+    assert result.exit_code == 2

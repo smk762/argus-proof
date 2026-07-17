@@ -54,15 +54,23 @@ def read_export_prompts(export_dir: Path) -> list[str]:
     """Base prompts for *export_dir*: zeroshot captions if present, else ``.txt``.
 
     Prefers a lens captions JSON (whose entries carry ``caption_variants``);
-    falls back to the ``.txt`` sidecars (the training caption) so a bare export
-    still yields prompts. Returns a de-duplicated, order-stable list.
+    falls back to the ``.txt`` sidecars (the training caption) inside the
+    export, then to the sidecars next to the dataset images the export's
+    ``manifest.jsonl`` references by ``abs_path`` — lens writes training
+    captions beside the *source* images, so a manifest-only export still
+    yields prompts when the dataset volume is mounted at the recorded path.
+    Returns a de-duplicated, order-stable list.
     """
     prompts = _prompts_from_captions_json(export_dir)
     if prompts:
         logger.debug("grid.prompts", source="captions_json", count=len(prompts))
         return prompts
     prompts = _prompts_from_txt_sidecars(export_dir)
-    logger.debug("grid.prompts", source="txt_sidecars", count=len(prompts))
+    if prompts:
+        logger.debug("grid.prompts", source="txt_sidecars", count=len(prompts))
+        return prompts
+    prompts = _prompts_from_manifest_rows(export_dir)
+    logger.debug("grid.prompts", source="manifest_abs_path_sidecars", count=len(prompts))
     return prompts
 
 
@@ -133,6 +141,38 @@ def _prompts_from_txt_sidecars(export_dir: Path) -> list[str]:
             text = path.read_text(encoding="utf-8").strip()
         except (OSError, UnicodeDecodeError):
             continue  # skip an unreadable or non-UTF-8 sidecar rather than crash
+        if text:
+            prompts.append(text)
+    return _dedup(prompts)
+
+
+def _prompts_from_manifest_rows(export_dir: Path) -> list[str]:
+    """Training-caption sidecars next to the dataset images a curator
+    ``manifest.jsonl`` references (``<abs_path stem>.txt``)."""
+    manifest = export_dir / "manifest.jsonl"
+    if not manifest.is_file():
+        return []
+    prompts: list[str] = []
+    try:
+        lines = manifest.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        abs_path = row.get("abs_path") if isinstance(row, dict) else None
+        if not isinstance(abs_path, str) or not abs_path:
+            continue
+        sidecar = Path(abs_path).with_suffix(".txt")
+        try:
+            text = sidecar.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            continue  # image not captioned (or volume not mounted) -> skip the row
         if text:
             prompts.append(text)
     return _dedup(prompts)

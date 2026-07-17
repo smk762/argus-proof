@@ -110,3 +110,181 @@ def test_refine_non_passing_image_400(report_client: TestClient) -> None:
 def test_refine_missing_report_404(report_client: TestClient) -> None:
     resp = report_client.post("/report/nope/refine", json={"updates": []})
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# refined ranking + retract (issue #35)
+# ---------------------------------------------------------------------------
+
+
+def test_refined_ranking_endpoint_orders_and_summarises(report_client: TestClient) -> None:
+    report_client.put("/report/run-1", json=_report("run-1"))
+    report_client.post("/report/run-1/refine", json={"updates": [{"image_id": "a", "rank": 4}]})
+
+    body = report_client.get("/report/run-1/refined").json()
+    assert [img["image_id"] for img in body["images"]] == ["a"]  # only the passing subset
+    assert body["images"][0]["refinement"]["rank"] == 4
+
+    listed = report_client.get("/reports").json()["reports"]
+    assert listed[0]["n_refined"] == 1
+
+
+def test_refine_retract_clears_the_layer(report_client: TestClient) -> None:
+    report_client.put("/report/run-1", json=_report("run-1"))
+    report_client.post("/report/run-1/refine", json={"updates": [{"image_id": "a", "rank": 4, "notes": "ok"}]})
+    resp = report_client.post("/report/run-1/refine", json={"updates": [{"image_id": "a", "rank": None}]})
+    assert resp.status_code == 200
+    row_a = next(r for r in resp.json()["images"] if r["image_id"] == "a")
+    assert row_a["refinement"] is None
+    assert report_client.get("/reports").json()["reports"][0]["n_refined"] == 0
+
+
+def test_refined_missing_report_404(report_client: TestClient) -> None:
+    assert report_client.get("/report/nope/refined").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# exports + models + image serving + run trigger
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def suite_dirs(tmp_path):  # noqa: ANN201
+    """A reports/runs/exports layout with one export containing a prompt."""
+    from fakebackend import save_png
+
+    exports = tmp_path / "exports"
+    export = exports / "rufina"
+    export.mkdir(parents=True)
+    (export / "manifest.jsonl").write_text('{"rel_path": "img.png"}\n', encoding="utf-8")
+    (export / "img.txt").write_text("a photo of sks person", encoding="utf-8")
+    save_png(export / "references" / "ref.png")
+    return {
+        "reports": tmp_path / "reports",
+        "runs": tmp_path / "runs",
+        "exports": exports,
+    }
+
+
+@pytest.fixture
+def suite_client(suite_dirs) -> TestClient:  # noqa: ANN001
+    return TestClient(
+        create_app(
+            reports_dir=str(suite_dirs["reports"]),
+            runs_dir=str(suite_dirs["runs"]),
+            exports_dir=str(suite_dirs["exports"]),
+        )
+    )
+
+
+def test_list_exports(suite_client: TestClient) -> None:
+    body = suite_client.get("/exports").json()
+    assert body["exports"] == [{"name": "rufina", "n_rows": 1, "has_references": True}]
+
+
+def test_list_exports_unconfigured_is_empty(report_client: TestClient, monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.delenv("ARGUS_PROOF_EXPORTS_DIR", raising=False)
+    assert report_client.get("/exports").json() == {"exports": []}
+
+
+def test_list_models(monkeypatch, tmp_path, report_client: TestClient) -> None:  # noqa: ANN001
+    (tmp_path / "checkpoints" / "sdxl").mkdir(parents=True)
+    (tmp_path / "checkpoints" / "sdxl" / "base.safetensors").write_bytes(b"x")
+    (tmp_path / "loras").mkdir()
+    (tmp_path / "loras" / "subject.safetensors").write_bytes(b"x")
+    (tmp_path / "loras" / "notes.txt").write_bytes(b"x")
+    monkeypatch.setenv("PROOF_MODELS_DIR", str(tmp_path))
+    body = report_client.get("/models").json()
+    assert body == {"checkpoints": ["sdxl/base.safetensors"], "loras": ["subject.safetensors"]}
+
+
+def _fake_backend(monkeypatch):  # noqa: ANN001, ANN202
+    from fakebackend import FakeBackend
+
+    import argus_proof.evaluate as evaluate
+
+    backend = FakeBackend()
+    monkeypatch.setattr(evaluate, "backend_from_env", lambda *a, **k: backend)
+    return backend
+
+
+def _stream_frames(client: TestClient, payload: dict) -> list[dict]:
+    import json
+
+    resp = client.post("/run/stream", json=payload)
+    assert resp.status_code == 200
+    return [json.loads(line) for line in resp.text.splitlines() if line.strip()]
+
+
+def test_run_stream_generates_scores_and_stores(suite_client: TestClient, suite_dirs, monkeypatch) -> None:  # noqa: ANN001
+    _fake_backend(monkeypatch)
+    frames = _stream_frames(
+        suite_client,
+        {"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "export": "rufina", "seeds": [1, 2]},
+    )
+    types = [f["type"] for f in frames]
+    assert types[0] == "start"
+    assert "image" in types and "scoring" in types
+    assert types[-1] == "complete"
+
+    complete = frames[-1]
+    run_id = complete["run_id"]
+    assert complete["report"]["n_images"] == 2
+
+    # report persisted and images servable by id
+    assert suite_client.get(f"/report/{run_id}").status_code == 200
+    image_id = f"{run_id}-1"
+    img = suite_client.get(f"/report/{run_id}/image/{image_id}")
+    assert img.status_code == 200
+    assert img.headers["content-type"] == "image/png"
+
+
+def test_run_stream_explicit_prompt_needs_no_export(suite_client: TestClient, monkeypatch) -> None:  # noqa: ANN001
+    backend = _fake_backend(monkeypatch)
+    frames = _stream_frames(
+        suite_client,
+        {"lora": "l.safetensors", "base_checkpoint": "c.safetensors", "prompt": "hello", "seeds": [7]},
+    )
+    assert frames[-1]["type"] == "complete"
+    assert backend.generated[0].prompt == "hello"
+
+
+def test_run_stream_without_prompt_or_export_400(suite_client: TestClient) -> None:
+    resp = suite_client.post("/run/stream", json={"lora": "l", "base_checkpoint": "c"})
+    assert resp.status_code == 400
+
+
+def test_run_stream_unknown_export_404(suite_client: TestClient) -> None:
+    resp = suite_client.post("/run/stream", json={"lora": "l", "base_checkpoint": "c", "export": "ghost"})
+    assert resp.status_code == 404
+
+
+def test_run_stream_traversal_export_400(suite_client: TestClient) -> None:
+    resp = suite_client.post("/run/stream", json={"lora": "l", "base_checkpoint": "c", "export": "../etc"})
+    assert resp.status_code == 400
+
+
+def test_run_stream_backend_failure_streams_error_frame(suite_client: TestClient, monkeypatch) -> None:  # noqa: ANN001
+    import argus_proof.evaluate as evaluate
+
+    def boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        from argus_proof.backends import BackendError
+
+        raise BackendError("engine unreachable")
+
+    monkeypatch.setattr(evaluate, "backend_from_env", boom)
+    frames = _stream_frames(suite_client, {"lora": "l", "base_checkpoint": "c", "prompt": "x"})
+    assert frames[-1]["type"] == "error"
+    assert "engine unreachable" in frames[-1]["message"]
+
+
+def test_get_image_rejects_traversal_ids(suite_client: TestClient) -> None:
+    # Ids that fail the charset check are a 400 from the handler; an encoded
+    # slash never even matches the route (404). Either way: rejected.
+    assert suite_client.get("/report/run-1/image/.dotfile").status_code == 400
+    assert suite_client.get("/report/.escape/image/img-1").status_code == 400
+    assert suite_client.get("/report/run-1/image/..%2F..%2Fetc%2Fpasswd").status_code in (400, 404)
+
+
+def test_get_image_missing_404(suite_client: TestClient) -> None:
+    assert suite_client.get("/report/run-1/image/nope").status_code == 404

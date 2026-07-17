@@ -16,8 +16,14 @@ from __future__ import annotations
 
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+try:  # POSIX file locking for read-modify-write updates (issue #34).
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX dev machines lose locking, nothing else
+    fcntl = None  # type: ignore[assignment]
 
 from pydantic import BaseModel, Field
 
@@ -48,6 +54,9 @@ class ReportSummary(BaseModel):
     n_images: int
     n_groups: int | None = None
     n_needs_hitl: int = 0
+    # How many images carry a second-pass refinement (issue #35's rollup), so the
+    # run browser can show refinement coverage without shipping per-image rows.
+    n_refined: int = 0
     created_at: str | None = None
 
 
@@ -96,6 +105,7 @@ def summarise_report(report: EvalReport) -> ReportSummary:
         n_images=agg.n_images,
         n_groups=agg.n_groups,
         n_needs_hitl=agg.n_needs_hitl,
+        n_refined=sum(1 for img in report.images if img.refinement is not None),
         created_at=report.created_at,
     )
 
@@ -207,16 +217,42 @@ class ReportStore:
             tmp.unlink(missing_ok=True)  # no-op after a successful replace; cleans a partial write
         return path
 
+    @contextmanager
+    def _update_lock(self, run_id: str):
+        """Serialise read-modify-write updates to one run's report (issue #34).
+
+        ``save`` alone is atomic (temp file + ``os.replace``) but a concurrent
+        pair of review/refine calls would each read the same base report and the
+        second write would silently drop the first's changes. An exclusive
+        ``flock`` on a per-run sidecar lock file makes the whole
+        read-apply-write a critical section. On platforms without ``fcntl``
+        the lock degrades to a no-op (single-user dev convenience).
+        """
+        self._path(run_id)  # validate run_id before it becomes a lock filename
+        if fcntl is None:  # pragma: no cover - non-POSIX
+            yield
+            return
+        self.root.mkdir(parents=True, exist_ok=True)
+        lock_path = self.root / f".{run_id}.lock"
+        with open(lock_path, "w", encoding="utf-8") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
     def review(self, run_id: str, request: HitlRequest) -> EvalReport:
         """Apply a HITL batch to a stored report and persist the result."""
-        updated = apply_hitl(self.get(run_id), request)
-        self.save(updated)
+        with self._update_lock(run_id):
+            updated = apply_hitl(self.get(run_id), request)
+            self.save(updated)
         return updated
 
     def refine(self, run_id: str, request: RefinementRequest) -> EvalReport:
         """Apply a refinement batch (second-pass re-rank) to a stored report and persist it."""
         from argus_proof.refinement import apply_refinement
 
-        updated = apply_refinement(self.get(run_id), request)
-        self.save(updated)
+        with self._update_lock(run_id):
+            updated = apply_refinement(self.get(run_id), request)
+            self.save(updated)
         return updated

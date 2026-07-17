@@ -61,6 +61,32 @@ def test_list_skips_unreadable(tmp_path) -> None:
     assert [s.run_id for s in store.list()] == ["run-1"]
 
 
+def test_concurrent_reviews_do_not_lose_updates(tmp_path) -> None:
+    # Issue #34: two raters review different images at the same time; without
+    # the per-run update lock one read-modify-write clobbers the other.
+    import threading
+
+    store = ReportStore(tmp_path)
+    n_images = 8
+    store.save(_report(rows=[_row(f"img-{i}", i, passed=None) for i in range(n_images)]))
+
+    barrier = threading.Barrier(n_images)
+
+    def rate(image_id: str) -> None:
+        barrier.wait()
+        store.review("run-1", HitlRequest(updates=[HitlImageUpdate(image_id=image_id, hitl_rating=5)]))
+
+    threads = [threading.Thread(target=rate, args=(f"img-{i}",)) for i in range(n_images)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    final = store.get("run-1")
+    assert all(img.hitl_rating == 5 for img in final.images)  # nothing lost
+    assert final.verdict.passed is True
+
+
 def test_summarise_report_digest() -> None:
     report = _report(rows=[_row("a", 1, passed=True), _row("b", 2, passed=None)])
     digest = summarise_report(report)
