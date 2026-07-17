@@ -158,6 +158,15 @@ def test_eval_report_round_trips() -> None:
     assert EvalReport.model_validate_json(report.model_dump_json()) == report
 
 
+def test_reject_reason_carries_optional_policy_category() -> None:
+    # A moderation flag can attribute an unsafe reject to a taxonomy category (#41).
+    r = RejectReason(code="unsafe", category="self_harm", note="depicted self-harm")
+    assert r.category == "self_harm"
+    assert RejectReason.model_validate_json(r.model_dump_json()) == r
+    # backward-compatible: category defaults to None for a plain reject
+    assert RejectReason(code="anatomy").category is None
+
+
 def test_missing_scorer_leaves_metric_none_not_zero() -> None:
     scores = MetricScores(identity=0.82)
     assert scores.identity == 0.82

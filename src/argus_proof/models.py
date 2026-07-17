@@ -43,7 +43,9 @@ from pydantic import BaseModel, Field, model_validator
 #      can be split by rater for inter-rater reliability (issue #10).
 # 1.2: additive — Refinement + ImageScores.refinement carry the optional
 #      second-pass re-rank of the passing subset (issue #7).
-PROOF_VERSION = "1.2"
+# 1.3: additive — RejectReason.category attributes an unsafe flag to a policy
+#      taxonomy category (violence/hate/self-harm/…) for moderation (issue #41).
+PROOF_VERSION = "1.3"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -362,9 +364,17 @@ RejectReasonCode = Literal[
 
 
 class RejectReason(BaseModel):
-    """One structured reason an image was rejected or flagged."""
+    """One structured reason an image was rejected or flagged.
+
+    ``category`` optionally attributes an ``unsafe`` reject to a policy-taxonomy
+    slug (violence / hate / self_harm / weapons / sexual …, see
+    :mod:`argus_proof.moderation`), so a reviewer's flag can be sliced by category
+    rather than lumped into one "unsafe". Kept a free ``str`` (not a Literal) so
+    the taxonomy can evolve without a wire-contract break.
+    """
 
     code: RejectReasonCode
+    category: str | None = None
     note: str | None = None
 
 
