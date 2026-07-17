@@ -14,7 +14,13 @@ RUN apt-get update \
 
 COPY . .
 
-RUN uv pip install --system --no-cache ".[server,cli]"
+# Extras baked into the image. Default keeps it light; build with
+# EXTRAS="server,cli,score" for the full scorer stack (torch, insightface, …).
+ARG EXTRAS="server,cli"
+
+# pillow + imagehash ride along regardless: they power phash near-dup collapse
+# and diversity (honest group pass-rates) at negligible image cost.
+RUN uv pip install --system --no-cache ".[${EXTRAS}]" pillow imagehash
 
 EXPOSE 8104
 CMD ["argus-proof", "serve", "--port", "8104", "--cors"]

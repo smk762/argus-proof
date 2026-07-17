@@ -1,7 +1,11 @@
-"""argus-proof CLI — ``inspect``, ``run``, ``score``, ``report``, ``serve``.
+"""argus-proof CLI — ``inspect``, ``run``, ``score``, ``report``, ``serve`` and friends.
 
-Phase 0 scaffold: the eval verbs are stubs that name the epic issue that will
-implement them. Only ``serve`` (health endpoint on :8104) is live.
+The eval verbs wire the library together: ``run`` expands a prompt grid from a
+curator export and generates it through the configured backend
+(``$PROOF_BACKEND``), ``score`` turns a run dir into a stored
+:class:`~argus_proof.models.EvalReport`, ``report`` browses stored reports, and
+``inspect`` summarises an export or run dir. ``gate`` / ``recommend`` /
+``experiment`` / ``explore`` / ``schema`` / ``serve`` operate on those artifacts.
 """
 
 from __future__ import annotations
@@ -19,8 +23,6 @@ except ImportError as _exc:  # pragma: no cover
     print("CLI requires: pip install argus-proof[cli]", file=sys.stderr)
     raise SystemExit(1) from _exc
 
-EPIC = "https://github.com/smk762/argus-studio/issues/6"
-
 app = typer.Typer(
     name="argus-proof",
     help="Post-training LoRA evaluation: generate samples and score them against the curated dataset.",
@@ -33,11 +35,6 @@ def _cli(verbose: bool = Option(False, "--verbose", "-v", help="Show info/debug 
     """Keep stdout clean for --json output; ``serve`` re-enables info logs."""
     level = logging.DEBUG if verbose else logging.WARNING
     structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(level))
-
-
-def _stub(verb: str, issue: str) -> None:
-    typer.echo(f"argus-proof {verb} is not implemented yet — tracked in {issue} (epic: {EPIC})", err=True)
-    raise typer.Exit(2)
 
 
 def _load_model(path: Path, model_cls, label: str):  # noqa: ANN001, ANN202 - generic pydantic loader
@@ -58,37 +55,222 @@ def _load_report(report_json: Path):  # noqa: ANN202 - EvalReport imported lazil
     return _load_model(report_json, EvalReport, "EvalReport")
 
 
+_RUN_PREFIX_RE = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
+
+
+def _echo_progress(event) -> None:  # noqa: ANN001 - ProgressEvent, imported lazily by callers
+    """Print a backend ProgressEvent as a compact CLI line."""
+    if event.type == "image":
+        typer.echo(f"  seed {event.seed}: {event.image_id}")
+    elif event.type == "error":
+        typer.echo(f"  error: {event.message}", err=True)
+
+
+def _echo_report(rep) -> None:  # noqa: ANN001 - EvalReport, imported lazily by callers
+    """The human digest of a scored report: verdict line + one line per image."""
+    agg, verdict = rep.aggregate, rep.verdict
+    status = "PENDING" if verdict.pending else ("PASSED" if verdict.passed else "FAILED")
+    groups = agg.n_groups if agg.n_groups is not None else agg.n_images
+    typer.echo(
+        f"{rep.run_id}: {status} — pass rate {agg.pass_rate:.0%} "
+        f"({agg.n_passed}/{groups} groups, {agg.n_images} images, {agg.n_needs_hitl} need review)"
+    )
+    for reason in verdict.reasons:
+        typer.echo(f"  reason: {reason}")
+    for img in rep.images:
+        mark = "?" if img.passed is None else ("+" if img.passed else "-")
+        rating = f" hitl={img.hitl_rating}" if img.hitl_rating is not None else ""
+        rejects = f" rejects={','.join(r.code for r in img.reject_reasons)}" if img.reject_reasons else ""
+        typer.echo(f"  [{mark}] {img.image_id} (seed {img.seed}){rating}{rejects}")
+
+
 @app.command()
 def inspect(
-    run_dir: Path = Argument(..., help="Proof run dir (or export dir + LoRA pair) to summarise"),
+    path: Path = Argument(..., help="A proof run dir (manifest.json) or a curator export dir (manifest.jsonl)"),
 ) -> None:
-    """Summarise a proof run: manifest, prompt grid, scores, verdicts. [stub]"""
-    _stub("inspect", "https://github.com/smk762/argus-studio/issues/8")
+    """Summarise a proof run dir or a curator export dir."""
+    from argus_proof.backends.base import MANIFEST_NAME
+    from argus_proof.evaluate import EvaluateError, discover_images, load_manifest
+    from argus_proof.grid import read_export_prompts
+
+    if (path / MANIFEST_NAME).is_file():
+        try:
+            manifest = load_manifest(path)
+            images = discover_images(path, manifest)
+        except EvaluateError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(2) from exc
+        typer.echo(f"run {manifest.run_id} — {manifest.engine} {manifest.engine_version}")
+        typer.echo(f"  checkpoint: {manifest.base_checkpoint.name} ({manifest.base_checkpoint.sha256[:12]}…)")
+        for lora_ref in manifest.loras:
+            typer.echo(f"  lora: {lora_ref.name} @ {lora_ref.weight} ({lora_ref.sha256[:12]}…)")
+        typer.echo(f"  prompt: {manifest.prompt}")
+        typer.echo(f"  seeds: {', '.join(str(s) for s in manifest.seeds)} — {len(images)} image(s) on disk")
+        if manifest.source_manifest:
+            typer.echo(f"  source export: {manifest.source_manifest}")
+        return
+
+    if path.is_dir():
+        prompts = read_export_prompts(path)
+        if prompts:
+            typer.echo(f"export {path} — {len(prompts)} base prompt(s)")
+            for prompt in prompts[:5]:
+                typer.echo(f"  {prompt[:100]}{'…' if len(prompt) > 100 else ''}")
+            if len(prompts) > 5:
+                typer.echo(f"  … and {len(prompts) - 5} more")
+            return
+        typer.echo(f"{path} has no {MANIFEST_NAME}, captions, or .txt sidecars — not a run or export dir", err=True)
+        raise typer.Exit(2)
+
+    typer.echo(f"{path} is not a directory", err=True)
+    raise typer.Exit(2)
 
 
 @app.command()
 def run(
-    lora: Path = Argument(..., help="Trained LoRA safetensors"),
-    manifest: Path = Argument(..., help="Export manifest.jsonl the LoRA was trained from"),
+    lora: str = Argument(..., help="Trained LoRA, named as the engine loads it (e.g. subject.safetensors)"),
+    export: Path = Argument(..., help="Curator export dir the LoRA was trained from (prompt source)"),
+    checkpoint: str = Option(..., "--checkpoint", "-c", help="Base checkpoint, named as the engine loads it"),
+    out: Path | None = Option(None, "--out", "-o", help="Runs root (default $ARGUS_PROOF_RUNS_DIR or ./runs)"),
+    weight: list[float] = Option([1.0], "--weight", "-w", help="LoRA weight(s) to sweep (repeatable)"),
+    seed: list[int] = Option([1, 2, 3], "--seed", "-s", help="Control seed-set, one image per seed (repeatable)"),
+    prompt: str | None = Option(None, "--prompt", help="Explicit prompt (skips the export's captions)"),
+    negative: str = Option("", "--negative", help="Negative prompt"),
+    max_prompts: int = Option(1, "--max-prompts", min=1, help="Base prompts to take from the export"),
+    steps: int = Option(25, min=1),
+    cfg: float = Option(7.0),
+    sampler: str = Option("dpmpp_2m"),
+    scheduler: str = Option("karras"),
+    width: int = Option(1024, min=64),
+    height: int = Option(1024, min=64),
+    clip_skip: int = Option(1),
+    vae: str | None = Option(None, help="Explicit VAE (template needs a $vae slot)"),
+    backend: str | None = Option(None, "--backend", help="Override $PROOF_BACKEND (comfyui/diffusers/a1111/remote)"),
+    prefix: str = Option("proof", "--run-prefix", help="run_id prefix for the generated runs"),
 ) -> None:
-    """Generate a sample grid from a trained LoRA via the configured backend. [stub]"""
-    _stub("run", "https://github.com/smk762/argus-studio/issues/9")
+    """Generate a sample grid from a trained LoRA via the configured backend."""
+    import re as _re
+
+    from argus_proof.backends import BackendError
+    from argus_proof.evaluate import EvaluateError, backend_from_env, runs_root
+    from argus_proof.grid import GridError, build_grid, read_export_prompts
+    from argus_proof.models import GridConfig, SamplingParams
+
+    if not _re.match(_RUN_PREFIX_RE, prefix):
+        typer.echo(f"invalid --run-prefix {prefix!r}: use letters, digits, '.', '_' or '-'", err=True)
+        raise typer.Exit(2)
+
+    base_prompts = [prompt] if prompt else read_export_prompts(export)
+    export_manifest = export / "manifest.jsonl"
+    config = GridConfig(
+        base_checkpoint=checkpoint,
+        lora_checkpoints=[lora],
+        lora_weights=weight,
+        sampling=SamplingParams(
+            sampler=sampler, scheduler=scheduler, steps=steps, cfg=cfg, clip_skip=clip_skip, width=width, height=height
+        ),
+        negative_prompt=negative,
+        seeds=seed,
+        max_base_prompts=max_prompts,
+        run_id_prefix=prefix,
+        source_manifest=str(export_manifest) if export_manifest.is_file() else None,
+    )
+
+    try:
+        plan = build_grid(config, base_prompts)
+        engine = backend_from_env(backend)
+    except (GridError, EvaluateError, BackendError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    est = plan.estimate
+    typer.echo(f"grid: {est.n_runs} run(s), {est.n_images} image(s), est. {est.est_gpu_hours:.2f} GPU-hours")
+
+    out_root = runs_root(out)
+    for spec in plan.specs:
+        run_dir = out_root / spec.run_id
+        typer.echo(f"[{spec.run_id}] generating {len(spec.seeds)} image(s) -> {run_dir}")
+        try:
+            result = engine.generate(spec, run_dir, progress=_echo_progress)
+        except BackendError as exc:
+            typer.echo(f"[{spec.run_id}] failed: {exc}", err=True)
+            raise typer.Exit(1) from exc
+        typer.echo(f"[{spec.run_id}] done: {len(result.images)} image(s)")
+    typer.echo(f"score with: argus-proof score {out_root / plan.specs[0].run_id}")
 
 
 @app.command()
 def score(
-    run_dir: Path = Argument(..., help="Proof run dir containing generated samples"),
+    run_dir: Path = Argument(..., help="Proof run dir containing manifest.json + generated samples"),
+    references: Path | None = Option(
+        None, "--references", help="Held-out reference image dir for identity scoring (must not overlap training)"
+    ),
+    reports_dir: Path | None = Option(None, "--reports-dir", help="Report store (default $ARGUS_PROOF_REPORTS_DIR)"),
+    save: bool = Option(True, "--save/--no-save", help="Persist the report into the report store"),
+    json_out: bool = Option(False, "--json", help="Print the full EvalReport JSON to stdout"),
 ) -> None:
-    """Score generated samples: identity, quality, diversity, safety. [stub]"""
-    _stub("score", "https://github.com/smk762/argus-studio/issues/11")
+    """Score a generated run into an EvalReport: identity, quality, diversity, safety."""
+    from argus_proof.evaluate import EvaluateError, reference_images, score_run_dir
+    from argus_proof.models import ProofError
+    from argus_proof.reports import ReportStore
+
+    try:
+        refs = reference_images(references) if references else []
+        rep = score_run_dir(run_dir, references=refs)
+    except (EvaluateError, ProofError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if save:
+        path = ReportStore(reports_dir).save(rep)
+        typer.echo(f"report -> {path}", err=json_out)  # keep stdout clean for --json
+    if json_out:
+        typer.echo(rep.model_dump_json(indent=2))
+    else:
+        _echo_report(rep)
 
 
 @app.command()
 def report(
-    run_dir: Path = Argument(..., help="Scored proof run dir"),
+    run_id: str = Argument("", help="Run to show; omit to list every stored report"),
+    reports_dir: Path | None = Option(None, "--reports-dir", help="Report store (default $ARGUS_PROOF_REPORTS_DIR)"),
+    json_out: bool = Option(False, "--json", help="Print JSON instead of the human digest"),
 ) -> None:
-    """Render an EvalReport (JSON + HTML) with a pass/fail verdict. [stub]"""
-    _stub("report", "https://github.com/smk762/argus-studio/issues/19")
+    """Show a stored EvalReport (or list all of them) with its pass/fail verdict."""
+    from argus_proof.models import ProofError
+    from argus_proof.reports import ReportStore
+
+    store = ReportStore(reports_dir)
+    if not run_id:
+        summaries = store.list()
+        if json_out:
+            import json as _json
+
+            typer.echo(_json.dumps([s.model_dump() for s in summaries], indent=2))
+            return
+        if not summaries:
+            typer.echo(f"no reports in {store.root}")
+            return
+        for s in summaries:
+            status = "PENDING" if s.pending else ("PASSED" if s.passed else "FAILED")
+            typer.echo(
+                f"{s.run_id}: {status} — pass rate {s.pass_rate:.0%}, {s.n_images} images, {s.n_needs_hitl} need review"
+            )
+        return
+
+    try:
+        rep = store.get(run_id)
+    except FileNotFoundError as exc:
+        typer.echo(f"no report for run {run_id!r} in {store.root}", err=True)
+        raise typer.Exit(2) from exc
+    except ProofError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from exc
+
+    if json_out:
+        typer.echo(rep.model_dump_json(indent=2))
+    else:
+        _echo_report(rep)
 
 
 @app.command()

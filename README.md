@@ -10,15 +10,39 @@ argus-quarry -> argus-curator -> argus-lens -> argus-forge -> your trainer -> ar
   acquire         curate/export     caption       configs        LoRA           evaluate + optimise
 ```
 
-> **Status: Phase 0 scaffold.** The service boots (`GET /health` on :8104) and the CLI exposes the eventual
-> verbs (`inspect`, `run`, `score`, `report`) as stubs. Roadmap:
-> [argus-proof epic](https://github.com/smk762/argus-studio/issues/6) (phases 0–7).
+> **Status: functional end-to-end.** The executing verbs (`run`, `score`, `report`,
+> `inspect`) are live, the server triggers generation+scoring runs and serves the
+> resulting images to the argus-studio `/proof` review view. Roadmap:
+> [argus-proof epic](https://github.com/smk762/argus-studio/issues/6).
 
 ## Install
 
 ```bash
 uv pip install "argus-proof[cli]"          # CLI
 uv pip install "argus-proof[cli,server]"   # + HTTP server for argus-studio
+uv pip install "argus-proof[cli,score]"    # + the full scorer stack (torch, insightface, …)
+```
+
+## CLI
+
+```bash
+# Generate a sample grid from a trained LoRA (prompts come from the curator
+# export's captions; backend/engine/model dirs from the environment, see
+# .env.example — PROOF_BACKEND, COMFYUI_BASE_URL, PROOF_MODELS_DIR):
+argus-proof run subject.safetensors ./curated_export \
+  --checkpoint sdxl_base.safetensors --seed 1 --seed 2 --seed 3 --out runs
+
+# Score a generated run into a stored EvalReport (identity needs --references,
+# a held-out image dir that must NOT overlap the training set):
+argus-proof score runs/proof-l00-w00-p000 --references ./holdout
+
+# Browse stored reports / print one run's digest:
+argus-proof report
+argus-proof report proof-l00-w00-p000 [--json]
+
+# Summarise an export dir (prompt sources) or a run dir (manifest + images):
+argus-proof inspect ./curated_export
+argus-proof inspect runs/proof-l00-w00-p000
 ```
 
 ## Serve
@@ -28,7 +52,24 @@ argus-proof serve --port 8104 --cors   # peer to lens :8100, curator :8101, quar
 curl -s localhost:8104/health          # {"status":"ok","service":"argus-proof","version":"..."}
 ```
 
-## Generation backend (Phase 1)
+Routes (the backend of the argus-studio `/proof` view):
+
+```
+GET  /exports                           curator export dirs available to evaluate against
+GET  /models                            checkpoints + LoRAs under $PROOF_MODELS_DIR
+POST /run/stream                        generate + score + store one run (NDJSON progress)
+GET  /reports                           stored report digests (run browser)
+GET  /report/{run_id}                   full EvalReport            PUT to store one
+GET  /report/{run_id}/refined           passing subset, refined ranks first
+GET  /report/{run_id}/image/{image_id}  a generated sample (ids only — no path input)
+POST /report/{run_id}/hitl              apply a review; recomputes pass-rate + verdict
+POST /report/{run_id}/refine            second-pass re-rank (rank: null retracts)
+```
+
+Concurrent reviews of the same run are serialised with a per-run file lock, so
+a streaming run's report write and a reviewer's HITL save can't drop updates.
+
+## Generation backend
 
 Generation is a pluggable backend (`argus_proof.backends`) so swapping the engine
 is a config change, not a code change — the **ComfyUI** adapter ships first:
@@ -66,7 +107,7 @@ checkpoint/LoRA by **SHA256** so the run reconstructs exactly. See
 [`templates/comfyui_sdxl_lora.json`](src/argus_proof/templates/comfyui_sdxl_lora.json)
 for the shipped example.
 
-**More backends (Phase 7).** `get_backend(name, ...)` selects the engine by config
+**More backends.** `get_backend(name, ...)` selects the engine by config
 (`PROOF_BACKEND` in [`.env.example`](.env.example)); scoring/report code is
 unchanged regardless of which produced the run, and the `RunManifest` records the
 engine + version:
@@ -84,7 +125,7 @@ engine + version:
 The `a1111` / `remote` adapters need no extra (stdlib HTTP); all three reuse the
 shared manifest + transport helpers and are unit-tested with fakes.
 
-## Scoring (Phase 2)
+## Scoring
 
 Generated images are scored into an `EvalReport` by a pluggable framework
 (`argus_proof.scoring`). Per-image `ImageScorer`s each fill one normalised
@@ -128,7 +169,7 @@ report = score_run(
 > variants build on `argus_cortex.backends.RemoteBackend` (point at a service by IP/port).
 > The spine itself is dependency-free and fully tested with fakes.
 
-## HITL review & refinement (Phase 3)
+## HITL review & refinement
 
 Reports are stored per-run (`argus_proof.reports.ReportStore`, a directory of
 `<run_id>.json`) and reviewed over the server (peer to the argus-studio `/proof`
@@ -155,7 +196,7 @@ refined = apply_refinement(report, RefinementRequest(
 best_first = refined_ranking(refined)   # passing subset, refined re-ranks on top
 ```
 
-## CI acceptance gate (Phase 6)
+## CI acceptance gate
 
 Turn "was this LoRA/dataset good enough?" into an automatable yes/no. `argus-proof
 gate` evaluates a scored `EvalReport` against declared thresholds and **exits
@@ -173,7 +214,7 @@ The pass-rate lower bound uses a Wilson score interval (`argus_proof.stats`, no
 scipy), so acceptance is statistically defensible at small N. A configured metric
 that wasn't measured fails its check rather than passing silently.
 
-## Cross-run stats (Phase 5)
+## Cross-run stats
 
 Per-run reports accumulate into a queryable store so "which checkpoint / LoRA
 weight / token wins?" is answered with evidence, not vibes (`argus_proof.crossrun`,
@@ -193,7 +234,7 @@ alpha = krippendorff_alpha([{"alice": 5, "bob": 4}, ...])   # inter-rater reliab
 Pass-rate slices carry a **Wilson confidence interval**, so a lucky 3/3 cell reads
 as far less certain than 300/400; the store is parquet, keyed by `run_id` + versions.
 
-## Recommendations (Phase 6)
+## Recommendations
 
 The gate says *did it pass?*; `argus_proof.recommend` says *what to change, and
 where* — mapping weak metrics to the suite stage that owns the fix:
@@ -220,7 +261,7 @@ Safety first, then: low identity/aesthetic → **forge** (training), low adheren
 cross-run store it also surfaces the best checkpoint / LoRA weight — but only when
 the evidence separates a clear winner (non-overlapping CIs), never on a tie.
 
-## A/B experiment matrix (Phase 6)
+## A/B experiment matrix
 
 Compare LoRAs across more than one axis at once. An `ExperimentMatrix`
 (`argus_proof.experiment`) declares factors × levels and expands to a cell per
@@ -261,7 +302,7 @@ follow-up — those aren't yet `CrossRunStore.SLICEABLE` columns.) For a matrix 
 large to brute-force, `optuna_search()` (optional `[opt]` extra) does
 sample-efficient search over the same factor levels.
 
-## FiftyOne exploration (Phase 7, optional)
+## FiftyOne exploration (optional)
 
 A power-user surface over a scored run, complementing the `/proof` HITL view.
 `argus_proof.explore` turns an `EvalReport` into a [FiftyOne](https://docs.voxel51.com)

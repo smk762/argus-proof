@@ -26,10 +26,15 @@ class RefinementError(ProofError):
 
 
 class RefinementImageUpdate(BaseModel):
-    """A reviewer's refined rank (+ notes) for one passing image, by ``image_id``."""
+    """A reviewer's refined rank (+ notes) for one passing image, by ``image_id``.
+
+    ``rank=None`` **retracts** the image's refinement entirely (rank, notes and
+    rater are all cleared), so a mis-click can be undone rather than only
+    overwritten (issue #35).
+    """
 
     image_id: str
-    rank: int = Field(ge=1, le=5)
+    rank: int | None = Field(default=None, ge=1, le=5)
     notes: str | None = None
 
 
@@ -64,6 +69,7 @@ def apply_refinement(report: EvalReport, request: RefinementRequest) -> EvalRepo
     ``rater`` (``None``) keeps the existing value rather than clearing it, so a
     bare rank correction can't silently drop a reviewer's note or authorship
     (matching how :func:`~argus_proof.reports.apply_hitl` carries the rater).
+    An update with ``rank=None`` retracts the refinement layer for that image.
     """
     passing_ids = {img.image_id for img in passing_subset(report)}
     stray = [u.image_id for u in request.updates if u.image_id not in passing_ids]
@@ -80,9 +86,12 @@ def apply_refinement(report: EvalReport, request: RefinementRequest) -> EvalRepo
     return report.model_copy(update={"images": rows})
 
 
-def _merge_refinement(prior: Refinement | None, upd: RefinementImageUpdate, rater: str | None) -> Refinement:
+def _merge_refinement(prior: Refinement | None, upd: RefinementImageUpdate, rater: str | None) -> Refinement | None:
     """Build the new refinement for an image: ``rank`` replaces, but ``notes``/
-    ``rater`` fall back to the prior refinement when this update omits them."""
+    ``rater`` fall back to the prior refinement when this update omits them.
+    ``rank=None`` retracts — the whole layer (notes + rater included) is cleared."""
+    if upd.rank is None:
+        return None
     return Refinement(
         rank=upd.rank,
         notes=upd.notes if upd.notes is not None else (prior.notes if prior else None),

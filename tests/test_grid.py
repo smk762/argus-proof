@@ -84,6 +84,24 @@ def test_non_utf8_txt_sidecar_is_skipped_not_crashed(tmp_path: Path) -> None:
     assert read_export_prompts(tmp_path) == ["a photo of sks"]
 
 
+def test_falls_back_to_manifest_abs_path_sidecars(tmp_path: Path) -> None:
+    # A manifest-only export: lens wrote the training captions next to the
+    # SOURCE images (abs_path), not into the export dir.
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "img1.txt").write_text("caption one", encoding="utf-8")
+    (dataset / "img2.txt").write_text("caption two", encoding="utf-8")
+    export = tmp_path / "export"
+    export.mkdir()
+    rows = [
+        {"rel_path": "img1.jpg", "abs_path": str(dataset / "img1.jpg")},
+        {"rel_path": "img2.jpg", "abs_path": str(dataset / "img2.jpg")},
+        {"rel_path": "uncaptioned.jpg", "abs_path": str(dataset / "uncaptioned.jpg")},
+    ]
+    (export / "manifest.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    assert read_export_prompts(export) == ["caption one", "caption two"]
+
+
 def test_non_utf8_json_is_skipped_not_crashed(tmp_path: Path) -> None:
     (tmp_path / "bad.json").write_bytes(b"\xff\xfe not utf-8")
     (tmp_path / "a.txt").write_text("txt caption", encoding="utf-8")

@@ -62,11 +62,15 @@ class ComfyUIBackend:
         client_id: str = "argus-proof",
         poll_interval: float = 1.0,
         timeout: float = 600.0,
+        request_timeout: float = 180.0,
         engine_version: str | None = None,
     ) -> None:
+        # request_timeout is per HTTP call, distinct from the overall per-seed
+        # `timeout`: ComfyUI's event loop can stall for minutes while a
+        # checkpoint first loads, and a /history poll mustn't die under it.
         self.template = workflow_template
         self.resolve_model = resolve_model
-        self.transport = transport or UrllibTransport(base_url, label="ComfyUI")
+        self.transport = transport or UrllibTransport(base_url, timeout=request_timeout, label="ComfyUI")
         self.client_id = client_id
         self.poll_interval = poll_interval
         self.timeout = timeout
@@ -132,10 +136,24 @@ class ComfyUIBackend:
         return produced
 
     def _await_history(self, prompt_id: str, seed: int) -> dict:
-        """Poll /history/{prompt_id} until the run finishes, errors, or times out."""
+        """Poll /history/{prompt_id} until the run finishes, errors, or times out.
+
+        A single failed poll (e.g. a request timing out while the engine's event
+        loop is busy loading a checkpoint) is retried until the overall deadline —
+        only the run-level timeout aborts, not one slow HTTP round-trip.
+        """
         deadline = time.monotonic() + self.timeout
         while True:
-            history = self.transport.get_json(f"/history/{urllib.parse.quote(str(prompt_id))}")
+            try:
+                history = self.transport.get_json(f"/history/{urllib.parse.quote(str(prompt_id))}")
+            except BackendError as exc:
+                if time.monotonic() >= deadline:
+                    raise BackendError(
+                        f"ComfyUI run for seed {seed} did not finish within {self.timeout}s: {exc}"
+                    ) from exc
+                logger.debug("comfyui.poll_retry", prompt_id=prompt_id, error=str(exc))
+                time.sleep(self.poll_interval)
+                continue
             entry = history.get(prompt_id)
             if entry:
                 status = entry.get("status", {})
