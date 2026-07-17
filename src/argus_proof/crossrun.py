@@ -158,8 +158,12 @@ def _row_for_parquet(stats: RunStats) -> dict:
     """A :class:`RunStats` flattened for the parquet store.
 
     ``labels`` is arbitrary user-defined keys, so it becomes a **JSON text column**
-    rather than a struct (whose schema would differ run-to-run and break the
-    concat); :meth:`CrossRunStore.slice_pass_rate` extracts a key from it on demand.
+    and :meth:`CrossRunStore.slice_pass_rate` extracts a key from it on demand. A
+    polars struct would also concat (``diagonal_relaxed`` merges differing struct
+    schemas), but its field set would then grow with the union of every label any
+    run ever used; text keeps the stored schema flat and fixed. Note the
+    asymmetry: ``RunStats.labels`` is a dict, but ``frame()``'s column is the JSON
+    string — decode it if you need the mapping back.
     """
     row = stats.model_dump()
     row["labels"] = json.dumps(row.get("labels") or {}, sort_keys=True)
@@ -234,24 +238,41 @@ class CrossRunStore:
 
         return pl.read_parquet(self.path) if self.path.exists() else pl.DataFrame()
 
-    def _slice_expr(self, dimension: str):  # noqa: ANN202 - a polars expression
-        """The column expression *dimension* groups by: a fixed :data:`SLICEABLE`
-        column, or ``label:<key>`` extracted from the labels JSON."""
-        import polars as pl
+    def _label_key(self, dimension: str) -> str | None:
+        """The label key *dimension* addresses, or ``None`` for a plain column.
 
+        A **pure name check** (no I/O), so a typo'd dimension fails fast even
+        against an empty store rather than reading as "no data yet".
+        """
         if dimension.startswith(self.LABEL_PREFIX):
             key = dimension[len(self.LABEL_PREFIX) :]
             if not _LABEL_KEY_RE.fullmatch(key):
                 raise ValueError(
                     f"invalid label key {key!r}; use {self.LABEL_PREFIX}<key> with key matching [A-Za-z0-9_-]+"
                 )
-            if "labels" not in self.frame().columns:  # store predates labels
-                raise ValueError(f"cannot slice by {dimension!r}; this store has no labels column")
-            return pl.col("labels").str.json_path_match(f"$.{key}")
+            return key
         if dimension not in self.SLICEABLE:
             raise ValueError(
                 f"cannot slice by {dimension!r}; choose one of {self.SLICEABLE} or '{self.LABEL_PREFIX}<key>'"
             )
+        return None
+
+    @staticmethod
+    def _column_expr(dimension: str, label_key: str | None, columns: Sequence[str]):  # noqa: ANN205 - a polars expression
+        """The expression to group by, given the store's actual *columns*.
+
+        A store written before a column existed simply lacks it, so say that
+        plainly instead of letting polars raise a bare ColumnNotFoundError.
+        """
+        import polars as pl
+
+        column = "labels" if label_key is not None else dimension
+        if column not in columns:
+            raise ValueError(
+                f"cannot slice by {dimension!r}: this store has no {column!r} column (written by an older build)"
+            )
+        if label_key is not None:
+            return pl.col("labels").str.json_path_match(f"$.{label_key}")
         return pl.col(dimension)
 
     def slice_pass_rate(self, dimension: str, *, confidence: float = 0.95) -> list[SliceStats]:
@@ -270,10 +291,12 @@ class CrossRunStore:
         """
         import polars as pl
 
-        df = self.frame()
+        # Validate the name BEFORE any I/O: a typo must raise, not read as "no data".
+        label_key = self._label_key(dimension)
+        df = self.frame()  # single read — the expression is built from its columns
         if df.is_empty():
             return []
-        expr = self._slice_expr(dimension)
+        expr = self._column_expr(dimension, label_key, df.columns)
         grouped = (
             df.with_columns(expr.alias("_slice"))
             .group_by("_slice")

@@ -234,11 +234,38 @@ def test_slice_by_label_keeps_unlabelled_runs_as_a_none_cell(tmp_path: Path) -> 
     assert values == {"x", None}  # the unlabelled run isn't silently dropped
 
 
-def test_labels_round_trip_through_parquet(tmp_path: Path) -> None:
+def test_labels_are_stored_as_decodable_json(tmp_path: Path) -> None:
+    import json
+
     store = CrossRunStore(tmp_path / "s.parquet")
     store.append(run_stats(manifest("r1"), report("r1", n_passed=1, n_groups=1), labels={"a": "1", "b": "2"}))
-    # stored as a JSON text column (arbitrary keys need no fixed schema)
-    assert '"a": "1"' in store.frame()["labels"][0]
+    # a JSON text column (arbitrary keys need no fixed schema) — decodes back to the dict
+    assert json.loads(store.frame()["labels"][0]) == {"a": "1", "b": "2"}
+
+
+def test_invalid_dimension_raises_even_on_an_empty_store(tmp_path: Path) -> None:
+    # A typo'd dimension must fail fast, not read as "no data yet" — the name is
+    # validated before the store is even read.
+    store = CrossRunStore(tmp_path / "nothing-here.parquet")
+    with pytest.raises(ValueError, match="cannot slice by"):
+        store.slice_pass_rate("caption_strategy")  # missing the label: prefix
+    with pytest.raises(ValueError, match="invalid label key"):
+        store.slice_pass_rate("label:not a key$")
+
+
+def test_slicing_a_store_from_an_older_build_says_so(tmp_path: Path) -> None:
+    # A parquet written before step_config/labels existed lacks those columns; say
+    # that plainly rather than surfacing a bare polars ColumnNotFoundError.
+    import polars as pl
+
+    path = tmp_path / "legacy.parquet"
+    pl.DataFrame([{"run_id": "r1", "base_checkpoint": "ck", "n_groups": 2, "n_passed": 1}]).write_parquet(path)
+    store = CrossRunStore(path)
+    with pytest.raises(ValueError, match="older build"):
+        store.slice_pass_rate("step_config")
+    with pytest.raises(ValueError, match="older build"):
+        store.slice_pass_rate("label:caption_strategy")
+    assert store.slice_pass_rate("base_checkpoint")[0].value == "ck"  # existing columns still work
 
 
 def test_invalid_label_key_rejected(tmp_path: Path) -> None:

@@ -228,8 +228,9 @@ store.append(run_stats(manifest, report))          # one tidy row per run (re-ap
 for cell in store.slice_pass_rate("base_checkpoint"):
     print(cell.value, cell.pass_rate, (cell.ci_low, cell.ci_high))   # pooled pass-rate + Wilson CI
 
-# Comparing A/B experiment arms: attribute the run, then slice by the arm.
-store.append(run_stats(manifest, report, step_config=cell.step_config, labels=cell.labels))
+# Comparing A/B experiment arms: attribute each run to its cell, then slice by the arm.
+for arm in plan.cells:                             # an ExperimentCell (see the matrix section)
+    store.append(run_stats(manifest, report, step_config=arm.step_config, labels=arm.labels))
 store.slice_pass_rate("step_config")               # fast vs quality
 store.slice_pass_rate("label:caption_strategy")    # florence vs wd14 (an upstream factor)
 
