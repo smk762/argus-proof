@@ -183,3 +183,73 @@ def test_alpha_matches_reference_implementation() -> None:
 def test_alpha_undefined_returns_nan() -> None:
     assert math.isnan(krippendorff_alpha([{"r1": 5.0}]))  # only one rater -> undefined
     assert math.isnan(krippendorff_alpha([]))
+
+
+# --------------------------------------------------------------------------
+# experiment attribution: step_config + labels are sliceable (issue #36)
+# --------------------------------------------------------------------------
+
+
+def test_run_stats_records_experiment_arm() -> None:
+    s = run_stats(
+        manifest("r1"),
+        report("r1", n_passed=1, n_groups=1),
+        step_config="quality",
+        labels={"caption_strategy": "florence"},
+    )
+    assert s.step_config == "quality"
+    assert s.labels == {"caption_strategy": "florence"}
+
+
+def test_slice_by_step_config(tmp_path: Path) -> None:
+    store = CrossRunStore(tmp_path / "s.parquet")
+    store.append(run_stats(manifest("r1"), report("r1", n_passed=9, n_groups=10), step_config="quality"))
+    store.append(run_stats(manifest("r2"), report("r2", n_passed=2, n_groups=10), step_config="fast"))
+    cells = {c.value: c for c in store.slice_pass_rate("step_config")}
+    assert set(cells) == {"quality", "fast"}
+    assert cells["quality"].pass_rate == 0.9 and cells["fast"].pass_rate == 0.2
+    assert store.slice_pass_rate("step_config")[0].value == "quality"  # ranked by CI lower bound
+
+
+def test_slice_by_label_pools_runs_sharing_an_upstream_factor(tmp_path: Path) -> None:
+    store = CrossRunStore(tmp_path / "s.parquet")
+    for i, (strategy, passed) in enumerate([("florence", 9), ("florence", 9), ("wd14", 1)]):
+        store.append(
+            run_stats(
+                manifest(f"r{i}"),
+                report(f"r{i}", n_passed=passed, n_groups=10),
+                labels={"caption_strategy": strategy},
+            )
+        )
+    cells = {c.value: c for c in store.slice_pass_rate("label:caption_strategy")}
+    assert cells["florence"].n_runs == 2 and cells["florence"].n_passed == 18  # pooled across both runs
+    assert cells["wd14"].n_runs == 1 and cells["wd14"].pass_rate == 0.1
+
+
+def test_slice_by_label_keeps_unlabelled_runs_as_a_none_cell(tmp_path: Path) -> None:
+    store = CrossRunStore(tmp_path / "s.parquet")
+    store.append(run_stats(manifest("r1"), report("r1", n_passed=1, n_groups=1), labels={"caption_strategy": "x"}))
+    store.append(run_stats(manifest("r2"), report("r2", n_passed=1, n_groups=1)))  # no labels
+    values = {c.value for c in store.slice_pass_rate("label:caption_strategy")}
+    assert values == {"x", None}  # the unlabelled run isn't silently dropped
+
+
+def test_labels_round_trip_through_parquet(tmp_path: Path) -> None:
+    store = CrossRunStore(tmp_path / "s.parquet")
+    store.append(run_stats(manifest("r1"), report("r1", n_passed=1, n_groups=1), labels={"a": "1", "b": "2"}))
+    # stored as a JSON text column (arbitrary keys need no fixed schema)
+    assert '"a": "1"' in store.frame()["labels"][0]
+
+
+def test_invalid_label_key_rejected(tmp_path: Path) -> None:
+    store = CrossRunStore(tmp_path / "s.parquet")
+    store.append(run_stats(manifest("r1"), report("r1", n_passed=1, n_groups=1), labels={"a": "1"}))
+    with pytest.raises(ValueError, match="invalid label key"):
+        store.slice_pass_rate("label:not a key$")
+
+
+def test_unknown_dimension_names_the_label_escape_hatch(tmp_path: Path) -> None:
+    store = CrossRunStore(tmp_path / "s.parquet")
+    store.append(run_stats(manifest("r1"), report("r1", n_passed=1, n_groups=1)))
+    with pytest.raises(ValueError, match="label:<key>"):
+        store.slice_pass_rate("caption_strategy")  # a label needs the label: prefix

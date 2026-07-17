@@ -228,6 +228,11 @@ store.append(run_stats(manifest, report))          # one tidy row per run (re-ap
 for cell in store.slice_pass_rate("base_checkpoint"):
     print(cell.value, cell.pass_rate, (cell.ci_low, cell.ci_high))   # pooled pass-rate + Wilson CI
 
+# Comparing A/B experiment arms: attribute the run, then slice by the arm.
+store.append(run_stats(manifest, report, step_config=cell.step_config, labels=cell.labels))
+store.slice_pass_rate("step_config")               # fast vs quality
+store.slice_pass_rate("label:caption_strategy")    # florence vs wd14 (an upstream factor)
+
 alpha = krippendorff_alpha([{"alice": 5, "bob": 4}, ...])   # inter-rater reliability
 ```
 
@@ -297,10 +302,11 @@ for cell in plan.cells:
 
 **Upstream factors** (caption strategy, source-image variation) are trained *into*
 a LoRA, so proof can't vary them — it lists them in `labels`, which ride on every
-cell as metadata. (Slicing the cross-run store by `labels`/`step_config` is a
-follow-up — those aren't yet `CrossRunStore.SLICEABLE` columns.) For a matrix too
-large to brute-force, `optuna_search()` (optional `[opt]` extra) does
-sample-efficient search over the same factor levels.
+cell. Feed a cell's `step_config`/`labels` into `run_stats(...)` and the cross-run
+store compares the arms directly (`slice_pass_rate("step_config")`,
+`slice_pass_rate("label:caption_strategy")`). For a matrix too large to
+brute-force, `optuna_search()` (optional `[opt]` extra) does sample-efficient
+search over the same factor levels.
 
 ## FiftyOne exploration (optional)
 

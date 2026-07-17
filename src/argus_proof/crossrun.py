@@ -21,14 +21,16 @@ krippendorff); the pass-rate CIs themselves use the dependency-free
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import tempfile
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from argus_proof.stats import wilson_interval
 
@@ -60,6 +62,11 @@ class RunStats(BaseModel):
     proof_version: str = ""
     scorers: str | None = None
     created_at: str | None = None
+    # The experiment arm this run belongs to (argus_proof.experiment): the named
+    # sampler variant, plus the upstream factors proof observes but can't vary
+    # (caption strategy, source set). Both are sliceable — see slice_pass_rate.
+    step_config: str | None = None
+    labels: dict[str, str] = Field(default_factory=dict)
 
 
 class SliceStats(BaseModel):
@@ -75,13 +82,25 @@ class SliceStats(BaseModel):
     ci_high: float
 
 
-def run_stats(manifest: RunManifest, report: EvalReport, *, confidence: float = 0.95) -> RunStats:
+def run_stats(
+    manifest: RunManifest,
+    report: EvalReport,
+    *,
+    confidence: float = 0.95,
+    step_config: str | None = None,
+    labels: dict[str, str] | None = None,
+) -> RunStats:
     """Flatten a (manifest, report) pair into a :class:`RunStats` row.
 
     The pass-rate is over near-dup *groups* (as scored); its CI is the Wilson
     interval over ``n_passed / n_groups`` — so a 3/3 run reads as far less certain
     than a 300/400 one. Safety min/hit-rate come from the run's safety metric when
     it was scored, else stay ``None``.
+
+    *step_config* and *labels* attribute the run to its experiment arm — pass an
+    :class:`~argus_proof.experiment.ExperimentCell`'s ``step_config``/``labels``
+    so the store can compare arms (``slice_pass_rate("step_config")`` /
+    ``slice_pass_rate("label:caption_strategy")``).
     """
     agg = report.aggregate
     n_groups = agg.n_groups if agg.n_groups is not None else agg.n_images
@@ -126,14 +145,36 @@ def run_stats(manifest: RunManifest, report: EvalReport, *, confidence: float = 
         proof_version=report.proof_version,
         scorers=scorers,
         created_at=report.created_at,
+        step_config=step_config,
+        labels=dict(labels or {}),
     )
+
+
+# Label keys are embedded in a JSONPath, so keep them to a safe charset.
+_LABEL_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _row_for_parquet(stats: RunStats) -> dict:
+    """A :class:`RunStats` flattened for the parquet store.
+
+    ``labels`` is arbitrary user-defined keys, so it becomes a **JSON text column**
+    rather than a struct (whose schema would differ run-to-run and break the
+    concat); :meth:`CrossRunStore.slice_pass_rate` extracts a key from it on demand.
+    """
+    row = stats.model_dump()
+    row["labels"] = json.dumps(row.get("labels") or {}, sort_keys=True)
+    return row
 
 
 class CrossRunStore:
     """A parquet file of :class:`RunStats` rows, keyed by ``run_id`` (re-append updates)."""
 
     # Columns a slice can group by (identity dimensions, not measured outcomes).
-    SLICEABLE = ("base_checkpoint", "lora", "lora_weight", "prompt", "training_run_id")
+    SLICEABLE = ("base_checkpoint", "lora", "lora_weight", "prompt", "training_run_id", "step_config")
+
+    # Arbitrary experiment labels are sliced as "label:<key>" (they have no fixed
+    # schema, so they're stored as a JSON text column rather than one column each).
+    LABEL_PREFIX = "label:"
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path)
@@ -174,7 +215,7 @@ class CrossRunStore:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock():
-            frame = pl.DataFrame([s.model_dump() for s in rows])
+            frame = pl.DataFrame([_row_for_parquet(s) for s in rows])
             if self.path.exists():
                 frame = pl.concat([pl.read_parquet(self.path), frame], how="diagonal_relaxed")
             frame = frame.unique(subset=["run_id"], keep="last", maintain_order=True)
@@ -193,8 +234,33 @@ class CrossRunStore:
 
         return pl.read_parquet(self.path) if self.path.exists() else pl.DataFrame()
 
+    def _slice_expr(self, dimension: str):  # noqa: ANN202 - a polars expression
+        """The column expression *dimension* groups by: a fixed :data:`SLICEABLE`
+        column, or ``label:<key>`` extracted from the labels JSON."""
+        import polars as pl
+
+        if dimension.startswith(self.LABEL_PREFIX):
+            key = dimension[len(self.LABEL_PREFIX) :]
+            if not _LABEL_KEY_RE.fullmatch(key):
+                raise ValueError(
+                    f"invalid label key {key!r}; use {self.LABEL_PREFIX}<key> with key matching [A-Za-z0-9_-]+"
+                )
+            if "labels" not in self.frame().columns:  # store predates labels
+                raise ValueError(f"cannot slice by {dimension!r}; this store has no labels column")
+            return pl.col("labels").str.json_path_match(f"$.{key}")
+        if dimension not in self.SLICEABLE:
+            raise ValueError(
+                f"cannot slice by {dimension!r}; choose one of {self.SLICEABLE} or '{self.LABEL_PREFIX}<key>'"
+            )
+        return pl.col(dimension)
+
     def slice_pass_rate(self, dimension: str, *, confidence: float = 0.95) -> list[SliceStats]:
         """Pooled pass-rate + Wilson CI per value of *dimension*, across all runs.
+
+        *dimension* is one of :data:`SLICEABLE` (including ``step_config``, the
+        experiment's sampler arm) or ``label:<key>`` to compare by an upstream
+        factor an experiment recorded (e.g. ``label:caption_strategy``); a run that
+        carries no such label falls into the ``None`` cell rather than being dropped.
 
         Cells are **ranked by the CI lower bound** (not the point estimate), so a
         well-evidenced 380/400 outranks a lucky 3/3 — the ranking honours the
@@ -202,15 +268,17 @@ class CrossRunStore:
         reflects within-sample sampling error but NOT between-run variance: for a
         handful of disagreeing runs, inspect the per-run rows (``frame()``) too.
         """
-        if dimension not in self.SLICEABLE:
-            raise ValueError(f"cannot slice by {dimension!r}; choose one of {self.SLICEABLE}")
         import polars as pl
 
         df = self.frame()
         if df.is_empty():
             return []
+        expr = self._slice_expr(dimension)
         grouped = (
-            df.group_by(dimension).agg(pl.len().alias("n_runs"), pl.sum("n_groups"), pl.sum("n_passed")).sort(dimension)
+            df.with_columns(expr.alias("_slice"))
+            .group_by("_slice")
+            .agg(pl.len().alias("n_runs"), pl.sum("n_groups"), pl.sum("n_passed"))
+            .sort("_slice")
         )
         out: list[SliceStats] = []
         for row in grouped.iter_rows(named=True):
@@ -219,7 +287,7 @@ class CrossRunStore:
             out.append(
                 SliceStats(
                     dimension=dimension,
-                    value=None if row[dimension] is None else str(row[dimension]),
+                    value=None if row["_slice"] is None else str(row["_slice"]),
                     n_runs=row["n_runs"],
                     n_groups=n_groups,
                     n_passed=n_passed,
