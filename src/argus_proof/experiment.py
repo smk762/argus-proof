@@ -36,9 +36,6 @@ from pydantic import BaseModel, Field, model_validator
 from argus_proof.grid import build_grid, count_prompt_items
 from argus_proof.models import GridAxes, GridConfig, GridPlan, ProofError, SamplingParams
 
-# GridAxes fields a cell overrides rather than inheriting verbatim from the matrix.
-_CELL_OVERRIDES: tuple[str, ...] = ("run_id_prefix", "seconds_per_image")
-
 if TYPE_CHECKING:
     from typing import Self
 
@@ -132,25 +129,26 @@ class ExperimentMatrix(GridAxes):
         ``RunSpec`` run_id) — and becomes the cell's ``run_id_prefix`` so no two
         cells' :class:`RunSpec` ids collide.
         """
-        # Every inherited GridAxes field flows through automatically, so a new axis
-        # needs no edit here (the per-cell overrides are the only exceptions).
-        shared = self.model_dump(include=set(GridAxes.model_fields) - set(_CELL_OVERRIDES))
         cells: list[tuple[str, str, str, GridConfig]] = []
         for ci, checkpoint in enumerate(self.base_checkpoints):
             for step in self.step_configs:
                 cell_id = f"{self.run_id_prefix}-c{ci:02d}-{_slug(checkpoint)}-{_slug(step.name)}"
-                config = GridConfig(
-                    **shared,
-                    base_checkpoint=checkpoint,
+                overrides = {
+                    "base_checkpoint": checkpoint,
                     # copy so cells (and the specs they expand into) don't alias one
                     # mutable SamplingParams — pydantic v2 doesn't copy nested models.
-                    sampling=step.sampling.model_copy(),
-                    run_id_prefix=cell_id,
-                    seconds_per_image=(
+                    "sampling": step.sampling.model_copy(),
+                    "run_id_prefix": cell_id,
+                    "seconds_per_image": (
                         step.seconds_per_image if step.seconds_per_image is not None else self.seconds_per_image
                     ),
-                )
-                cells.append((cell_id, checkpoint, step.name, config))
+                }
+                # Every OTHER inherited axis flows through verbatim, so a new GridAxes
+                # field needs no edit here. Deriving the exclusion from the overrides'
+                # own keys means the two can't drift: a field is excluded iff it's
+                # actually passed (a hand-kept list could silently drop one).
+                shared = self.model_dump(include=set(GridAxes.model_fields) - overrides.keys())
+                cells.append((cell_id, checkpoint, step.name, GridConfig(**shared, **overrides)))
         return cells
 
     def search_space(self) -> dict[str, list[Any]]:
