@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field, model_validator
 
 from argus_proof.grid import build_grid, count_prompt_items
-from argus_proof.models import GridConfig, GridPlan, ProofError, SamplingParams
+from argus_proof.models import GridAxes, GridConfig, GridPlan, ProofError, SamplingParams
 
 if TYPE_CHECKING:
     from typing import Self
@@ -82,7 +82,7 @@ class StepConfig(BaseModel):
     seconds_per_image: float | None = Field(default=None, gt=0)
 
 
-class ExperimentMatrix(BaseModel):
+class ExperimentMatrix(GridAxes):
     """Factors × levels declaring a reproducible multi-cell experiment.
 
     **Outer factors** — each combination becomes one grid cell:
@@ -90,9 +90,10 @@ class ExperimentMatrix(BaseModel):
     * ``base_checkpoints`` — the base model(s) the LoRA rides on.
     * ``step_configs`` — named sampler variants (``fast``/``quality`` …).
 
-    **Inner axes** — shared by every cell, expanded within it by the grid builder
-    (``lora_checkpoints`` × ``lora_weights`` × prompts × ``seeds``); these mirror
-    :class:`~argus_proof.models.GridConfig`.
+    **Inner axes** — inherited from :class:`~argus_proof.models.GridAxes` and
+    shared by every cell (``lora_checkpoints`` × ``lora_weights`` × prompts ×
+    ``seeds``, token axes, caps, provenance): the same axes a single grid sweeps,
+    declared once so a new one reaches both without being mirrored here.
 
     **Labels** — upstream factors proof can only *observe*, not vary (caption
     strategy, source set). They annotate every cell so the cross-run store can
@@ -103,22 +104,7 @@ class ExperimentMatrix(BaseModel):
     base_checkpoints: list[str] = Field(min_length=1)
     step_configs: list[StepConfig] = Field(min_length=1)
 
-    # Inner axes — passed through to each cell's GridConfig.
-    lora_checkpoints: list[str] = Field(min_length=1)
-    lora_weights: list[float] = Field(default_factory=lambda: [1.0], min_length=1)
-    seeds: list[int] = Field(min_length=1)
-    token_axes: dict[str, list[str]] = Field(default_factory=dict)
-    max_token_combos: int | None = Field(default=None, ge=1)
-    max_base_prompts: int | None = Field(default=None, ge=1)
-    flexibility_prompts: list[str] = Field(default_factory=list)
-    negative_prompt: str = ""
-    combo_seed: int = 0
-    seconds_per_image: float = 6.0
-
-    run_id_prefix: str = "exp"
-    source_manifest: str | None = None
-    source_manifest_version: str | None = None
-    training_run_id: str | None = None
+    run_id_prefix: str = "exp"  # GridAxes defaults to "proof"; a cell's id extends this
 
     # Upstream factors proof observes but does not drive (caption strategy, …).
     labels: dict[str, str] = Field(default_factory=dict)
@@ -147,29 +133,22 @@ class ExperimentMatrix(BaseModel):
         for ci, checkpoint in enumerate(self.base_checkpoints):
             for step in self.step_configs:
                 cell_id = f"{self.run_id_prefix}-c{ci:02d}-{_slug(checkpoint)}-{_slug(step.name)}"
-                config = GridConfig(
-                    base_checkpoint=checkpoint,
-                    lora_checkpoints=self.lora_checkpoints,
-                    lora_weights=self.lora_weights,
+                overrides = {
+                    "base_checkpoint": checkpoint,
                     # copy so cells (and the specs they expand into) don't alias one
                     # mutable SamplingParams — pydantic v2 doesn't copy nested models.
-                    sampling=step.sampling.model_copy(),
-                    negative_prompt=self.negative_prompt,
-                    seeds=self.seeds,
-                    token_axes=self.token_axes,
-                    max_token_combos=self.max_token_combos,
-                    max_base_prompts=self.max_base_prompts,
-                    flexibility_prompts=self.flexibility_prompts,
-                    combo_seed=self.combo_seed,
-                    seconds_per_image=step.seconds_per_image
-                    if step.seconds_per_image is not None
-                    else self.seconds_per_image,
-                    run_id_prefix=cell_id,
-                    source_manifest=self.source_manifest,
-                    source_manifest_version=self.source_manifest_version,
-                    training_run_id=self.training_run_id,
-                )
-                cells.append((cell_id, checkpoint, step.name, config))
+                    "sampling": step.sampling.model_copy(),
+                    "run_id_prefix": cell_id,
+                    "seconds_per_image": (
+                        step.seconds_per_image if step.seconds_per_image is not None else self.seconds_per_image
+                    ),
+                }
+                # Every OTHER inherited axis flows through verbatim, so a new GridAxes
+                # field needs no edit here. Deriving the exclusion from the overrides'
+                # own keys means the two can't drift: a field is excluded iff it's
+                # actually passed (a hand-kept list could silently drop one).
+                shared = self.model_dump(include=set(GridAxes.model_fields) - overrides.keys())
+                cells.append((cell_id, checkpoint, step.name, GridConfig(**shared, **overrides)))
         return cells
 
     def search_space(self) -> dict[str, list[Any]]:

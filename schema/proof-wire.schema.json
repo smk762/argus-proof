@@ -391,7 +391,7 @@
       "type": "object"
     },
     "GridConfig": {
-      "description": "The axes that expand a source export into a grid of :class:`RunSpec`s.\n\nBase prompts come from the export's captions (the zeroshot caption variant,\nfalling back to the training ``.txt`` sidecar). Those are multiplied across\nthe axes below into a deterministic, reproducible set of runs; a control\n``seeds`` set is shared by every run so seed luck can't skew a comparison.\n\n* ``lora_checkpoints`` \u2014 the LoRA(s) to sweep; supply saved epoch checkpoints\n  here to find the under/overtrained sweet spot (cheap, no retrain).\n* ``lora_weights`` \u2014 the weight sweep (e.g. 0.6\u20131.0); optimal weight varies\n  per checkpoint and interacts with overtraining.\n* ``token_axes`` \u2014 variable tokens (setting/wardrobe/pose \u2026) combined into\n  Monte-Carlo combos appended to each base prompt, capped by\n  ``max_token_combos`` and sampled deterministically from ``combo_seed`` so\n  token effects stay attributable.\n* ``flexibility_prompts`` \u2014 off-distribution prompts that require a novel\n  attribute, to catch an overfit LoRA that only reproduces its training set.",
+      "description": "One grid: the :class:`GridAxes` under a **fixed** base checkpoint + sampler.\n\nBase prompts come from the export's captions (the zeroshot caption variant,\nfalling back to the training ``.txt`` sidecar). Those are multiplied across\nthe inherited axes into a deterministic, reproducible set of\n:class:`RunSpec`s; a control ``seeds`` set is shared by every run so seed luck\ncan't skew a comparison.",
       "properties": {
         "base_checkpoint": {
           "title": "Base Checkpoint",
@@ -525,10 +525,10 @@
         }
       },
       "required": [
-        "base_checkpoint",
         "lora_checkpoints",
-        "sampling",
-        "seeds"
+        "seeds",
+        "base_checkpoint",
+        "sampling"
       ],
       "title": "GridConfig",
       "type": "object"

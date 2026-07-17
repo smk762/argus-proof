@@ -246,13 +246,13 @@ class ProgressEvent(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class GridConfig(BaseModel):
-    """The axes that expand a source export into a grid of :class:`RunSpec`s.
+class GridAxes(BaseModel):
+    """The inner axes a grid sweeps, shared by a single grid and an experiment.
 
-    Base prompts come from the export's captions (the zeroshot caption variant,
-    falling back to the training ``.txt`` sidecar). Those are multiplied across
-    the axes below into a deterministic, reproducible set of runs; a control
-    ``seeds`` set is shared by every run so seed luck can't skew a comparison.
+    :class:`GridConfig` adds the base checkpoint + sampler that a single grid
+    fixes; :class:`~argus_proof.experiment.ExperimentMatrix` instead varies those
+    as outer factors and inherits these axes unchanged — so a new axis added here
+    reaches both, rather than being declared (and forwarded) twice.
 
     * ``lora_checkpoints`` — the LoRA(s) to sweep; supply saved epoch checkpoints
       here to find the under/overtrained sweet spot (cheap, no retrain).
@@ -266,10 +266,8 @@ class GridConfig(BaseModel):
       attribute, to catch an overfit LoRA that only reproduces its training set.
     """
 
-    base_checkpoint: str
     lora_checkpoints: list[str] = Field(min_length=1)
     lora_weights: list[float] = Field(default_factory=lambda: [1.0], min_length=1)
-    sampling: SamplingParams
     negative_prompt: str = ""
     seeds: list[int] = Field(min_length=1)
     token_axes: dict[str, list[str]] = Field(default_factory=dict)
@@ -282,6 +280,20 @@ class GridConfig(BaseModel):
     source_manifest: str | None = None
     source_manifest_version: str | None = None
     training_run_id: str | None = None
+
+
+class GridConfig(GridAxes):
+    """One grid: the :class:`GridAxes` under a **fixed** base checkpoint + sampler.
+
+    Base prompts come from the export's captions (the zeroshot caption variant,
+    falling back to the training ``.txt`` sidecar). Those are multiplied across
+    the inherited axes into a deterministic, reproducible set of
+    :class:`RunSpec`s; a control ``seeds`` set is shared by every run so seed luck
+    can't skew a comparison.
+    """
+
+    base_checkpoint: str
+    sampling: SamplingParams
 
 
 class GridEstimate(BaseModel):

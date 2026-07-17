@@ -233,6 +233,45 @@ def test_token_axes_reach_the_grid() -> None:
     assert tokened.estimate.n_images == plain.estimate.n_images * 2
 
 
+# The GridAxes fields a cell legitimately overrides rather than inheriting verbatim.
+_PER_CELL = {"run_id_prefix", "seconds_per_image"}
+
+
+def test_every_shared_axis_is_forwarded_into_each_cell() -> None:
+    # The guard for issue #37: cell_configs forwards every inherited axis, so a new
+    # GridAxes field is accepted on the matrix AND reaches the cell's GridConfig
+    # without a hand-written pass-through (which is what silently drifted before).
+    #
+    # It also asserts each axis is exercised with a NON-DEFAULT value: otherwise a
+    # newly-added axis would sit at its default on both sides and the equality below
+    # would pass vacuously even if forwarding dropped it — i.e. the guard would
+    # quietly stop guarding. A new axis fails here until it's added to the fixture.
+    from argus_proof.models import GridAxes, GridConfig
+
+    matrix = _matrix(
+        token_axes={"setting": ["indoor"]},
+        combo_seed=7,
+        max_base_prompts=3,
+        max_token_combos=2,
+        flexibility_prompts=["a novel scene"],
+        negative_prompt="blurry",
+        source_manifest="export/manifest.jsonl",
+        source_manifest_version="1.0",
+        training_run_id="train-9",
+        lora_weights=[0.6, 0.9],
+    )
+    _cell_id, _ckpt, _step, config = matrix.cell_configs()[0]
+    for field in set(GridAxes.model_fields) - _PER_CELL:
+        info = GridConfig.model_fields[field]
+        if not info.is_required():
+            default = info.get_default(call_default_factory=True)
+            assert getattr(matrix, field) != default, (
+                f"{field} is left at its default here, so this test can't prove it's forwarded — "
+                f"set a non-default {field} on the fixture above"
+            )
+        assert getattr(config, field) == getattr(matrix, field), f"{field} not forwarded to the cell"
+
+
 def test_search_space_lists_categorical_levels() -> None:
     space = _matrix().search_space()
     assert space["base_checkpoint"] == ["sdxl_a.safetensors", "sdxl_b.safetensors"]
