@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from argus_proof.experiment import (
+    _CELL_OVERRIDES,
     ExperimentError,
     ExperimentMatrix,
     StepConfig,
@@ -231,6 +232,38 @@ def test_token_axes_reach_the_grid() -> None:
     plain = expand_experiment(_matrix(), PROMPTS)
     tokened = expand_experiment(_matrix(token_axes={"setting": ["indoor", "outdoor"]}), PROMPTS)
     assert tokened.estimate.n_images == plain.estimate.n_images * 2
+
+
+def test_shared_axes_are_declared_once_and_reach_both_models() -> None:
+    # GridAxes is the single source of the inner axes: both a single grid and the
+    # matrix inherit them, so a new axis can't be added to one and missed by the other.
+    from argus_proof.models import GridAxes, GridConfig
+
+    assert set(GridAxes.model_fields) <= set(ExperimentMatrix.model_fields)
+    assert set(GridAxes.model_fields) <= set(GridConfig.model_fields)
+
+
+def test_every_shared_axis_is_forwarded_into_each_cell() -> None:
+    # The guard for issue #37: cell_configs forwards every inherited axis, so a new
+    # GridAxes field is accepted on the matrix AND reaches the cell's GridConfig
+    # without a hand-written pass-through (which is what silently drifted before).
+    from argus_proof.models import GridAxes
+
+    matrix = _matrix(
+        token_axes={"setting": ["indoor"]},
+        combo_seed=7,
+        max_base_prompts=3,
+        max_token_combos=2,
+        flexibility_prompts=["a novel scene"],
+        negative_prompt="blurry",
+        source_manifest="export/manifest.jsonl",
+        source_manifest_version="1.0",
+        training_run_id="train-9",
+        lora_weights=[0.6, 0.9],
+    )
+    _cell_id, _ckpt, _step, config = matrix.cell_configs()[0]
+    for field in set(GridAxes.model_fields) - set(_CELL_OVERRIDES):
+        assert getattr(config, field) == getattr(matrix, field), f"{field} not forwarded to the cell"
 
 
 def test_search_space_lists_categorical_levels() -> None:
