@@ -228,9 +228,7 @@ def moderate_images(
 ) -> ModerationReport:
     """Moderate a run's generated images → an output-side :class:`ModerationReport`."""
     if not moderator.is_available("output"):
-        raise ModerationError(
-            "no image policy detector available: pip install 'argus-proof[moderation]'"
-        )
+        raise ModerationError("no image policy detector available: pip install 'argus-proof[moderation]'")
     per_item = moderator.moderate_images(image_paths)
     return _report("output", per_item, moderator.provenance("output"), len(image_paths), unsafe_at)
 
@@ -246,9 +244,7 @@ def moderate_texts(
     A toxic prompt is flagged here independently of whether its output was clean.
     """
     if not moderator.is_available("input"):
-        raise ModerationError(
-            "no text policy detector available: pip install 'argus-proof[moderation]'"
-        )
+        raise ModerationError("no text policy detector available: pip install 'argus-proof[moderation]'")
     per_item = moderator.moderate_texts(texts)
     return _report("input", per_item, moderator.provenance("input"), len(texts), unsafe_at)
 
