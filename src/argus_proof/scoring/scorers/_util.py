@@ -32,6 +32,23 @@ def module_available(*names: str) -> bool:
     return True
 
 
+def percentile(sorted_values: list[float], q: float) -> float:
+    """Linear-interpolated percentile *q* in ``[0, 1]`` of an ascending list.
+
+    Shared by the tail-aggregate views (safety, policy moderation) that care about
+    the extremes of a distribution rather than its mean. Empty list → ``0.0``.
+    """
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    pos = q * (len(sorted_values) - 1)
+    lo = int(pos)
+    if lo + 1 >= len(sorted_values):
+        return sorted_values[-1]
+    return sorted_values[lo] + (pos - lo) * (sorted_values[lo + 1] - sorted_values[lo])
+
+
 def clamp01(value: float) -> float:
     """Clamp a finite value to ``[0, 1]``; pass a non-finite value through.
 

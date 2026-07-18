@@ -196,6 +196,32 @@ refined = apply_refinement(report, RefinementRequest(
 best_first = refined_ranking(refined)   # passing subset, refined re-ranks on top
 ```
 
+## Policy moderation (optional)
+
+The Phase-2 `safety` scorer catches **nudity**; `argus_proof.moderation` extends
+it to a **Guard-class policy taxonomy** (violence / hate / self-harm / weapons /
+illegal) — over both the **generated images** and the **input prompts /
+captions**, so a toxic prompt is flagged even when its output is clean
+(`pip install "argus-proof[moderation]"`, Llama Guard 3 Vision):
+
+```python
+from argus_proof.moderation import PolicyModerator, moderate_images, moderate_texts
+
+mod = PolicyModerator()                         # default: Llama Guard 3 (lazy, [moderation])
+out = moderate_images(image_paths, mod)         # per-category tails over the outputs
+inp = moderate_texts(prompt_grid_variants, mod) # ...and over the inputs
+out.flagged()                                   # e.g. ["violence", "hate"], worst first
+report.scorers.append(mod.provenance("output")) # version-stamp the Guard model + taxonomy
+```
+
+Each category gets a **tail** view (any-hit / max / 95th percentile — the extremes
+that matter, not the mean, same rule as `safety`), combined conservatively across
+an ensemble (most-unsafe detector wins). Detectors are pluggable and injectable, so
+the taxonomy/ensemble/tail logic is dependency-free and unit-tested; only the real
+Llama Guard adapter needs the extra. A reviewer's HITL flag attributes to a
+category via `RejectReason.category`. CSAM matching stays a **separate** policy gate
+(Thorn Safer / PhotoDNA), not an ML metric here.
+
 ## CI acceptance gate
 
 Turn "was this LoRA/dataset good enough?" into an automatable yes/no. `argus-proof

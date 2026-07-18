@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from argus_proof.models import ScorerProvenance
 from argus_proof.scoring.scorers._util import clamp01, module_available
+from argus_proof.scoring.scorers._util import percentile as _percentile
 
 if TYPE_CHECKING:
     from argus_proof.models import EvalReport
@@ -119,20 +120,6 @@ class NudeNetDetector:
             return None
         scores = [float(d["score"]) for d in detections if self._is_unsafe(str(d.get("class", "")))]
         return max(scores) if scores else 0.0  # no exposed detection -> safe
-
-
-def _percentile(sorted_values: list[float], q: float) -> float:
-    """Linear-interpolated percentile ``q`` in [0,1] of an ascending list."""
-    if not sorted_values:
-        return 0.0
-    if len(sorted_values) == 1:
-        return sorted_values[0]
-    pos = q * (len(sorted_values) - 1)
-    lo = int(pos)
-    frac = pos - lo
-    if lo + 1 >= len(sorted_values):
-        return sorted_values[-1]
-    return sorted_values[lo] + frac * (sorted_values[lo + 1] - sorted_values[lo])
 
 
 def safety_tail_aggregate(report: EvalReport, *, unsafe_below: float = 0.5) -> dict[str, float]:

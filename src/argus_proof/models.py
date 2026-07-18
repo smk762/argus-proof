@@ -30,7 +30,7 @@ from typing import Annotated, Literal
 from argus_cortex.wire import check_version, make_versioned_base, schema_major
 from argus_cortex.wire import render_schema as _core_render_schema
 from argus_cortex.wire import wire_schema as _core_wire_schema
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Version of the proof wire contract (RunManifest / EvalReport / RejectArchive).
 # Bump the minor for backward-compatible additions (a new optional field, a new
@@ -43,7 +43,9 @@ from pydantic import BaseModel, Field, model_validator
 #      can be split by rater for inter-rater reliability (issue #10).
 # 1.2: additive — Refinement + ImageScores.refinement carry the optional
 #      second-pass re-rank of the passing subset (issue #7).
-PROOF_VERSION = "1.2"
+# 1.3: additive — RejectReason.category attributes an unsafe flag to a policy
+#      taxonomy category (violence/hate/self-harm/…) for moderation (issue #41).
+PROOF_VERSION = "1.3"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -362,10 +364,29 @@ RejectReasonCode = Literal[
 
 
 class RejectReason(BaseModel):
-    """One structured reason an image was rejected or flagged."""
+    """One structured reason an image was rejected or flagged.
+
+    ``category`` optionally attributes an ``unsafe`` reject to a policy-taxonomy
+    slug (violence / hate / self_harm / weapons / sexual …, see
+    :mod:`argus_proof.moderation`), so a reviewer's flag can be sliced by category
+    rather than lumped into one "unsafe". Kept a free ``str`` (not a Literal) so
+    the taxonomy can evolve without a wire-contract break.
+    """
 
     code: RejectReasonCode
+    category: str | None = None
     note: str | None = None
+
+    @field_validator("category")
+    @classmethod
+    def _normalize_category(cls, v: str | None) -> str | None:
+        # Normalise formatting (case / hyphen / whitespace) so a flag of "Self-Harm" or
+        # "self harm" files under the same slug as the taxonomy's "self_harm" instead of
+        # a bucket that matches nothing. Still a free str (not Literal-restricted) so the
+        # taxonomy can evolve without a wire-contract break (#41).
+        if v is None:
+            return None
+        return "_".join(v.strip().lower().split()).replace("-", "_")
 
 
 class Refinement(BaseModel):
