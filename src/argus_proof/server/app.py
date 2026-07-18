@@ -5,12 +5,14 @@ Routes:
     GET  /health                          -> {status, service, version}
     GET  /exports                         -> {exports: [...]}  (curator export dirs to evaluate against)
     GET  /models                          -> {checkpoints: [...], loras: [...]}  (engine-loadable names)
+    GET  /scorers                         -> {scorers: [{metric, name, available}]}  (installed-scorer probe)
     POST /run/stream                      -> NDJSON: generate a seed-set, score it, store the report
     GET  /reports                         -> {reports: [ReportSummary, ...]}  (run browser)
     GET  /report/{run_id}                 -> EvalReport
     PUT  /report/{run_id}                 -> EvalReport   (store/overwrite a scored report)
     GET  /report/{run_id}/refined         -> {images: [...]}  (passing subset, refined order first)
     GET  /report/{run_id}/image/{image_id} -> image bytes (from the run dir; ids, never paths)
+    GET  /report/{run_id}/image_at/{index} -> image bytes (by report position; seed-free blind-review URL)
     POST /report/{run_id}/hitl            -> EvalReport   (apply a HITL review, recompute)
     POST /report/{run_id}/refine          -> EvalReport   (second-pass re-rank of the passing subset)
 
@@ -128,13 +130,33 @@ def create_app(
         return runs_root(runs_dir)
 
     def _serve_run_image(run_id: str, image_id: str) -> FileResponse:
-        """Serve <runs_root>/<run_id>/<image_id>.<ext> (ids only, never paths)."""
+        """Serve <runs_root>/<run_id>/<image_id>.<ext> (ids only, never paths).
+
+        ``image_id`` is validated here — not just at the route — so every caller,
+        including ones that resolve it from a stored report (``image_at``), is
+        held to the strict filename charset and can't join a traversal path under
+        the runs root.
+        """
+        _require_safe(image_id, "image_id")
         run_dir = _runs_root() / run_id
         for suffix, media_type in _IMAGE_MEDIA.items():
             path = run_dir / f"{image_id}{suffix}"
             if path.is_file():
                 return FileResponse(path, media_type=media_type)
-        raise HTTPException(status_code=404, detail=f"no image {image_id!r} in run {run_id!r}")
+        # Don't echo image_id: for the by-index (blind-review) route it is
+        # ``<run_id>-<seed>``, and leaking the seed defeats that URL's purpose.
+        raise HTTPException(status_code=404, detail=f"no such image in run {run_id!r}")
+
+    def _load_report(run_id: str) -> EvalReport:
+        """Load one stored report, mapping storage errors to HTTP consistently:
+        missing -> 404; unreadable/invalid (``ProofError`` or a pydantic
+        ``ValidationError``, a ``ValueError``) -> 400 rather than a bare 500."""
+        try:
+            return store.get(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"no report for run {run_id!r}") from exc
+        except (ProofError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     def _exports_root() -> Path | None:
         value = exports_dir or os.environ.get(ENV_EXPORTS_DIR)
@@ -200,21 +222,21 @@ def create_app(
         return {key: sorted(names) for key, names in result.items()}
 
     @app.get("/scorers")
-    async def list_scorers() -> dict[str, list[dict]]:
-        """Which scorers this image can run, so the UI can warn up-front when the
-        learned metrics aren't installed (a run then falls back to all-HITL).
-        ``available`` reflects the installed extras — the ``score`` extra pulls
-        the learned scorers; construction here loads no model weights."""
-        from argus_proof.evaluate import default_scorers
-        from argus_proof.scoring.scorers import PhashDeduper, PhashDiversityScorer
+    def list_scorers() -> dict[str, list[dict]]:
+        """Which scorers a run applies and whether this image can run each, so the
+        UI can warn up-front when the learned metrics aren't installed (a run then
+        falls back to all-HITL). The set mirrors ``evaluate.score_images`` exactly
+        (via :func:`all_reporting_scorers`). Probing ``available`` *imports* each
+        scorer's extra (no model weights load, but a real import), so this is a
+        sync ``def`` — FastAPI runs it in a threadpool, keeping those imports off
+        the event loop."""
+        from argus_proof.evaluate import all_reporting_scorers
 
-        scorers = [*default_scorers(), PhashDeduper(), PhashDiversityScorer()]
-        return {
-            "scorers": [
-                {"metric": getattr(s, "metric", None), "name": s.provenance().name, "available": s.is_available()}
-                for s in scorers
-            ]
-        }
+        rows: list[dict] = []
+        for scorer in all_reporting_scorers():
+            prov = scorer.provenance()  # carries the metric for every scorer (incl. phash dedup/diversity)
+            rows.append({"metric": prov.metric, "name": prov.name, "available": scorer.is_available()})
+        return {"scorers": rows}
 
     @app.post("/run/stream")
     async def run_stream(request: RunRequest) -> StreamingResponse:
@@ -316,12 +338,7 @@ def create_app(
     @app.get("/report/{run_id}")
     async def get_report(run_id: str) -> EvalReport:
         """The full scored report for one run."""
-        try:
-            return store.get(run_id)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=f"no report for run {run_id!r}") from exc
-        except ProofError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _load_report(run_id)
 
     @app.put("/report/{run_id}")
     async def put_report(run_id: str, report: EvalReport) -> EvalReport:
@@ -341,12 +358,7 @@ def create_app(
     @app.get("/report/{run_id}/refined")
     async def get_refined(run_id: str) -> dict:
         """The passing subset in refined order (refined ranks first, best first)."""
-        try:
-            report = store.get(run_id)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=f"no report for run {run_id!r}") from exc
-        except ProofError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        report = _load_report(run_id)
         return {"run_id": run_id, "images": [img.model_dump() for img in refined_ranking(report)]}
 
     @app.get("/report/{run_id}/image/{image_id}")
@@ -355,10 +367,10 @@ def create_app(
 
         Both ids are validated against a strict filename charset and joined
         under ``$ARGUS_PROOF_RUNS_DIR/<run_id>/`` — no client-supplied path is
-        ever resolved, so there is no traversal surface.
+        ever resolved, so there is no traversal surface (``image_id`` is checked
+        inside ``_serve_run_image``).
         """
         _require_safe(run_id, "run_id")
-        _require_safe(image_id, "image_id")
         return _serve_run_image(run_id, image_id)
 
     @app.get("/report/{run_id}/image_at/{index}")
@@ -369,12 +381,7 @@ def create_app(
         same strict runs-root join applies.
         """
         _require_safe(run_id, "run_id")
-        try:
-            report = store.get(run_id)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=f"no report for run {run_id!r}") from exc
-        except ProofError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        report = _load_report(run_id)
         if not 0 <= index < len(report.images):
             raise HTTPException(status_code=404, detail=f"no image at index {index} in run {run_id!r}")
         return _serve_run_image(run_id, report.images[index].image_id)

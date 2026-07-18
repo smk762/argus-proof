@@ -221,6 +221,21 @@ def default_scorers() -> list:
     return [IdentityScorer(), clip_score_scorer(), pyiqa_scorer(), SafetyScorer()]
 
 
+def default_phash_scorers() -> tuple:
+    """The (deduper, diversity) pair a default run applies — the single source
+    both :func:`score_images` and :func:`all_reporting_scorers` build from."""
+    from argus_proof.scoring.scorers import PhashDeduper, PhashDiversityScorer
+
+    return PhashDeduper(), PhashDiversityScorer()
+
+
+def all_reporting_scorers() -> list:
+    """Every scorer a default run applies (per-image set + phash dedup/diversity),
+    flat — so a capability probe like the server's ``/scorers`` reports exactly
+    what :func:`score_images` will run, with no separate list to drift."""
+    return [*default_scorers(), *default_phash_scorers()]
+
+
 def score_images(
     manifest: RunManifest,
     images: list[GeneratedImage],
@@ -229,15 +244,14 @@ def score_images(
     gate: GateConfig | None = None,
 ) -> EvalReport:
     """Score *images* with the default scorers + phash dedup/diversity."""
-    from argus_proof.scoring.scorers import PhashDeduper, PhashDiversityScorer
-
+    deduper, diversity = default_phash_scorers()
     ctx = ScoreContext(prompt=manifest.prompt, reference_images=list(references or []))
     return score_run(
         manifest,
         images,
         scorers=default_scorers(),
-        deduper=PhashDeduper(),
-        diversity=PhashDiversityScorer(),
+        deduper=deduper,
+        diversity=diversity,
         context=ctx,
         gate=gate,
     )

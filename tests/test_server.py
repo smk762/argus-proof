@@ -248,19 +248,36 @@ def test_image_at_serves_by_index(suite_client: TestClient, monkeypatch) -> None
     )
     run_id = frames[-1]["run_id"]
 
+    report = suite_client.get(f"/report/{run_id}").json()
+    image_id = report["images"][0]["image_id"]
+
     img = suite_client.get(f"/report/{run_id}/image_at/0")
     assert img.status_code == 200
     assert img.headers["content-type"] == "image/png"
+    # index 0 resolves to the *same* bytes as the by-id route for that position —
+    # proves the position->image_id mapping, not just that some image came back.
+    assert img.content == suite_client.get(f"/report/{run_id}/image/{image_id}").content
     assert suite_client.get(f"/report/{run_id}/image_at/1").status_code == 200
-    # out of range and unknown run resolve to 404, never a 500
+    # out of range / negative / unknown run resolve to 404, never a 500
     assert suite_client.get(f"/report/{run_id}/image_at/9").status_code == 404
+    assert suite_client.get(f"/report/{run_id}/image_at/-1").status_code == 404
     assert suite_client.get("/report/nope/image_at/0").status_code == 404
+
+    # A stored report can't turn image_at into a path-traversal read: even though
+    # PUT accepts an arbitrary image_id, _serve_run_image re-validates it (400).
+    report["images"][0]["image_id"] = "../../../../etc/passwd"
+    assert suite_client.put(f"/report/{run_id}", json=report).status_code == 200
+    assert suite_client.get(f"/report/{run_id}/image_at/0").status_code == 400
 
 
 def test_scorers_reports_availability(client: TestClient) -> None:
     """UI reads this to warn up-front when the learned scorers aren't installed."""
     scorers = client.get("/scorers").json()["scorers"]
     assert scorers and all({"metric", "name", "available"} <= set(s) for s in scorers)
+    # every row names its metric and scorer — incl. the phash dedup/diversity
+    # scorers, whose metric comes from provenance() (a bare getattr returned null).
+    assert all(s["metric"] and s["name"] for s in scorers)
+    assert {"duplicate", "diversity"} <= {s["metric"] for s in scorers}
     # phash dedup/diversity ship in the dev/test env, so at least one is available
     assert any(s["available"] for s in scorers)
 
