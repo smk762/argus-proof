@@ -8,8 +8,12 @@ from argus_proof.moderation import (
     CATEGORIES,
     TAXONOMY_VERSION,
     CategoryScores,
+    LlamaGuardImageDetector,
+    LlamaGuardTextDetector,
+    ModerationError,
     ModerationReport,
     PolicyModerator,
+    _LlamaGuardBase,
     category_tails,
     moderate_images,
     moderate_texts,
@@ -37,11 +41,12 @@ class FakeTextDetector:
     name = "fake-text"
     version = "v1"
 
-    def __init__(self, by_text: dict[str, CategoryScores]) -> None:
+    def __init__(self, by_text: dict[str, CategoryScores], *, available: bool = True) -> None:
         self._by_text = by_text
+        self._available = available
 
     def is_available(self) -> bool:
-        return True
+        return self._available
 
     def moderate_text(self, text: str) -> CategoryScores | None:
         return self._by_text.get(text)
@@ -117,7 +122,7 @@ def test_moderate_texts_flags_a_toxic_prompt() -> None:
 def test_report_flagged_orders_by_severity_and_respects_hit_rate_floor() -> None:
     report = ModerationReport(
         side="output",
-        n_items=10,
+        n_items=6,
         unsafe_at=0.5,
         categories=category_tails(
             [{"violence": 0.6}] + [{"hate": 0.9}] * 5,  # hate hits 5/6, violence 1/6
@@ -135,9 +140,63 @@ def test_provenance_stamps_taxonomy_and_model() -> None:
     assert prov.version == TAXONOMY_VERSION and prov.model == "fake-image@v1"
 
 
-def test_default_detectors_report_unavailable_without_the_extra() -> None:
-    # No fakes injected -> the lazy LlamaGuard defaults; the [moderation] extra is
-    # absent in CI, so the ensemble reports unavailable rather than crashing.
+def test_default_detectors_track_the_extra_availability() -> None:
+    # The lazy LlamaGuard defaults are available iff their deps import. Assert that
+    # contract directly rather than a bare `is False`, which would flake in any env where
+    # another extra (e.g. [diffusers]) already ships transformers + torch.
+    from argus_proof.scoring.scorers._util import module_available
+
     mod = PolicyModerator()
-    assert mod.is_available("output") is False
-    assert mod.is_available("input") is False
+    expected = module_available("transformers", "torch")
+    assert mod.is_available("output") is expected
+    assert mod.is_available("input") is expected
+
+
+def test_not_implemented_detector_fails_loud_not_silent_safe() -> None:
+    # An available detector whose model call is a stub must surface, not be swallowed as
+    # a flaky-skip that reads every item as all-safe (the worst outcome for moderation).
+    class Stub(FakeImageDetector):
+        def moderate_image(self, image_path: Path) -> CategoryScores | None:
+            raise NotImplementedError
+
+    mod = PolicyModerator(image_detectors=[Stub({})])
+    with pytest.raises(NotImplementedError):
+        mod.moderate_images([Path("a.png")])
+
+
+def test_moderate_entrypoints_raise_when_no_detector_is_available() -> None:
+    # Without a functional detector the ensemble would otherwise return an all-safe report;
+    # the entrypoints must fail loud with the install hint instead.
+    img_only_unavailable = PolicyModerator(image_detectors=[FakeImageDetector({}, available=False)])
+    with pytest.raises(ModerationError):
+        moderate_images([Path("a.png")], img_only_unavailable)
+    txt_only_unavailable = PolicyModerator(text_detectors=[FakeTextDetector({}, available=False)])
+    with pytest.raises(ModerationError):
+        moderate_texts(["hello"], txt_only_unavailable)
+
+
+def test_out_of_range_and_nonfinite_scores_are_bounded() -> None:
+    # A buggy detector returning >1 is clamped; a non-finite score is treated as maximally
+    # unsafe (fail-safe) rather than silently sorting/percentile-ing NaN into the tails.
+    over = PolicyModerator(image_detectors=[FakeImageDetector({"a": {"violence": 5.0}})])
+    (scores,) = over.moderate_images([Path("a.png")])
+    assert scores["violence"] == 1.0
+    nan = PolicyModerator(image_detectors=[FakeImageDetector({"a": {"violence": float("nan")}})])
+    (scores,) = nan.moderate_images([Path("a.png")])
+    assert scores["violence"] == 1.0
+
+
+def test_hazard_codes_map_to_the_taxonomy() -> None:
+    # The one piece of real (fake-free) logic: Llama Guard S-codes -> proof taxonomy.
+    assert _LlamaGuardBase._codes_to_scores(["S1", "S10", "s12"]) == {
+        "violence": 1.0,
+        "hate": 1.0,
+        "sexual": 1.0,
+    }
+    assert _LlamaGuardBase._codes_to_scores(["S4"]) == {}  # child-exploitation -> separate CSAM gate
+    assert _LlamaGuardBase._codes_to_scores(["S99", ""]) == {}  # unknown / blank dropped
+
+
+def test_text_detector_defaults_to_the_text_guard_model_not_vision() -> None:
+    assert "Vision" in LlamaGuardImageDetector().model_id
+    assert LlamaGuardTextDetector().model_id == "meta-llama/Llama-Guard-3-8B"

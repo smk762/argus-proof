@@ -200,7 +200,7 @@ best_first = refined_ranking(refined)   # passing subset, refined re-ranks on to
 
 The Phase-2 `safety` scorer catches **nudity**; `argus_proof.moderation` extends
 it to a **Guard-class policy taxonomy** (violence / hate / self-harm / weapons /
-shocking / illegal) — over both the **generated images** and the **input prompts /
+illegal) — over both the **generated images** and the **input prompts /
 captions**, so a toxic prompt is flagged even when its output is clean
 (`pip install "argus-proof[moderation]"`, Llama Guard 3 Vision):
 

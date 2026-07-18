@@ -30,7 +30,7 @@ from typing import Annotated, Literal
 from argus_cortex.wire import check_version, make_versioned_base, schema_major
 from argus_cortex.wire import render_schema as _core_render_schema
 from argus_cortex.wire import wire_schema as _core_wire_schema
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Version of the proof wire contract (RunManifest / EvalReport / RejectArchive).
 # Bump the minor for backward-compatible additions (a new optional field, a new
@@ -376,6 +376,17 @@ class RejectReason(BaseModel):
     code: RejectReasonCode
     category: str | None = None
     note: str | None = None
+
+    @field_validator("category")
+    @classmethod
+    def _normalize_category(cls, v: str | None) -> str | None:
+        # Normalise formatting (case / hyphen / whitespace) so a flag of "Self-Harm" or
+        # "self harm" files under the same slug as the taxonomy's "self_harm" instead of
+        # a bucket that matches nothing. Still a free str (not Literal-restricted) so the
+        # taxonomy can evolve without a wire-contract break (#41).
+        if v is None:
+            return None
+        return "_".join(v.strip().lower().split()).replace("-", "_")
 
 
 class Refinement(BaseModel):

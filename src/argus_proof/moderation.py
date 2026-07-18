@@ -23,13 +23,14 @@ gate (Thorn Safer / PhotoDNA), not an ML metric here.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, get_args, runtime_checkable
 
 from pydantic import BaseModel, Field
 
 from argus_proof.models import ProofError, ScorerProvenance
-from argus_proof.scoring.scorers._util import module_available, percentile
+from argus_proof.scoring.scorers._util import clamp01, module_available, percentile
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -42,7 +43,6 @@ PolicyCategory = Literal[
     "hate",  # hateful / harassing depictions of protected groups
     "self_harm",  # self-harm, suicide
     "weapons",  # indiscriminate/regulated weapons
-    "shocking",  # shocking / disturbing imagery
     "illegal",  # depictions of illegal acts (excludes CSAM — separate gate)
 ]
 CATEGORIES: tuple[PolicyCategory, ...] = get_args(PolicyCategory)
@@ -127,28 +127,33 @@ class PolicyModerator:
         )
 
     def moderate_images(self, image_paths: Sequence[Path]) -> list[CategoryScores]:
-        return [self._combine(self.image_detectors, "moderate_image", item) for item in image_paths]
+        available = [d for d in self.image_detectors if d.is_available()]
+        return [self._combine(available, "moderate_image", item) for item in image_paths]
 
     def moderate_texts(self, texts: Sequence[str]) -> list[CategoryScores]:
-        return [self._combine(self.text_detectors, "moderate_text", item) for item in texts]
+        available = [d for d in self.text_detectors if d.is_available()]
+        return [self._combine(available, "moderate_text", item) for item in texts]
 
     @staticmethod
     def _combine(detectors: Sequence, method: str, item) -> CategoryScores:  # noqa: ANN001, ANN205
         merged: CategoryScores = {}
-        for detector in detectors:
-            if not detector.is_available():
-                continue
+        for detector in detectors:  # already filtered to the available ones (probed once per run)
             try:
                 scores = getattr(detector, method)(item)
+            except NotImplementedError:
+                # An available detector whose model call is a stub must fail loud, not read
+                # as all-safe — a silent false-negative is the worst outcome for moderation.
+                raise
             except Exception:  # noqa: BLE001 - one flaky detector must not abort the whole run
                 continue
             if not scores:
                 continue
             for category, prob in scores.items():
-                if category in merged:  # most-unsafe detector wins for that category
-                    merged[category] = max(merged[category], prob)
-                else:
-                    merged[category] = prob
+                prob_f = float(prob)
+                # Bound out-of-[0,1] output; a non-finite score is a detector bug, so treat it
+                # as maximally unsafe (fail-safe) rather than let NaN read as 0.0/safe.
+                clamped = clamp01(prob_f) if math.isfinite(prob_f) else 1.0
+                merged[category] = max(merged.get(category, 0.0), clamped)  # most-unsafe wins
         return merged
 
 
@@ -211,7 +216,7 @@ class ModerationReport(BaseModel):
 
     def flagged(self, *, min_hit_rate: float = 0.0) -> list[str]:
         """Categories with any hit (optionally over a hit-rate floor), worst first."""
-        hit = [t for t in self.categories.values() if t.any_hit and t.hit_rate > min_hit_rate]
+        hit = [t for t in self.categories.values() if t.hit_rate > min_hit_rate]
         return [t.category for t in sorted(hit, key=lambda t: t.max, reverse=True)]
 
 
@@ -222,6 +227,10 @@ def moderate_images(
     unsafe_at: float = 0.5,
 ) -> ModerationReport:
     """Moderate a run's generated images → an output-side :class:`ModerationReport`."""
+    if not moderator.is_available("output"):
+        raise ModerationError(
+            "no image policy detector available: pip install 'argus-proof[moderation]'"
+        )
     per_item = moderator.moderate_images(image_paths)
     return _report("output", per_item, moderator.provenance("output"), len(image_paths), unsafe_at)
 
@@ -236,6 +245,10 @@ def moderate_texts(
 
     A toxic prompt is flagged here independently of whether its output was clean.
     """
+    if not moderator.is_available("input"):
+        raise ModerationError(
+            "no text policy detector available: pip install 'argus-proof[moderation]'"
+        )
     per_item = moderator.moderate_texts(texts)
     return _report("input", per_item, moderator.provenance("input"), len(texts), unsafe_at)
 
@@ -252,7 +265,7 @@ def _report(
         detectors=provenance.model,
         n_items=n_items,
         unsafe_at=unsafe_at,
-        categories={c: t for c, t in category_tails(per_item, unsafe_at=unsafe_at).items()},
+        categories=category_tails(per_item, unsafe_at=unsafe_at),
     )
 
 
@@ -279,9 +292,10 @@ class _LlamaGuardBase:
     """Shared lazy-load + hazard-code mapping for the Llama Guard adapters."""
 
     version = "llama-guard-3"
+    default_model_id = "meta-llama/Llama-Guard-3-8B"  # subclasses pick the right checkpoint
 
-    def __init__(self, model_id: str = "meta-llama/Llama-Guard-3-11B-Vision") -> None:
-        self.model_id = model_id
+    def __init__(self, model_id: str | None = None) -> None:
+        self.model_id = model_id or self.default_model_id
         self._pipe = None
 
     def is_available(self) -> bool:
@@ -307,6 +321,7 @@ class LlamaGuardImageDetector(_LlamaGuardBase):
     """Image policy moderation via Llama Guard 3 Vision (``[moderation]`` extra)."""
 
     name = "llama-guard-vision"
+    default_model_id = "meta-llama/Llama-Guard-3-11B-Vision"  # image needs the Vision checkpoint
 
     def moderate_image(self, image_path: Path) -> CategoryScores | None:  # pragma: no cover - needs the extra
         if not self.is_available():
@@ -318,6 +333,7 @@ class LlamaGuardTextDetector(_LlamaGuardBase):
     """Text (prompt/caption) policy moderation via Llama Guard 3 (``[moderation]`` extra)."""
 
     name = "llama-guard-text"
+    default_model_id = "meta-llama/Llama-Guard-3-8B"  # text-only Guard model, not the Vision one
 
     def moderate_text(self, text: str) -> CategoryScores | None:  # pragma: no cover - needs the extra
         if not self.is_available():

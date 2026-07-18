@@ -167,6 +167,14 @@ def test_reject_reason_carries_optional_policy_category() -> None:
     assert RejectReason(code="anatomy").category is None
 
 
+def test_reject_reason_normalizes_category_slug() -> None:
+    # Formatting variants file under the same taxonomy slug instead of a bucket that
+    # matches nothing (self_harm vs "Self-Harm" vs "self harm").
+    assert RejectReason(code="unsafe", category="Self-Harm").category == "self_harm"
+    assert RejectReason(code="unsafe", category="self harm").category == "self_harm"
+    assert RejectReason(code="unsafe", category=None).category is None
+
+
 def test_missing_scorer_leaves_metric_none_not_zero() -> None:
     scores = MetricScores(identity=0.82)
     assert scores.identity == 0.82
