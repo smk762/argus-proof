@@ -127,6 +127,15 @@ def create_app(
     def _runs_root() -> Path:
         return runs_root(runs_dir)
 
+    def _serve_run_image(run_id: str, image_id: str) -> FileResponse:
+        """Serve <runs_root>/<run_id>/<image_id>.<ext> (ids only, never paths)."""
+        run_dir = _runs_root() / run_id
+        for suffix, media_type in _IMAGE_MEDIA.items():
+            path = run_dir / f"{image_id}{suffix}"
+            if path.is_file():
+                return FileResponse(path, media_type=media_type)
+        raise HTTPException(status_code=404, detail=f"no image {image_id!r} in run {run_id!r}")
+
     def _exports_root() -> Path | None:
         value = exports_dir or os.environ.get(ENV_EXPORTS_DIR)
         return Path(value) if value else None
@@ -189,6 +198,23 @@ def create_app(
                     if p.is_file() and p.suffix.lower() in _MODEL_SUFFIXES
                 )
         return {key: sorted(names) for key, names in result.items()}
+
+    @app.get("/scorers")
+    async def list_scorers() -> dict[str, list[dict]]:
+        """Which scorers this image can run, so the UI can warn up-front when the
+        learned metrics aren't installed (a run then falls back to all-HITL).
+        ``available`` reflects the installed extras — the ``score`` extra pulls
+        the learned scorers; construction here loads no model weights."""
+        from argus_proof.evaluate import default_scorers
+        from argus_proof.scoring.scorers import PhashDeduper, PhashDiversityScorer
+
+        scorers = [*default_scorers(), PhashDeduper(), PhashDiversityScorer()]
+        return {
+            "scorers": [
+                {"metric": getattr(s, "metric", None), "name": s.provenance().name, "available": s.is_available()}
+                for s in scorers
+            ]
+        }
 
     @app.post("/run/stream")
     async def run_stream(request: RunRequest) -> StreamingResponse:
@@ -333,12 +359,25 @@ def create_app(
         """
         _require_safe(run_id, "run_id")
         _require_safe(image_id, "image_id")
-        run_dir = _runs_root() / run_id
-        for suffix, media_type in _IMAGE_MEDIA.items():
-            path = run_dir / f"{image_id}{suffix}"
-            if path.is_file():
-                return FileResponse(path, media_type=media_type)
-        raise HTTPException(status_code=404, detail=f"no image {image_id!r} in run {run_id!r}")
+        return _serve_run_image(run_id, image_id)
+
+    @app.get("/report/{run_id}/image_at/{index}")
+    async def get_image_at(run_id: str, index: int) -> FileResponse:
+        """One generated image addressed by its position in the report's image
+        list — a seed-free URL for blind review (the by-id route embeds the seed
+        as ``<run_id>-<seed>``). Resolves the id via the stored report so the
+        same strict runs-root join applies.
+        """
+        _require_safe(run_id, "run_id")
+        try:
+            report = store.get(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"no report for run {run_id!r}") from exc
+        except ProofError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not 0 <= index < len(report.images):
+            raise HTTPException(status_code=404, detail=f"no image at index {index} in run {run_id!r}")
+        return _serve_run_image(run_id, report.images[index].image_id)
 
     @app.post("/report/{run_id}/hitl")
     async def review_report(run_id: str, request: HitlRequest) -> EvalReport:

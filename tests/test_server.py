@@ -239,6 +239,32 @@ def test_run_stream_generates_scores_and_stores(suite_client: TestClient, suite_
     assert img.headers["content-type"] == "image/png"
 
 
+def test_image_at_serves_by_index(suite_client: TestClient, monkeypatch) -> None:  # noqa: ANN001
+    """The seed-free image address blind review uses: by position, not <run_id>-<seed>."""
+    _fake_backend(monkeypatch)
+    frames = _stream_frames(
+        suite_client,
+        {"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "export": "rufina", "seeds": [1, 2]},
+    )
+    run_id = frames[-1]["run_id"]
+
+    img = suite_client.get(f"/report/{run_id}/image_at/0")
+    assert img.status_code == 200
+    assert img.headers["content-type"] == "image/png"
+    assert suite_client.get(f"/report/{run_id}/image_at/1").status_code == 200
+    # out of range and unknown run resolve to 404, never a 500
+    assert suite_client.get(f"/report/{run_id}/image_at/9").status_code == 404
+    assert suite_client.get("/report/nope/image_at/0").status_code == 404
+
+
+def test_scorers_reports_availability(client: TestClient) -> None:
+    """UI reads this to warn up-front when the learned scorers aren't installed."""
+    scorers = client.get("/scorers").json()["scorers"]
+    assert scorers and all({"metric", "name", "available"} <= set(s) for s in scorers)
+    # phash dedup/diversity ship in the dev/test env, so at least one is available
+    assert any(s["available"] for s in scorers)
+
+
 def test_run_stream_explicit_prompt_needs_no_export(suite_client: TestClient, monkeypatch) -> None:  # noqa: ANN001
     backend = _fake_backend(monkeypatch)
     frames = _stream_frames(
