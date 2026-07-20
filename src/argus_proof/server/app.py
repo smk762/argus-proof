@@ -21,6 +21,12 @@ Reports are served from a directory of ``<run_id>.json`` files
 ``$ARGUS_PROOF_RUNS_DIR`` (default ``runs/``). Images are addressed by
 ``(run_id, image_id)`` — both validated against a strict charset — so no
 client-supplied filesystem path is ever resolved (no traversal surface).
+
+Set ``$ARGUS_PROOF_READ_ONLY`` (or ``create_app(read_only=True)``) for
+replay/demo mode (issue #45): stored reports keep serving, but every mutating
+request — live GPU eval (``POST /run/stream``) above all — is refused with
+``403``, so the GPU-less public demo host can't kick off compute. ``GET /health``
+echoes the resolved flag so the frontend can hide the "run evaluation" action.
 """
 
 from __future__ import annotations
@@ -34,8 +40,8 @@ import time
 from pathlib import Path
 
 try:
-    from fastapi import FastAPI, HTTPException
-    from fastapi.responses import FileResponse, StreamingResponse
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 except ImportError as exc:  # pragma: no cover
     raise ImportError("Server requires: pip install argus-proof[server]") from exc
 
@@ -48,6 +54,14 @@ from argus_proof.reports import HitlRequest, ReportStore, ReportSummary, summari
 
 # Where the run trigger reads curator exports from (compose mounts /data/out here).
 ENV_EXPORTS_DIR = "ARGUS_PROOF_EXPORTS_DIR"
+
+# Replay/demo mode (issue #45): serve stored reports but refuse every mutating
+# request — live GPU eval above all — so the GPU-less public demo host can't
+# kick off compute. Truthy values: 1/true/yes/on.
+ENV_READ_ONLY = "ARGUS_PROOF_READ_ONLY"
+
+# HTTP methods that mutate state or trigger compute; blocked in read-only mode.
+_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # run_id / image_id / export names become path segments under a fixed root —
 # allow only a strict filename charset so traversal is impossible by construction.
@@ -62,6 +76,11 @@ def _require_safe(value: str, label: str) -> str:
     if not _SAFE_ID.match(value or ""):
         raise HTTPException(status_code=400, detail=f"invalid {label} {value!r}")
     return value
+
+
+def _env_flag(name: str) -> bool:
+    """Whether an env var is set to a truthy string (``1``/``true``/``yes``/``on``)."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class RunRequest(BaseModel):
@@ -97,6 +116,7 @@ def create_app(
     reports_dir: str | None = None,
     runs_dir: str | None = None,
     exports_dir: str | None = None,
+    read_only: bool | None = None,
 ) -> FastAPI:
     """Create the proof FastAPI application.
 
@@ -104,14 +124,38 @@ def create_app(
     generated runs, and curator exports live; omitted they fall back to
     ``$ARGUS_PROOF_REPORTS_DIR`` / ``$ARGUS_PROOF_RUNS_DIR`` /
     ``$ARGUS_PROOF_EXPORTS_DIR``.
+
+    ``read_only`` enables replay/demo mode (issue #45): stored reports are still
+    served, but every mutating request — live GPU eval (``POST /run/stream``)
+    above all — is refused with ``403`` so the GPU-less demo host can't kick off
+    compute. Omitted (``None``) it falls back to ``$ARGUS_PROOF_READ_ONLY``;
+    ``GET /health`` reports the resolved flag.
     """
     from argus_proof.evaluate import runs_root
+
+    read_only = _env_flag(ENV_READ_ONLY) if read_only is None else read_only
 
     app = FastAPI(
         title="Argus Proof",
         description="Post-training LoRA evaluation: generated samples in, scored verdicts out.",
         version=__version__,
     )
+
+    if read_only:
+        # Read-only means NO mutation at all: a public demo must not let visitors
+        # overwrite the shared report tape (PUT / HITL / refine) or spend GPU (run).
+        # Method-based, so it covers every write route — current and future —
+        # without per-route guards to forget. Registered before CORS so that, when
+        # CORS is enabled, CORSMiddleware stays outermost and a cross-origin 403
+        # still carries its CORS headers.
+        @app.middleware("http")
+        async def _enforce_read_only(request: Request, call_next):  # noqa: ANN001,ANN202
+            if request.method in _MUTATING_METHODS:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "argus-proof is in read-only (replay) mode; live evaluation is disabled"},
+                )
+            return await call_next(request)
 
     if cors:
         from fastapi.middleware.cors import CORSMiddleware
@@ -174,8 +218,11 @@ def create_app(
         return path
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok", "service": "argus-proof", "version": __version__}
+    async def health() -> dict[str, str | bool]:
+        """Liveness + capability probe. ``read_only`` tells the UI whether live
+        evaluation is available — a replay/demo host reports ``True`` and the
+        frontend hides the "run evaluation" action (argus-studio#59)."""
+        return {"status": "ok", "service": "argus-proof", "version": __version__, "read_only": read_only}
 
     @app.get("/exports")
     async def list_exports() -> dict[str, list[dict]]:

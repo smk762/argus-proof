@@ -19,6 +19,19 @@ def report_client(tmp_path) -> TestClient:
     return TestClient(create_app(reports_dir=str(tmp_path)))
 
 
+@pytest.fixture
+def read_only_client(tmp_path) -> TestClient:  # noqa: ANN001
+    return TestClient(create_app(reports_dir=str(tmp_path), read_only=True))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_read_only_env(monkeypatch) -> None:  # noqa: ANN001
+    """Pin read-only OFF unless a test opts in, so an ambient ARGUS_PROOF_READ_ONLY
+    (e.g. a demo-configured shell) can't flip the default-mode assertions. Tests
+    that exercise env resolution re-set it via the same monkeypatch."""
+    monkeypatch.delenv("ARGUS_PROOF_READ_ONLY", raising=False)
+
+
 def _report(run_id: str = "run-1") -> dict:
     rows = [
         ImageScores(image_id="a", seed=1, metrics=MetricScores(identity=0.9), passed=True, duplicate_group=0),
@@ -33,6 +46,62 @@ def test_health(client: TestClient) -> None:
     assert body["status"] == "ok"
     assert body["service"] == "argus-proof"
     assert body["version"] == __version__
+    assert body["read_only"] is False  # live host: eval available
+
+
+def test_health_reports_read_only(read_only_client: TestClient) -> None:
+    assert read_only_client.get("/health").json()["read_only"] is True
+
+
+def test_read_only_mode_403s_writes_but_serves_reads(read_only_client: TestClient) -> None:
+    """Replay/demo host: live eval + every mutation refused; reads still served.
+
+    The guard is method-based middleware, so it fires before body validation —
+    an invalid body still 403s (never a 422), and future write routes are covered.
+    """
+    # live GPU eval is the primary target ...
+    assert (
+        read_only_client.post("/run/stream", json={"lora": "l", "base_checkpoint": "c", "prompt": "p"}).status_code
+        == 403
+    )
+    # ... and every other mutating route (bodies intentionally invalid: 403 wins over 422)
+    assert read_only_client.put("/report/r", json={}).status_code == 403
+    assert read_only_client.post("/report/r/hitl", json={}).status_code == 403
+    assert read_only_client.post("/report/r/refine", json={}).status_code == 403
+    # reads still work
+    assert read_only_client.get("/reports").status_code == 200
+    assert read_only_client.get("/scorers").status_code == 200
+    assert read_only_client.get("/health").status_code == 200
+
+
+def test_read_only_off_by_default_allows_writes(report_client: TestClient) -> None:
+    """A normal (non-replay) host still accepts a report write — the guard is off."""
+    assert report_client.put("/report/run-1", json=_report("run-1")).status_code == 200
+
+
+def test_read_only_resolves_from_env(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    """The demo host enables the mode via $ARGUS_PROOF_READ_ONLY, not a kwarg;
+    an explicit kwarg (the --no-read-only path) still overrides the env."""
+    monkeypatch.setenv("ARGUS_PROOF_READ_ONLY", "1")
+    env_app = TestClient(create_app(reports_dir=str(tmp_path)))  # no kwarg -> reads env
+    assert env_app.get("/health").json()["read_only"] is True
+    assert env_app.post("/run/stream", json={"lora": "l", "base_checkpoint": "c", "prompt": "p"}).status_code == 403
+    # explicit read_only=False wins over the truthy env var
+    off_app = TestClient(create_app(reports_dir=str(tmp_path), read_only=False))
+    assert off_app.get("/health").json()["read_only"] is False
+    assert off_app.put("/report/run-1", json=_report("run-1")).status_code == 200
+
+
+def test_read_only_403_keeps_cors_headers(tmp_path) -> None:  # noqa: ANN001
+    """Cross-origin studio -> demo host: the refused write still carries CORS
+    headers (guard sits inside CORS), and preflight OPTIONS is not blocked."""
+    app = TestClient(create_app(reports_dir=str(tmp_path), read_only=True, cors=True))
+    origin = "http://studio.local"
+    refused = app.post("/run/stream", json={}, headers={"Origin": origin})
+    assert refused.status_code == 403
+    assert refused.headers["access-control-allow-origin"] == origin
+    preflight = app.options("/run/stream", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+    assert preflight.status_code == 200
 
 
 def test_cors_header(client: TestClient) -> None:
