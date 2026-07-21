@@ -443,6 +443,11 @@ def serve(
     port: int = Option(8104, "--port", "-p", help="Port to listen on"),
     host: str = Option("0.0.0.0", "--host", help="Host to bind to"),
     cors: bool = Option(False, "--cors", help="Enable CORS (allow all origins)"),
+    read_only: bool | None = Option(
+        None,
+        "--read-only/--no-read-only",
+        help="Replay/demo mode: serve stored reports but 403 all live eval + writes (default: $ARGUS_PROOF_READ_ONLY).",
+    ),
 ) -> None:
     """Start the argus-proof micro-server (FastAPI) on :8104."""
     try:
@@ -454,7 +459,7 @@ def serve(
     from argus_proof.server import create_app
 
     structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.INFO))
-    application = create_app(cors=cors)
+    application = create_app(cors=cors, read_only=read_only)
     uvicorn.run(application, host=host, port=port)
 
 
