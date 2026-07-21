@@ -40,12 +40,12 @@ import time
 from pathlib import Path
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
-    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+    from fastapi import FastAPI, HTTPException
+    from fastapi.responses import FileResponse, StreamingResponse
 except ImportError as exc:  # pragma: no cover
     raise ImportError("Server requires: pip install argus-proof[server]") from exc
 
-import structlog
+from argus_cortex.server import WriteGuard, constant_refuse, env_flag
 from pydantic import BaseModel, Field
 
 from argus_proof import __version__
@@ -60,9 +60,6 @@ ENV_EXPORTS_DIR = "ARGUS_PROOF_EXPORTS_DIR"
 # request — live GPU eval above all — so the GPU-less public demo host can't
 # kick off compute. Truthy values: 1/true/yes/on.
 ENV_READ_ONLY = "ARGUS_PROOF_READ_ONLY"
-
-# HTTP methods that mutate state or trigger compute; blocked in read-only mode.
-_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # run_id / image_id / export names become path segments under a fixed root —
 # allow only a strict filename charset so traversal is impossible by construction.
@@ -79,26 +76,8 @@ def _require_safe(value: str, label: str) -> str:
     return value
 
 
-# Recognised env-flag spellings; anything else *set* is a misconfiguration.
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
-_FALSY = frozenset({"0", "false", "no", "off", ""})
-
-
-def _env_flag(name: str) -> bool:
-    """Whether an env var is set to a truthy string (``1``/``true``/``yes``/``on``).
-
-    A set-but-unrecognised value (a typo like ``ARGUS_PROOF_READ_ONLY=enabled``)
-    logs a warning and is treated as off, so a mistyped protection flag is
-    visible in the logs rather than silently leaving the guard disabled.
-    """
-    raw = os.environ.get(name, "").strip().lower()
-    if raw in _TRUTHY:
-        return True
-    if raw not in _FALSY:
-        structlog.get_logger(__name__).warning(
-            "env flag set to an unrecognised value; treating as off", flag=name, value=raw
-        )
-    return False
+# The message a refused write carries in read-only mode.
+_READ_ONLY_REFUSAL = "argus-proof is in read-only (replay) mode; writes and live evaluation are disabled"
 
 
 class RunRequest(BaseModel):
@@ -151,7 +130,7 @@ def create_app(
     """
     from argus_proof.evaluate import runs_root
 
-    read_only = _env_flag(ENV_READ_ONLY) if read_only is None else read_only
+    read_only = env_flag(ENV_READ_ONLY) if read_only is None else read_only
 
     app = FastAPI(
         title="Argus Proof",
@@ -162,20 +141,13 @@ def create_app(
     if read_only:
         # Read-only means NO mutation at all: a public demo must not let visitors
         # overwrite the shared report tape (PUT / HITL / refine) or spend GPU (run).
-        # Method-based, so it covers every write route — current and future —
-        # without per-route guards to forget. Registered before CORS so that, when
-        # CORS is enabled, CORSMiddleware stays outermost and a cross-origin 403
-        # still carries its CORS headers.
-        @app.middleware("http")
-        async def _enforce_read_only(request: Request, call_next):  # noqa: ANN001,ANN202
-            if request.method in _MUTATING_METHODS:
-                return JSONResponse(
-                    status_code=403,
-                    content={
-                        "detail": "argus-proof is in read-only (replay) mode; writes and live evaluation are disabled"
-                    },
-                )
-            return await call_next(request)
+        # constant_refuse gates every unsafe method, so it covers every write route
+        # — current and future — without per-route guards to forget. The shared
+        # WriteGuard is pure ASGI (not BaseHTTPMiddleware), so it never wraps or
+        # buffers the NDJSON stream POST /run/stream returns. Registered before CORS
+        # so that, when CORS is enabled, CORSMiddleware stays outermost and a
+        # cross-origin 403 still carries its CORS headers.
+        app.add_middleware(WriteGuard, refuse=constant_refuse(_READ_ONLY_REFUSAL))
 
     if cors:
         from fastapi.middleware.cors import CORSMiddleware
