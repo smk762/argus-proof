@@ -20,14 +20,17 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # Shared suite foundation (taxonomy, wire-schema tooling, AI-backend contract).
-    "argus-cortex>=0.1.0",
+    # Shared suite foundation (taxonomy, wire-schema tooling, AI-backend contract,
+    # and the server write-guard scaffolding used by server/app.py — 0.2.0+).
+    "argus-cortex>=0.2.0",
     "pydantic>=2.7",
     "structlog>=24.0",
 ]
 
 [project.optional-dependencies]
-server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7"]
+# argus-cortex[server] pulls starlette for the shared write-guard (argus_cortex.server);
+# fastapi provides it too, but the extra declares the dependency honestly.
+server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7", "argus-cortex[server]>=0.2.0"]
 cli = ["typer>=0.12", "rich>=13.0"]
 # Concrete scorers (implement argus_proof.scoring protocols): dedup/diversity
 # (phash) + identity (InsightFace ArcFace) + quality (CLIPScore/pyiqa/ImageReward).
