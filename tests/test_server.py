@@ -92,6 +92,18 @@ def test_read_only_resolves_from_env(monkeypatch, tmp_path) -> None:  # noqa: AN
     assert off_app.put("/report/run-1", json=_report("run-1")).status_code == 200
 
 
+def test_read_only_unrecognised_env_resolves_off(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    """A set-but-unrecognised value (a typo) resolves the flag OFF rather than
+    on — the fail-open direction is deliberate and pinned so a future change to
+    the truthy set can't silently start treating typos as read-only (or vice
+    versa). Recognised falsy spellings resolve off too."""
+    monkeypatch.setenv("ARGUS_PROOF_READ_ONLY", "enabled")  # plausible typo, not in the truthy set
+    typo_app = TestClient(create_app(reports_dir=str(tmp_path)))
+    assert typo_app.get("/health").json()["read_only"] is False
+    monkeypatch.setenv("ARGUS_PROOF_READ_ONLY", "off")  # explicit falsy spelling
+    assert TestClient(create_app(reports_dir=str(tmp_path))).get("/health").json()["read_only"] is False
+
+
 def test_read_only_403_keeps_cors_headers(tmp_path) -> None:  # noqa: ANN001
     """Cross-origin studio -> demo host: the refused write still carries CORS
     headers (guard sits inside CORS), and preflight OPTIONS is not blocked."""

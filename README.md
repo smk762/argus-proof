@@ -49,7 +49,8 @@ argus-proof inspect runs/proof-l00-w00-p000
 
 ```bash
 argus-proof serve --port 8104 --cors   # peer to lens :8100, curator :8101, quarry :8102, forge :8103
-curl -s localhost:8104/health          # {"status":"ok","service":"argus-proof","version":"..."}
+argus-proof serve --read-only          # replay/demo mode: serve stored reports, 403 live eval + writes
+curl -s localhost:8104/health          # {"status":"ok","service":"argus-proof","version":"...","read_only":false}
 ```
 
 Routes (the backend of the argus-studio `/proof` view):

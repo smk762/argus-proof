@@ -2,7 +2,7 @@
 
 Routes:
 
-    GET  /health                          -> {status, service, version}
+    GET  /health                          -> {status, service, version, read_only}
     GET  /exports                         -> {exports: [...]}  (curator export dirs to evaluate against)
     GET  /models                          -> {checkpoints: [...], loras: [...]}  (engine-loadable names)
     GET  /scorers                         -> {scorers: [{metric, name, available}]}  (installed-scorer probe)
@@ -45,6 +45,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError("Server requires: pip install argus-proof[server]") from exc
 
+import structlog
 from pydantic import BaseModel, Field
 
 from argus_proof import __version__
@@ -78,9 +79,26 @@ def _require_safe(value: str, label: str) -> str:
     return value
 
 
+# Recognised env-flag spellings; anything else *set* is a misconfiguration.
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off", ""})
+
+
 def _env_flag(name: str) -> bool:
-    """Whether an env var is set to a truthy string (``1``/``true``/``yes``/``on``)."""
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+    """Whether an env var is set to a truthy string (``1``/``true``/``yes``/``on``).
+
+    A set-but-unrecognised value (a typo like ``ARGUS_PROOF_READ_ONLY=enabled``)
+    logs a warning and is treated as off, so a mistyped protection flag is
+    visible in the logs rather than silently leaving the guard disabled.
+    """
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in _TRUTHY:
+        return True
+    if raw not in _FALSY:
+        structlog.get_logger(__name__).warning(
+            "env flag set to an unrecognised value; treating as off", flag=name, value=raw
+        )
+    return False
 
 
 class RunRequest(BaseModel):
@@ -153,7 +171,9 @@ def create_app(
             if request.method in _MUTATING_METHODS:
                 return JSONResponse(
                     status_code=403,
-                    content={"detail": "argus-proof is in read-only (replay) mode; live evaluation is disabled"},
+                    content={
+                        "detail": "argus-proof is in read-only (replay) mode; writes and live evaluation are disabled"
+                    },
                 )
             return await call_next(request)
 
