@@ -22,7 +22,10 @@ classifiers = [
 dependencies = [
     # Shared suite foundation (taxonomy, wire-schema tooling, AI-backend contract,
     # and the server write-guard scaffolding used by server/app.py — 0.2.0+).
-    "argus-cortex>=0.2.0",
+    # 0.4+: argus_cortex.moderation (the NudeNet client the safety scorer uses).
+    # Capped below the next minor: argus-cortex is pre-1.0, where a minor bump
+    # carries no compatibility guarantee.
+    "argus-cortex>=0.4,<0.5",
     "pydantic>=2.7",
     "structlog>=24.0",
 ]
@@ -30,7 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 # argus-cortex[server] pulls starlette for the shared write-guard (argus_cortex.server);
 # fastapi provides it too, but the extra declares the dependency honestly.
-server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7", "argus-cortex[server]>=0.2.0"]
+server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7", "argus-cortex[server]>=0.4,<0.5"]
 cli = ["typer>=0.12", "rich>=13.0"]
 # Concrete scorers (implement argus_proof.scoring protocols): dedup/diversity
 # (phash) + identity (InsightFace ArcFace) + quality (CLIPScore/pyiqa/ImageReward).
@@ -45,7 +48,6 @@ score = [
     "torchmetrics>=1.0",
     "pyiqa>=0.1.10",
     "image-reward>=1.5",
-    "nudenet>=3.0",
 ]
 # Cross-run stats store (pass-rate CIs use the dependency-free argus_proof.stats;
 # the parquet store needs polars, inter-rater reliability the krippendorff pkg).
