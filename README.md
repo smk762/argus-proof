@@ -150,7 +150,7 @@ skips it when the extra is absent). Shipped:
 - **dedup + diversity** — `PhashDeduper`, `PhashDiversityScorer` (perceptual hash, CPU-only)
 - **identity** — `IdentityScorer` (InsightFace ArcFace cosine vs a held-out reference set)
 - **quality / adherence** — `clip_score_scorer()` (CLIPScore), `pyiqa_scorer()` (CLIP-IQA), `image_reward_scorer()` (ImageReward), each normalising its raw score to `[0,1]`
-- **safety** — `SafetyScorer` (NudeNet ensemble, `1 - unsafe`); set a `safety` hard gate to auto-fail unsafe images. `safety_tail_aggregate()` surfaces the any-hit/min/percentile tail
+- **safety** — `SafetyScorer` (NudeNet ensemble, `1 - unsafe`); set a `safety` hard gate to auto-fail unsafe images. `safety_tail_aggregate()` surfaces the any-hit/min/percentile tail. NudeNet runs as a **server over HTTP** (`PROOF_NUDENET_URL`, via argus-cortex's `NudeNetClient`), never in-process (it is AGPL-3.0); without a URL the scorer is skipped. "Unsafe" is the suite's exposed-nudity set (exposed buttocks, breasts, genitalia, anus), the same as curator's
 
 ```python
 from argus_proof.scoring import score_run

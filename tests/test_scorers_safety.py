@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -121,26 +125,92 @@ def test_tail_aggregate_no_safety_scores() -> None:
 
 
 # --------------------------------------------------------------------------
-# NudeNetDetector (3.x API) — pure logic + graceful degradation
+# NudeNetDetector — a NudeNet server over HTTP (argus-cortex's client)
 # --------------------------------------------------------------------------
 
 
-def test_nudenet_unsafe_class_heuristic() -> None:
+class _NudeNet(BaseHTTPRequestHandler):
+    """Speaks NudeNet's /infer API; answers by the uploaded file's name."""
+
+    answers = {
+        "topless.png": [
+            {"class": "FEMALE_BREAST_EXPOSED", "score": 0.81, "box": [0, 0, 5, 5]},
+            {"class": "FACE_FEMALE", "score": 0.93, "box": [0, 0, 5, 5]},
+        ],
+        "beach.png": [
+            {"class": "FEET_EXPOSED", "score": 0.9, "box": [0, 0, 5, 5]},
+            {"class": "MALE_BREAST_EXPOSED", "score": 0.7, "box": [0, 0, 5, 5]},
+        ],
+    }
+
+    def log_message(self, *args) -> None:  # keep test output quiet
+        pass
+
+    def do_POST(self) -> None:
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        name = next(n for n in self.answers if f'filename="{n}"'.encode() in body) if b"broken" not in body else None
+        if name is None:
+            self.send_response(500)
+            self.end_headers()
+            return
+        out = json.dumps({"prediction": [self.answers[name]], "success": True}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+
+@pytest.fixture
+def nudenet_url() -> Iterator[str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _NudeNet)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_nudenet_counts_only_the_suite_exposed_classes() -> None:
     d = NudeNetDetector()
     assert d._is_unsafe("FEMALE_BREAST_EXPOSED") is True
     assert d._is_unsafe("BUTTOCKS_EXPOSED") is True
     assert d._is_unsafe("FACE_FEMALE") is False
     assert d._is_unsafe("FEMALE_BREAST_COVERED") is False
+    assert d._is_unsafe("FEET_EXPOSED") is False  # bare feet / chest are not nudity
+    assert d._is_unsafe("MALE_BREAST_EXPOSED") is False
 
 
 def test_nudenet_unsafe_class_override() -> None:
     d = NudeNetDetector(unsafe_classes=frozenset({"CUSTOM"}))
     assert d._is_unsafe("CUSTOM") is True
-    assert d._is_unsafe("FEMALE_BREAST_EXPOSED") is False  # override replaces the heuristic
+    assert d._is_unsafe("FEMALE_BREAST_EXPOSED") is False  # override replaces the default set
 
 
-def test_nudenet_unavailable_without_extra_and_degrades() -> None:
+def test_nudenet_scores_through_the_server(nudenet_url: str, tmp_path: Path) -> None:
+    for name in ("topless.png", "beach.png", "broken.png"):
+        (tmp_path / name).write_bytes(b"\x89PNG fake")
+    d = NudeNetDetector(base_url=nudenet_url, timeout=5)
+    assert d.is_available()
+    assert d.unsafe_probability(tmp_path / "topless.png") == 0.81  # the face (0.93) does not count
+    assert d.unsafe_probability(tmp_path / "beach.png") == 0.0
+    assert d.unsafe_probability(tmp_path / "broken.png") is None  # failed check: skipped, not safe
+    assert d.unsafe_probability(tmp_path / "missing.png") is None
+    wide = NudeNetDetector(unsafe_classes=frozenset({"FEET_EXPOSED"}), base_url=nudenet_url)
+    assert wide.unsafe_probability(tmp_path / "beach.png") == 0.9
+
+
+def test_nudenet_url_from_env(nudenet_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROOF_NUDENET_URL", nudenet_url)
+    assert NudeNetDetector().is_available()
+    monkeypatch.setenv("PROOF_NUDENET_URL", "ftp://nudenet")
+    assert NudeNetDetector().is_available() is False
+
+
+def test_nudenet_unavailable_without_a_server_and_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PROOF_NUDENET_URL", raising=False)
     d = NudeNetDetector()
-    assert d.is_available() is False  # nudenet not in the CI env
-    # calling anyway must not crash — the load error is caught -> None
+    assert d.is_available() is False  # no NudeNet server configured
+    # calling anyway must not crash — the config error is caught -> None
     assert d.unsafe_probability(Path("nope.png")) is None
