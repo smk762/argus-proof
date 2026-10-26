@@ -381,6 +381,8 @@ make lint
 
 - **CI** runs via the shared [`argus-ci`](https://github.com/smk762/argus-ci) reusable workflow.
 - **Release** publishes to PyPI (OIDC trusted publishing) and GHCR on `v*` tags.
+- Once PyPI has the version, a **GitHub Release** is created with that version's
+  `CHANGELOG.md` section as its notes. Add the section before you tag; the job fails without it.
 - Versioning is derived from git tags via `hatch-vcs` — tag `vX.Y.Z` to cut a release.
 
 This repo was scaffolded from [`argus-pkg-template`](https://github.com/smk762/argus-pkg-template).
