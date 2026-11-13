@@ -13,6 +13,16 @@ argus-quarry -> argus-curator -> argus-lens -> argus-forge -> your trainer -> ar
 
 **The forge→proof handoff is a soft join, not an embed.** A `RunManifest` links back to the curator export via `source_manifest` (the `manifest.jsonl`) and, when the LoRA came through the suite, to forge's `training_run_id` (== forge `RunEvent.run_id`). Both are optional — a LoRA can be supplied ad hoc. Proof owns its own `run_id` (the eval run), distinct from the forge training run. README.md is the source of truth for behaviour; it is unusually detailed.
 
+## Argus suite
+<!-- argus-suite: keep this block; argus-ci checks for it -->
+This repo is part of the Argus suite. The suite map below lists every sibling and what it owns; check it before
+building something a sibling may already do. **On every release, update this repo's row and capabilities in
+argus-cortex's SUITE.md** (a PR to argus-cortex in the same release).
+
+@../argus-core/SUITE.md
+
+Not checked out? Read https://github.com/smk762/argus-cortex/blob/main/SUITE.md
+
 ## Layout
 
 `src/argus_proof/`:
