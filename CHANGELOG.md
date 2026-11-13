@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rebuilding the newest final `v*` tag without cache and republishing its tags, so the
   image picks up the cortex its pyproject range now resolves to.
 
+### Fixed
+- README drift (#65): the policy-moderation section now states the Llama Guard
+  adapters are stubs (inject your own detectors) and lists the `sexual` category;
+  the route list adds `/health`, `/scorers` and `/report/{run_id}/image_at/{index}`;
+  the CLI section documents `argus-proof schema [--check]`; the `gate` example is
+  copy-pasteable and mentions `--confidence`; the experiment sample cell id is
+  corrected; the diffusers limitations and the ImageReward-less default scorer set
+  are noted.
+
 ## [0.2.2] - 2026-10-26
 
 ### Added
