@@ -51,3 +51,7 @@ Run a single test: `uv run --no-sync pytest tests/test_scoring.py::test_name -q`
   - Concurrent report writes are serialised by a per-run `flock` sidecar (`reports.py`), so a streaming run's write and a reviewer's HITL save can't drop updates. On non-POSIX it degrades to a no-op — don't rely on it for multi-host.
 - Shared suite code (taxonomy, wire-schema tooling, the server write-guard/env-flag helpers, `RemoteBackend`) lives in **argus-cortex** (`argus-cortex[server]`) — reuse it, don't re-implement.
 - Versioning is git-tag-derived (`hatch-vcs`); `_version.py` is generated (gitignored). `structlog` logging, Pydantic v2, async server (`asyncio_mode = auto`), ruff line-length 120. Scaffolded from `argus-pkg-template` — `copier update` pulls tooling changes.
+
+## Branches
+
+`dev` is the default branch and the base for every PR. Cut feature branches from `origin/dev` and bring them up to date by merging `origin/dev`, never `main`. Never open a PR against `main` or push work to it directly: `main` must never be ahead of `dev`. A release fast-forwards `main` to a `dev` commit that passed CI (`git push origin origin/dev:main`), then tags it. If `main` is protected and needs a PR, merge the release PR, then immediately merge `main` back into `dev` so the merge commit is not left on `main` alone.
