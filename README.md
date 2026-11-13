@@ -43,7 +43,13 @@ argus-proof report proof-l00-w00-p000 [--json]
 # Summarise an export dir (prompt sources) or a run dir (manifest + images):
 argus-proof inspect ./curated_export
 argus-proof inspect runs/proof-l00-w00-p000
+
+# Emit the wire-contract JSON Schema consumers codegen against (default
+# schema/proof-wire.schema.json; --check exits non-zero if the committed copy is stale):
+argus-proof schema [--output PATH] [--check]
 ```
+
+`gate`, `recommend`, `experiment` and `explore` are covered in their own sections below.
 
 ## Serve
 
@@ -56,13 +62,16 @@ curl -s localhost:8104/health          # {"status":"ok","service":"argus-proof",
 Routes (the backend of the argus-studio `/proof` view):
 
 ```
+GET  /health                            liveness + version + read_only flag
 GET  /exports                           curator export dirs available to evaluate against
 GET  /models                            checkpoints + LoRAs under $PROOF_MODELS_DIR
+GET  /scorers                           scorers a run applies + whether each is installed
 POST /run/stream                        generate + score + store one run (NDJSON progress)
 GET  /reports                           stored report digests (run browser)
 GET  /report/{run_id}                   full EvalReport            PUT to store one
 GET  /report/{run_id}/refined           passing subset, refined ranks first
 GET  /report/{run_id}/image/{image_id}  a generated sample (ids only — no path input)
+GET  /report/{run_id}/image_at/{index}  sample by position — seed-free URL for blind review
 POST /report/{run_id}/hitl              apply a review; recomputes pass-rate + verdict
 POST /report/{run_id}/refine            second-pass re-rank (rank: null retracts)
 ```
@@ -115,6 +124,10 @@ engine + version:
 
 - **`diffusers`** — in-process diffusers SDXL pipeline: deterministic, no external
   service, weights hashed from disk (`pip install "argus-proof[diffusers]"`).
+  Limitations: `clip_skip` is not applied, and only a handful of samplers map to a
+  diffusers scheduler (`euler`, `euler_a`, `ddim`, `dpmpp_2m`, `unipc`; unknown
+  names fall back to the pipeline default). The manifest still records the
+  *requested* values, so compare across engines with care.
 - **`a1111`** — an AUTOMATIC1111 / SD.Next `/sdapi` server (checkpoint via
   `override_settings`, LoRAs via `<lora:…>` prompt syntax; models hashed from disk).
 - **`remote`** — a hosted/cloud endpoint that speaks the proof wire (`POST /generate`
@@ -151,6 +164,12 @@ skips it when the extra is absent). Shipped:
 - **identity** — `IdentityScorer` (InsightFace ArcFace cosine vs a held-out reference set)
 - **quality / adherence** — `clip_score_scorer()` (CLIPScore), `pyiqa_scorer()` (CLIP-IQA), `image_reward_scorer()` (ImageReward), each normalising its raw score to `[0,1]`
 - **safety** — `SafetyScorer` (NudeNet ensemble, `1 - unsafe`); set a `safety` hard gate to auto-fail unsafe images. `safety_tail_aggregate()` surfaces the any-hit/min/percentile tail. NudeNet runs as a **server over HTTP** (`PROOF_NUDENET_URL`, via argus-cortex's `NudeNetClient`), never in-process (it is AGPL-3.0); without a URL the scorer is skipped. "Unsafe" is the suite's exposed-nudity set (exposed buttocks, breasts, genitalia, anus), the same as curator's
+
+The default scorer set used by `argus-proof run` / `score` and the server
+(`evaluate.default_scorers()`, plus phash dedup/diversity) is identity, CLIPScore,
+CLIP-IQA and safety — it does **not** include ImageReward, so the `preference`
+metric stays empty unless you pass `image_reward_scorer()` via the library API.
+`GET /scorers` reports which of the default set this install can actually run.
 
 ```python
 from argus_proof.scoring import score_run
@@ -200,15 +219,24 @@ best_first = refined_ranking(refined)   # passing subset, refined re-ranks on to
 ## Policy moderation (optional)
 
 The Phase-2 `safety` scorer catches **nudity**; `argus_proof.moderation` extends
-it to a **Guard-class policy taxonomy** (violence / hate / self-harm / weapons /
-illegal) — over both the **generated images** and the **input prompts /
-captions**, so a toxic prompt is flagged even when its output is clean
-(`pip install "argus-proof[moderation]"`, Llama Guard 3 Vision):
+it to a **Guard-class policy taxonomy** (sexual / violence / hate / self-harm /
+weapons / illegal) — over both the **generated images** and the **input prompts /
+captions**, so a toxic prompt is flagged even when its output is clean.
+
+> **Status: the bundled Llama Guard adapters are stubs.** `LlamaGuardImageDetector`
+> (Llama-Guard-3-11B-Vision) and `LlamaGuardTextDetector` (text-only
+> Llama-Guard-3-8B) map Guard hazard codes onto the taxonomy, but their model call
+> (`_classify`) is not implemented yet and raises `NotImplementedError`. With the
+> `[moderation]` extra installed, a default `PolicyModerator()` therefore **fails
+> loud** rather than silently reading everything as safe. Until the adapter lands,
+> inject your own detectors (any object with `name`, `version`, `is_available()`
+> and `moderate_image(path)` / `moderate_text(text)` returning per-category
+> `[0,1]` scores):
 
 ```python
 from argus_proof.moderation import PolicyModerator, moderate_images, moderate_texts
 
-mod = PolicyModerator()                         # default: Llama Guard 3 (lazy, [moderation])
+mod = PolicyModerator(image_detectors=[MyImageGuard()], text_detectors=[MyTextGuard()])
 out = moderate_images(image_paths, mod)         # per-category tails over the outputs
 inp = moderate_texts(prompt_grid_variants, mod) # ...and over the inputs
 out.flagged()                                   # e.g. ["violence", "hate"], worst first
@@ -218,8 +246,9 @@ report.scorers.append(mod.provenance("output")) # version-stamp the Guard model 
 Each category gets a **tail** view (any-hit / max / 95th percentile — the extremes
 that matter, not the mean, same rule as `safety`), combined conservatively across
 an ensemble (most-unsafe detector wins). Detectors are pluggable and injectable, so
-the taxonomy/ensemble/tail logic is dependency-free and unit-tested; only the real
-Llama Guard adapter needs the extra. A reviewer's HITL flag attributes to a
+the taxonomy/ensemble/tail logic is dependency-free and unit-tested; the Llama
+Guard adapters (once implemented) are the only part that needs the
+`[moderation]` extra. A reviewer's HITL flag attributes to a
 category via `RejectReason.category`. CSAM matching stays a **separate** policy gate
 (Thorn Safer / PhotoDNA), not an ML metric here.
 
@@ -230,11 +259,15 @@ gate` evaluates a scored `EvalReport` against declared thresholds and **exits
 non-zero when rejected**, so it drops straight into CI:
 
 ```bash
+# --min-pass-rate-ci-lower: Wilson lower bound — a lucky 3/3 won't pass
+# --confidence: confidence level for that bound (default 0.95)
+# exit 0 = accepted, 1 = rejected, 2 = unreadable report / invalid threshold
 argus-proof gate eval_report.json \
   --min-pass-rate 0.75 \
-  --min-pass-rate-ci-lower 0.7 \   # Wilson lower bound — a lucky 3/3 won't pass
+  --min-pass-rate-ci-lower 0.7 \
+  --confidence 0.95 \
   --min-identity 0.6 \
-  --max-unsafe-rate 0.0            # exit 0 = accepted, 1 = rejected, 2 = unreadable
+  --max-unsafe-rate 0.0
 ```
 
 The pass-rate lower bound uses a Wilson score interval (`argus_proof.stats`, no
@@ -305,7 +338,7 @@ with a `--max-gpu-hours` guardrail that refuses an intractable matrix:
 ```bash
 argus-proof experiment matrix.json --export ./curated_export --max-gpu-hours 40
 # experiment exp: 4 cells, 32 runs, 96 images
-#   [exp-c00sdxl-a-fast] 24 images (8 runs)
+#   [exp-c00-sdxl-a-fast] 24 images (8 runs)
 #   ...
 # est. 0.2 GPU-hours @ 6s/image
 ```
