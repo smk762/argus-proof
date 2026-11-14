@@ -1,4 +1,9 @@
-# argus-proof
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/smk762/argus-cortex/dev/brand/packages/proof/argus-proof-lockup-dark.svg">
+    <img alt="argus-proof" src="https://raw.githubusercontent.com/smk762/argus-cortex/dev/brand/packages/proof/argus-proof-lockup-light.svg" height="52">
+  </picture>
+</h1>
 
 Post-training LoRA evaluation and optimisation: generate samples from a trained LoRA and score them against the curated dataset it was trained from.
 
