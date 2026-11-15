@@ -50,7 +50,17 @@ from argus_cortex.server import WriteGuard, constant_refuse, env_flag
 from pydantic import BaseModel, Field
 
 from argus_proof import __version__
-from argus_proof.models import EvalReport, LoRASpec, ProofError, RunManifest, RunSpec, SamplingParams
+from argus_proof.models import (
+    CompleteFrame,
+    EvalReport,
+    LoRASpec,
+    ProgressEvent,
+    ProofError,
+    RunManifest,
+    RunSpec,
+    SamplingParams,
+    ScoringFrame,
+)
 from argus_proof.refinement import RefinementRequest, refined_ranking
 from argus_proof.reports import HitlRequest, ReportStore, ReportSummary, summarise_report
 
@@ -296,8 +306,10 @@ def create_app(
         """Generate + score + store one evaluation run, streaming NDJSON progress.
 
         Frames: ``start`` (total images) / ``image`` (one landed) / ``progress``
-        / ``scoring`` / ``complete`` (the stored report's summary) / ``error``.
-        Generation runs in a worker thread; frames bridge back via a queue.
+        / ``scoring`` / ``complete`` (the stored report's summary) / ``error``,
+        each a ``RunStreamFrame`` member, built from those models so the stream
+        can't drift from the wire schema. Generation runs in a worker thread;
+        frames bridge back via a queue.
         """
         from argus_proof.evaluate import EvaluateError, backend_from_env, reference_images, score_images
         from argus_proof.grid import read_export_prompts
@@ -361,12 +373,12 @@ def create_app(
                     emit(event.model_dump(exclude_none=True))
 
                 result = backend.generate(spec, run_dir, progress=on_progress)
-                emit({"type": "scoring", "run_id": run_id, "n_images": len(result.images)})
+                emit(ScoringFrame(run_id=run_id, n_images=len(result.images)).model_dump(mode="json"))
                 report = score_images(result.manifest, result.images, references=references)
                 store.save(report)
-                emit({"type": "complete", "run_id": run_id, "report": summarise_report(report).model_dump()})
+                emit(CompleteFrame(run_id=run_id, report=summarise_report(report)).model_dump(mode="json"))
             except (EvaluateError, ProofError, ValueError) as exc:
-                emit({"type": "error", "run_id": run_id, "message": str(exc)})
+                emit(ProgressEvent(run_id=run_id, type="error", message=str(exc)).model_dump(exclude_none=True))
             finally:
                 emit(None)  # sentinel: stream is over
 

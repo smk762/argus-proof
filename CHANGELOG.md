@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `410 Gone` when the report was kept but its run dir was pruned, and `400` for an
   unreadable manifest or one belonging to another run. `GET /health` gains a
   `capabilities` list (`["report_manifest"]`) so a client can detect the route.
+- **Wire schema 1.4** (#58): `ReportSummary` and the `/run/stream` frames join
+  `schema/proof-wire.schema.json`. New `ScoringFrame` and `CompleteFrame` models, plus the
+  `RunStreamFrame` union discriminated by `type`, describe every NDJSON line, and the server
+  builds its frames from them. `ReportSummary` moved to `argus_proof.models` and is still
+  importable from `argus_proof.reports`.
+
+### Changed
+- **The wire schema lists defaulted fields as required where proof always sends them**
+  (#58), like curator's `RESPONSE_ONLY`: the `EvalReport` tree, `RunManifest`, `ReportSummary`,
+  the stream frames, `GateResult`, `RejectArchive` and the grid plan. Models a client
+  builds (`RunSpec`, the configs, `SamplingParams`, `RejectReason`, `ProgressEvent`) are
+  unchanged. Payloads and validation are the same; generated client types get stricter.
 
 ### Fixed
 - README drift (#65): the policy-moderation section now states the Llama Guard

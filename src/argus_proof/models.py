@@ -30,7 +30,7 @@ from typing import Annotated, Literal
 from argus_cortex.wire import check_version, make_versioned_base, schema_major
 from argus_cortex.wire import render_schema as _core_render_schema
 from argus_cortex.wire import wire_schema as _core_wire_schema
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
 
 # Version of the proof wire contract (RunManifest / EvalReport / RejectArchive).
 # Bump the minor for backward-compatible additions (a new optional field, a new
@@ -45,11 +45,27 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 #      second-pass re-rank of the passing subset (issue #7).
 # 1.3: additive — RejectReason.category attributes an unsafe flag to a policy
 #      taxonomy category (violence/hate/self-harm/…) for moderation (issue #41).
-PROOF_VERSION = "1.3"
+# 1.4: additive — ReportSummary and the /run/stream frames (ScoringFrame,
+#      CompleteFrame, the RunStreamFrame union) join the schema, and models only a
+#      proof-side producer sends list their defaulted fields as required (the
+#      payloads are unchanged; issue #58).
+PROOF_VERSION = "1.4"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
 SUPPORTED_PROOF_MAJORS: tuple[str, ...] = ("1",)
+
+# For models only a proof-side producer sends — proof's server and CLI, or a
+# remote engine speaking the proof wire — and no client authors: a defaulted
+# field is always in the payload, so the wire schema lists it as required.
+# Validation is unaffected (a stored report from an older proof still loads
+# with its defaults). A model a client also builds (RunSpec, the configs,
+# SamplingParams / RejectReason inside a request) must not use this, since a
+# client may leave its defaulted fields out; ProgressEvent doesn't either, as
+# frames are sent with ``exclude_none``. ``PUT /report`` takes an EvalReport,
+# but only to store one a proof produced, so the report tree carries the flag.
+# tests/test_schema.py pins which models carry it.
+RESPONSE_ONLY = ConfigDict(json_schema_serialization_defaults_required=True)
 
 # Title of the emitted JSON Schema (schema/proof-wire.schema.json).
 WIRE_TITLE = "argus-proof wire contract"
@@ -93,6 +109,8 @@ class ModelRef(BaseModel):
     filename); ``sha256`` is the real identity, so a manifest can't drift if the
     file behind the name changes.
     """
+
+    model_config = RESPONSE_ONLY
 
     name: str
     sha256: Sha256
@@ -142,6 +160,8 @@ class RunManifest(_Versioned):
     ``training_run_id`` / ``RunEvent.run_id`` join key when the LoRA came through
     the suite rather than being supplied ad hoc.
     """
+
+    model_config = RESPONSE_ONLY
 
     run_id: str
     base_checkpoint: ModelRef
@@ -305,6 +325,8 @@ class GridEstimate(BaseModel):
     seeds) so a caller sees why the count is what it is before committing GPU.
     """
 
+    model_config = RESPONSE_ONLY
+
     n_runs: int
     n_images: int
     seconds_per_image: float
@@ -315,6 +337,8 @@ class GridEstimate(BaseModel):
 
 class GridPlan(BaseModel):
     """A fully enumerated grid: the runs to generate plus their cost estimate."""
+
+    model_config = RESPONSE_ONLY
 
     run_id_prefix: str
     estimate: GridEstimate
@@ -340,6 +364,8 @@ class MetricScores(BaseModel):
     an IQA/aesthetic score, ``preference`` an ImageReward/HPS-style score, and
     ``safety`` a safety score.
     """
+
+    model_config = RESPONSE_ONLY
 
     identity: float | None = None
     clip_score: float | None = None
@@ -399,6 +425,8 @@ class Refinement(BaseModel):
     refined it.
     """
 
+    model_config = RESPONSE_ONLY
+
     rank: int = Field(ge=1, le=5)
     notes: str | None = None
     rater: str | None = None
@@ -414,6 +442,8 @@ class ImageScores(BaseModel):
     split per rater for inter-rater reliability. ``refinement`` is the optional
     second-pass re-rank over the passing subset, kept distinct from the first pass.
     """
+
+    model_config = RESPONSE_ONLY
 
     image_id: str
     seed: int
@@ -438,6 +468,8 @@ class AggregateScores(BaseModel):
     ``n_groups`` equals ``n_images`` when no deduper ran.
     """
 
+    model_config = RESPONSE_ONLY
+
     n_images: int = Field(ge=0)
     n_passed: int = Field(ge=0)
     pass_rate: float = Field(ge=0.0, le=1.0)
@@ -460,6 +492,8 @@ class ScorerProvenance(BaseModel):
     model and version that produced it.
     """
 
+    model_config = RESPONSE_ONLY
+
     name: str
     metric: str
     version: str | None = None
@@ -474,6 +508,8 @@ class Verdict(BaseModel):
     HITL groups could still push it over once rated — so a caller can tell
     "failed" apart from "not judged yet" instead of reading a premature fail.
     """
+
+    model_config = RESPONSE_ONLY
 
     passed: bool
     pending: bool = False
@@ -526,12 +562,73 @@ class EvalReport(_Versioned):
     the run dir stays the single source of truth for generation params.
     """
 
+    model_config = RESPONSE_ONLY
+
     run_id: str
     images: list[ImageScores] = Field(default_factory=list)
     aggregate: AggregateScores
     scorers: list[ScorerProvenance] = Field(default_factory=list)
     verdict: Verdict
     created_at: str | None = None
+
+
+class ReportSummary(BaseModel):
+    """A one-line digest of a stored report for the /proof run browser.
+
+    Everything the list view needs without shipping every per-image row: the
+    verdict, the group-collapsed pass-rate, and how many groups still await
+    human review. Sent by ``GET /reports`` and the ``complete`` stream frame.
+    """
+
+    model_config = RESPONSE_ONLY
+
+    run_id: str
+    passed: bool
+    pending: bool
+    pass_rate: float
+    n_images: int
+    n_groups: int | None = None
+    n_needs_hitl: int = 0
+    # How many images carry a second-pass refinement (issue #35's rollup), so the
+    # run browser can show refinement coverage without shipping per-image rows.
+    n_refined: int = 0
+    created_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# /run/stream — the NDJSON frames a live evaluation streams
+# ---------------------------------------------------------------------------
+
+
+class ScoringFrame(BaseModel):
+    """Generation finished; scoring ``n_images`` images has started."""
+
+    model_config = RESPONSE_ONLY
+
+    run_id: str
+    type: Literal["scoring"] = "scoring"
+    n_images: int
+
+
+class CompleteFrame(BaseModel):
+    """The run is scored and its report stored; ``report`` is its digest."""
+
+    model_config = RESPONSE_ONLY
+
+    run_id: str
+    type: Literal["complete"] = "complete"
+    report: ReportSummary
+
+
+class RunStreamFrame(RootModel):
+    """One NDJSON line of ``POST /run/stream``, discriminated by ``type``.
+
+    Generation streams :class:`ProgressEvent` frames (``start`` / ``progress`` /
+    ``image`` / ``done``), then a :class:`ScoringFrame`, then either a
+    :class:`CompleteFrame` or a ``ProgressEvent`` of type ``error``.
+    """
+
+    root: Annotated[ProgressEvent | ScoringFrame | CompleteFrame, Field(discriminator="type")]
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +661,8 @@ class AcceptanceThresholds(BaseModel):
 class GateCheck(BaseModel):
     """One threshold check's outcome, with the actual value vs the threshold."""
 
+    model_config = RESPONSE_ONLY
+
     name: str
     passed: bool
     actual: float | None = None
@@ -573,6 +672,8 @@ class GateCheck(BaseModel):
 
 class GateResult(BaseModel):
     """The overall accept/reject decision — ``passed`` iff every check passed."""
+
+    model_config = RESPONSE_ONLY
 
     passed: bool
     checks: list[GateCheck] = Field(default_factory=list)
@@ -592,6 +693,8 @@ class RejectRecord(BaseModel):
     that is the whole point of the archive.
     """
 
+    model_config = RESPONSE_ONLY
+
     run_id: str
     seed: int
     metrics: MetricScores = Field(default_factory=MetricScores)
@@ -610,6 +713,8 @@ class RejectArchive(_Versioned):
     :class:`RunManifest` and :class:`RejectRecord` are image-free by
     construction, so the archive retains no image or thumbnail paths.
     """
+
+    model_config = RESPONSE_ONLY
 
     manifests: dict[str, RunManifest] = Field(default_factory=dict)
     records: list[RejectRecord] = Field(default_factory=list)
@@ -639,6 +744,10 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
     Verdict,
     GateConfig,
     EvalReport,
+    ReportSummary,
+    ScoringFrame,
+    CompleteFrame,
+    RunStreamFrame,
     AcceptanceThresholds,
     GateCheck,
     GateResult,
