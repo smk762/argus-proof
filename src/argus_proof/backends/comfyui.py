@@ -28,7 +28,7 @@ from argus_proof.backends.base import (
 )
 from argus_proof.backends.http import Transport, UrllibTransport
 from argus_proof.backends.pnginfo import read_dimensions, read_text_chunks
-from argus_proof.backends.workflow import render_workflow
+from argus_proof.backends.workflow import checkpoint_family, render_workflow
 from argus_proof.models import (
     BackendCapabilities,
     GeneratedImage,
@@ -47,7 +47,10 @@ class ComfyUIBackend:
     """Generate images through a running ComfyUI instance.
 
     ``workflow_template`` is a ComfyUI API-format graph with ``$placeholder``
-    values (see :mod:`argus_proof.backends.workflow`); ``resolve_model`` maps a
+    values (see :mod:`argus_proof.backends.workflow`). ``family_templates``
+    (family -> graph) overrides it per checkpoint family, so one server can
+    evaluate SDXL and Flux LoRAs; a family not listed uses
+    ``workflow_template``. ``resolve_model`` maps a
     checkpoint/LoRA filename to a local path so it can be hashed into the
     manifest. ``transport`` defaults to :class:`UrllibTransport` against
     ``base_url`` and is injectable for testing.
@@ -64,17 +67,25 @@ class ComfyUIBackend:
         timeout: float = 600.0,
         request_timeout: float = 180.0,
         engine_version: str | None = None,
+        family_templates: dict[str, dict] | None = None,
     ) -> None:
         # request_timeout is per HTTP call, distinct from the overall per-seed
         # `timeout`: ComfyUI's event loop can stall for minutes while a
         # checkpoint first loads, and a /history poll mustn't die under it.
         self.template = workflow_template
+        self.family_templates = {k.lower(): v for k, v in (family_templates or {}).items()}
         self.resolve_model = resolve_model
         self.transport = transport or UrllibTransport(base_url, timeout=request_timeout, label="ComfyUI")
         self.client_id = client_id
         self.poll_interval = poll_interval
         self.timeout = timeout
         self._engine_version = engine_version
+
+    def template_for(self, checkpoint: str) -> dict:
+        """The workflow template for *checkpoint*'s family (see
+        :func:`~argus_proof.backends.workflow.checkpoint_family`)."""
+        family = checkpoint_family(checkpoint)
+        return self.family_templates.get(family, self.template) if family else self.template
 
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
@@ -105,6 +116,9 @@ class ComfyUIBackend:
             # missing/unresolvable checkpoint fails fast (before any GPU spend)
             # and inside the error-event path, instead of after the whole grid ran.
             manifest = self._build_manifest(spec)
+            # Render once up front too: a value the template has no slot for
+            # (guidance on SDXL, a negative on Flux) fails before any GPU spend.
+            render_workflow(self.template_for(spec.base_checkpoint), spec, spec.seeds[0])
             for done, seed in enumerate(spec.seeds, start=1):
                 images.extend(self._generate_seed(spec, seed, out_dir, emit))
                 emit(ProgressEvent(run_id=spec.run_id, type="progress", completed=done, total=total))
@@ -117,7 +131,7 @@ class ComfyUIBackend:
         return GenResult(manifest=manifest, images=images)
 
     def _generate_seed(self, spec: RunSpec, seed: int, out_dir: Path, emit: ProgressSink) -> list[GeneratedImage]:
-        graph = render_workflow(self.template, spec, seed)
+        graph = render_workflow(self.template_for(spec.base_checkpoint), spec, seed)
         resp = self.transport.post_json("/prompt", {"prompt": graph, "client_id": self.client_id})
 
         node_errors = resp.get("node_errors")

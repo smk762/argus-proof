@@ -30,6 +30,36 @@ def test_get_backend_constructs_comfyui() -> None:
     assert backend.capabilities().name == "comfyui"
 
 
+def test_comfyui_picks_the_template_by_checkpoint_family() -> None:
+    from argus_proof.backends.workflow import packaged_templates
+
+    flux = packaged_templates()["flux"]
+    backend = get_backend(
+        "comfyui", workflow_template=example_template(), family_templates={"Flux": flux}, resolve_model=Path
+    )
+    assert backend.template_for("flux/flux1-dev.safetensors") is flux
+    assert backend.template_for("sdxl/base.safetensors") is backend.template
+    assert backend.template_for("base.safetensors") is backend.template
+
+
+def test_backend_from_env_uses_packaged_family_templates_unless_overridden(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    import json
+
+    from argus_proof.evaluate import backend_from_env
+
+    monkeypatch.setenv("PROOF_MODELS_DIR", str(tmp_path))
+    monkeypatch.delenv("PROOF_WORKFLOW_TEMPLATE", raising=False)
+    backend = backend_from_env("comfyui")
+    assert "FluxGuidance" in json.dumps(backend.template_for("flux/f.safetensors"))
+    assert "FluxGuidance" not in json.dumps(backend.template_for("sdxl/b.safetensors"))
+
+    # an explicit template applies to every family
+    custom = tmp_path / "mine.json"
+    custom.write_text(json.dumps(example_template()), encoding="utf-8")
+    backend = backend_from_env("comfyui", workflow_template=custom)
+    assert backend.template_for("flux/f.safetensors") is backend.template
+
+
 def test_get_backend_unknown_raises() -> None:
     with pytest.raises(BackendError, match="unknown generation backend"):
         get_backend("midjourney")

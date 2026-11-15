@@ -48,7 +48,8 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 # 1.4: additive — ReportSummary and the /run/stream frames (ScoringFrame,
 #      CompleteFrame, the RunStreamFrame union) join the schema, and models only a
 #      proof-side producer sends list their defaulted fields as required (the
-#      payloads are unchanged; issue #58).
+#      payloads are unchanged; issue #58). SamplingParams.guidance carries Flux's
+#      distilled guidance (issue #60).
 PROOF_VERSION = "1.4"
 
 # Majors of the proof contract this build understands. Refuse anything else up
@@ -142,6 +143,9 @@ class SamplingParams(BaseModel):
     scheduler: str
     steps: int = Field(gt=0)
     cfg: float
+    # Flux's distilled guidance (a template's ``$guidance`` slot, a FluxGuidance
+    # node). None: not used — SDXL has no such knob. Same field as argus-darkroom's.
+    guidance: float | None = Field(default=None, ge=0)
     clip_skip: int = 1
     width: int = Field(gt=0)
     height: int = Field(gt=0)

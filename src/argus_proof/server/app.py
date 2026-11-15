@@ -47,7 +47,7 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("Server requires: pip install argus-proof[server]") from exc
 
 from argus_cortex.server import WriteGuard, constant_refuse, env_flag
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from argus_proof import __version__
 from argus_proof.models import (
@@ -104,6 +104,10 @@ class RunRequest(BaseModel):
     directory *name* under ``$ARGUS_PROOF_EXPORTS_DIR``, never a path. When the
     export contains a ``references/`` subdir its images drive identity scoring
     (held out — they must not overlap the training set).
+
+    ``cfg`` / ``sampler`` / ``scheduler`` / ``guidance`` left out take the
+    checkpoint family's defaults (``workflow.sampling_defaults``): SDXL's
+    cfg 7 / dpmpp_2m / karras, or Flux's cfg 1 / euler / simple / guidance 3.5.
     """
 
     lora: str
@@ -114,13 +118,25 @@ class RunRequest(BaseModel):
     negative_prompt: str = ""
     seeds: list[int] = Field(default_factory=lambda: [1, 2, 3], min_length=1)
     steps: int = Field(default=25, gt=0)
-    cfg: float = 7.0
-    sampler: str = "dpmpp_2m"
-    scheduler: str = "karras"
+    cfg: float | None = None
+    sampler: str | None = None
+    scheduler: str | None = None
+    guidance: float | None = Field(default=None, ge=0)
     width: int = Field(default=1024, gt=0)
     height: int = Field(default=1024, gt=0)
     clip_skip: int = 1
     run_id: str | None = None
+
+    @model_validator(mode="after")
+    def _family_defaults(self) -> RunRequest:
+        from argus_proof.backends.workflow import sampling_defaults
+
+        for key, value in sampling_defaults(self.base_checkpoint).items():
+            # guidance is only defaulted when the client sent nothing at all for
+            # it: an explicit null keeps it off (e.g. a custom Flux template).
+            if getattr(self, key) is None and (key != "guidance" or key not in self.model_fields_set):
+                setattr(self, key, value)
+        return self
 
 
 def create_app(
@@ -348,6 +364,7 @@ def create_app(
                 scheduler=request.scheduler,
                 steps=request.steps,
                 cfg=request.cfg,
+                guidance=request.guidance,
                 clip_skip=request.clip_skip,
                 width=request.width,
                 height=request.height,
