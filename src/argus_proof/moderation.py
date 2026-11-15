@@ -24,9 +24,12 @@ gate (Thorn Safer / PhotoDNA), not an ML metric here.
 from __future__ import annotations
 
 import math
+import re
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, get_args, runtime_checkable
 
+import structlog
 from pydantic import BaseModel, Field
 
 from argus_proof.models import ProofError, ScorerProvenance
@@ -34,6 +37,8 @@ from argus_proof.scoring.scorers._util import clamp01, module_available, percent
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+logger = structlog.get_logger()
 
 # Proof's policy taxonomy — a compact, image-generation-relevant projection of a
 # Guard model's categories. Versioned so a report records which taxonomy it used.
@@ -55,7 +60,10 @@ Side = Literal["output", "input"]
 
 
 class ModerationError(ProofError):
-    """No policy detector is available (the ``[moderation]`` extra isn't installed)."""
+    """Moderation can't run as configured: no policy detector is available (the
+    ``[moderation]`` extra isn't installed), a Guard model can't be loaded (gated
+    checkpoint, no ``HF_TOKEN``), or a detector's output can't be read. Never
+    swallowed by the ensemble — it would read every item as safe."""
 
 
 @runtime_checkable
@@ -140,9 +148,10 @@ class PolicyModerator:
         for detector in detectors:  # already filtered to the available ones (probed once per run)
             try:
                 scores = getattr(detector, method)(item)
-            except NotImplementedError:
-                # An available detector whose model call is a stub must fail loud, not read
-                # as all-safe — a silent false-negative is the worst outcome for moderation.
+            except (NotImplementedError, ModerationError):
+                # A stubbed model call, or one that can't load / be read (a gated checkpoint
+                # with no HF_TOKEN), must fail loud, not read as all-safe — a silent
+                # false-negative is the worst outcome for moderation.
                 raise
             except Exception:  # noqa: BLE001 - one flaky detector must not abort the whole run
                 continue
@@ -284,24 +293,83 @@ _LLAMA_GUARD_MAP: dict[str, PolicyCategory] = {
 }
 
 
+# The text sent with an image to Llama Guard 3 Vision, which classifies a user
+# turn of text + image. Neutral, so a flag comes from the image.
+IMAGE_PROMPT = "Describe this image."
+
+# "safe", or "unsafe" then a line of comma-separated hazard codes ("S1,S10").
+_VERDICT_RE = re.compile(r"^\s*(safe|unsafe)\b(.*)$", re.IGNORECASE | re.DOTALL)
+_CODE_RE = re.compile(r"\bS\d{1,2}\b", re.IGNORECASE)
+
+# Llama Guard 3's child-exploitation code: deliberately unmapped (a separate CSAM
+# policy gate owns it), but a hit is logged rather than vanishing.
+_CSAM_CODE = "S4"
+
+
+def parse_guard_output(text: str) -> tuple[bool, list[str]]:
+    """Parse a Llama Guard 3 completion into ``(unsafe, hazard_codes)``.
+
+    ``"safe"`` -> ``(False, [])``; ``"unsafe\nS1,S10"`` -> ``(True, ["S1", "S10"])``.
+    Raises :class:`ModerationError` for anything else, so an unreadable verdict
+    fails loud instead of reading as safe.
+    """
+    match = _VERDICT_RE.match(text or "")
+    if match is None:
+        raise ModerationError(f"unreadable Llama Guard output: {text!r}")
+    if match.group(1).lower() == "safe":
+        return False, []
+    return True, [code.upper() for code in _CODE_RE.findall(match.group(2))]
+
+
 class _LlamaGuardBase:
-    """Shared lazy-load + hazard-code mapping for the Llama Guard adapters."""
+    """Shared lazy-load, verdict parsing and hazard-code mapping for the Llama
+    Guard 3 adapters.
+
+    ``_generate`` is the model call (heavy, lazy, not CI-run); everything after
+    it — parsing, mapping, fail-safe rules — is pure and unit-tested. Both
+    checkpoints are gated on Hugging Face: accept the license there and set
+    ``HF_TOKEN``. ``device`` goes through argus-cortex's ``resolve_device``
+    (``"auto"`` -> cuda / mps / cpu).
+    """
 
     version = "llama-guard-3"
     default_model_id = "meta-llama/Llama-Guard-3-8B"  # subclasses pick the right checkpoint
+    max_new_tokens = 20  # "unsafe\nS1,S2,..." is short
 
-    def __init__(self, model_id: str | None = None) -> None:
+    def __init__(self, model_id: str | None = None, device: str = "auto") -> None:
         self.model_id = model_id or self.default_model_id
-        self._pipe = None
+        self.device = device
+        self._model = None
+        self._processor = None
+        self._load_lock = threading.Lock()
 
     def is_available(self) -> bool:
         return module_available("transformers", "torch")
 
-    def _classify(self, **inputs) -> CategoryScores:  # noqa: ANN003 - transformers types need the extra
-        # A real adapter would run the Guard model and parse its "unsafe\nS1,S10"
-        # style output into hazard codes. Kept lazy + reasoned (not CI-run, like the
-        # heavy scorers); subclasses supply the modality-specific call.
+    def _generate(self, **inputs) -> tuple[str, float | None]:  # noqa: ANN003  # pragma: no cover
+        """Run the Guard model: the decoded verdict and P(unsafe) at the decision
+        token (``None`` if it can't be read). Subclasses implement it."""
         raise NotImplementedError
+
+    def _classify(self, **inputs) -> CategoryScores:  # noqa: ANN003
+        """Per-category unsafe scores for one input.
+
+        Safe -> ``{}``. Unsafe -> each mapped hazard code's category at the
+        verdict's confidence (P(unsafe) at the decision token, or 1.0 when the
+        model didn't expose it). Fail-safe: an unsafe verdict with no codes flags
+        every category, and an S4 (child exploitation) hit is logged — it belongs
+        to the separate CSAM gate, not this metric.
+        """
+        text, p_unsafe = self._generate(**inputs)
+        unsafe, codes = parse_guard_output(text)
+        if not unsafe:
+            return {}
+        confidence = 1.0 if p_unsafe is None or not math.isfinite(p_unsafe) else clamp01(p_unsafe)
+        if not codes:
+            return dict.fromkeys(CATEGORIES, confidence)
+        if _CSAM_CODE in codes:
+            logger.warning("moderation.csam_code", detector=self.model_id, codes=codes, note="route to the CSAM gate")
+        return self._codes_to_scores(codes, confidence)
 
     @staticmethod
     def _codes_to_scores(codes: Sequence[str], confidence: float = 1.0) -> CategoryScores:
@@ -312,33 +380,117 @@ class _LlamaGuardBase:
                 scores[category] = max(scores.get(category, 0.0), confidence)
         return scores
 
+    # -- the model call (needs the [moderation] extra; not CI-run) -------------
+
+    def _load(self, model_cls: str, processor_cls: str) -> None:  # pragma: no cover - needs the extra + weights
+        with self._load_lock:
+            if self._model is not None:
+                return
+            import torch
+            import transformers
+            from argus_cortex.backends import resolve_device
+
+            device = resolve_device(self.device)
+            dtype = torch.bfloat16 if device == "cuda" else torch.float32
+            try:
+                processor = getattr(transformers, processor_cls).from_pretrained(self.model_id)
+                model = getattr(transformers, model_cls).from_pretrained(self.model_id, torch_dtype=dtype)
+            except (OSError, ValueError, ImportError) as exc:
+                raise ModerationError(
+                    f"cannot load {self.model_id}: {exc} — the Llama Guard 3 checkpoints are gated: accept the "
+                    "license on huggingface.co and set HF_TOKEN"
+                ) from exc
+            self._model = model.to(device).eval()
+            self._processor = processor
+
+    def _run(self, inputs: dict, tokenizer) -> tuple[str, float | None]:  # noqa: ANN001  # pragma: no cover
+        import torch
+
+        prompt_len = inputs["input_ids"].shape[-1]
+        with torch.inference_mode():
+            out = self._model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,
+                output_scores=True,
+                return_dict_in_generate=True,
+                pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
+            )
+        generated = out.sequences[0, prompt_len:]
+        text = tokenizer.decode(generated, skip_special_tokens=True)
+        return text, _decision_probability(out.scores, generated, tokenizer)
+
+
+def _decision_probability(scores, generated, tokenizer) -> float | None:  # noqa: ANN001  # pragma: no cover
+    """P(unsafe) / (P(unsafe) + P(safe)) at the first non-blank generated token,
+    the verdict token (Llama Guard 3 emits a blank line first). ``None`` when the
+    verdict words don't map to distinct single first tokens."""
+    import torch
+
+    unsafe_ids = tokenizer.encode("unsafe", add_special_tokens=False)
+    safe_ids = tokenizer.encode("safe", add_special_tokens=False)
+    if not unsafe_ids or not safe_ids or unsafe_ids[0] == safe_ids[0]:
+        return None
+    for step, token in enumerate(generated.tolist()):
+        if step >= len(scores):
+            break
+        if tokenizer.decode([token], skip_special_tokens=True).strip():
+            probs = torch.softmax(scores[step][0].float(), dim=-1)
+            p_unsafe, p_safe = float(probs[unsafe_ids[0]]), float(probs[safe_ids[0]])
+            total = p_unsafe + p_safe
+            return p_unsafe / total if total > 0 else None
+    return None
+
 
 class LlamaGuardImageDetector(_LlamaGuardBase):
-    """Image policy moderation via Llama Guard 3 Vision (``[moderation]`` extra)."""
+    """Image policy moderation via Llama Guard 3 Vision (``[moderation]`` extra).
+
+    Sends each image with the neutral :data:`IMAGE_PROMPT` as one user turn. The
+    11B checkpoint needs ~22 GB in bf16.
+    """
 
     name = "llama-guard-vision"
     default_model_id = "meta-llama/Llama-Guard-3-11B-Vision"  # image needs the Vision checkpoint
 
-    def moderate_image(self, image_path: Path) -> CategoryScores | None:  # pragma: no cover - needs the extra
+    def moderate_image(self, image_path: Path) -> CategoryScores | None:
         if not self.is_available():
             raise ModerationError("policy moderation requires: pip install 'argus-proof[moderation]'")
         return self._classify(image_path=image_path)
 
+    def _generate(self, image_path: Path) -> tuple[str, float | None]:  # pragma: no cover - needs the extra
+        from PIL import Image
+
+        self._load("MllamaForConditionalGeneration", "AutoProcessor")
+        with Image.open(image_path) as img:
+            image = img.convert("RGB")
+        conversation = [{"role": "user", "content": [{"type": "text", "text": IMAGE_PROMPT}, {"type": "image"}]}]
+        prompt = self._processor.apply_chat_template(conversation)
+        inputs = self._processor(text=prompt, images=image, return_tensors="pt").to(self._model.device)
+        return self._run(inputs, self._processor.tokenizer)
+
 
 class LlamaGuardTextDetector(_LlamaGuardBase):
-    """Text (prompt/caption) policy moderation via Llama Guard 3 (``[moderation]`` extra)."""
+    """Text (prompt/caption) policy moderation via Llama Guard 3 (``[moderation]``
+    extra). Classifies the text as a user turn. The 8B checkpoint needs ~16 GB in bf16."""
 
     name = "llama-guard-text"
     default_model_id = "meta-llama/Llama-Guard-3-8B"  # text-only Guard model, not the Vision one
 
-    def moderate_text(self, text: str) -> CategoryScores | None:  # pragma: no cover - needs the extra
+    def moderate_text(self, text: str) -> CategoryScores | None:
         if not self.is_available():
             raise ModerationError("policy moderation requires: pip install 'argus-proof[moderation]'")
         return self._classify(text=text)
 
+    def _generate(self, text: str) -> tuple[str, float | None]:  # pragma: no cover - needs the extra
+        self._load("AutoModelForCausalLM", "AutoTokenizer")
+        conversation = [{"role": "user", "content": text}]
+        input_ids = self._processor.apply_chat_template(conversation, return_tensors="pt").to(self._model.device)
+        return self._run({"input_ids": input_ids}, self._processor)
+
 
 __all__ = [
     "CATEGORIES",
+    "IMAGE_PROMPT",
     "TAXONOMY_VERSION",
     "CategoryScores",
     "CategoryTail",
@@ -353,4 +505,5 @@ __all__ = [
     "category_tails",
     "moderate_images",
     "moderate_texts",
+    "parse_guard_output",
 ]
