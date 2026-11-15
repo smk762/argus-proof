@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other family, unless `PROOF_WORKFLOW_TEMPLATE` overrides both. `/run/stream` and
   `argus-proof run` take `guidance`, and leaving out `cfg`/`sampler`/`scheduler`/`guidance`
   gets the family's defaults (Flux: cfg 1, `euler`/`simple`, guidance 3.5).
+- **Devmode purge** (#59): `POST /purge/{run_id}` deletes one run's report and run dir,
+  and `POST /purge` deletes all of them. They're registered only with `ARGUS_PROOF_DEVMODE=1`
+  (`serve --devmode`) and need a `{"confirm": "purge"}` body. A run still generating gets
+  `409`, and read-only mode refuses them. The HITL review and refinement go with the report.
+  `/health` gains `devmode`, and lists `purge` in `capabilities` when the routes work.
+  `/run/stream` now also refuses (`409`) a `run_id` that is already generating.
 - **Llama Guard 3 moderation adapters** (#67): `LlamaGuardImageDetector`
   (Llama-Guard-3-11B-Vision) and `LlamaGuardTextDetector` (Llama-Guard-3-8B) now run
   the model instead of raising `NotImplementedError`. They lazy-load, place the model

@@ -460,6 +460,11 @@ def serve(
         "--read-only/--no-read-only",
         help="Replay/demo mode: serve stored reports but 403 all live eval + writes (default: $ARGUS_PROOF_READ_ONLY).",
     ),
+    devmode: bool | None = Option(
+        None,
+        "--devmode/--no-devmode",
+        help="Register the /purge routes that delete runs and their reports (default: $ARGUS_PROOF_DEVMODE).",
+    ),
 ) -> None:
     """Start the argus-proof micro-server (FastAPI) on :8104."""
     try:
@@ -471,7 +476,7 @@ def serve(
     from argus_proof.server import create_app
 
     structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.INFO))
-    application = create_app(cors=cors, read_only=read_only)
+    application = create_app(cors=cors, read_only=read_only, devmode=devmode)
     uvicorn.run(application, host=host, port=port)
 
 

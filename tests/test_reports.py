@@ -61,6 +61,22 @@ def test_list_skips_unreadable(tmp_path) -> None:
     assert [s.run_id for s in store.list()] == ["run-1"]
 
 
+def test_delete_removes_report_and_review_cannot_resurrect_it(tmp_path) -> None:
+    store = ReportStore(tmp_path)
+    store.save(_report("run-1"))
+    store.save(_report("run-2"))
+    assert store.run_ids() == ["run-1", "run-2"]
+    assert store.delete("run-1") is True
+    assert store.delete("run-1") is False
+    assert store.run_ids() == ["run-2"]
+    # a review after the purge finds no report instead of writing it back
+    with pytest.raises(FileNotFoundError):
+        store.review("run-1", HitlRequest(updates=[HitlImageUpdate(image_id="a", hitl_rating=5)]))
+    assert not (tmp_path / "run-1.json").exists()
+    with pytest.raises(ProofError):
+        store.delete("../x")
+
+
 def test_concurrent_reviews_do_not_lose_updates(tmp_path) -> None:
     # Issue #34: two raters review different images at the same time; without
     # the per-run update lock one read-modify-write clobbers the other.
