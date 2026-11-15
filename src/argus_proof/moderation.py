@@ -145,6 +145,7 @@ class PolicyModerator:
     @staticmethod
     def _combine(detectors: Sequence, method: str, item) -> CategoryScores:  # noqa: ANN001, ANN205
         merged: CategoryScores = {}
+        failures: list[str] = []
         for detector in detectors:  # already filtered to the available ones (probed once per run)
             try:
                 scores = getattr(detector, method)(item)
@@ -153,7 +154,8 @@ class PolicyModerator:
                 # with no HF_TOKEN), must fail loud, not read as all-safe — a silent
                 # false-negative is the worst outcome for moderation.
                 raise
-            except Exception:  # noqa: BLE001 - one flaky detector must not abort the whole run
+            except Exception as exc:  # noqa: BLE001 - one flaky detector must not abort the whole run
+                failures.append(f"{getattr(detector, 'name', type(detector).__name__)}: {exc!r}")
                 continue
             if not scores:
                 continue
@@ -163,6 +165,10 @@ class PolicyModerator:
                 # as maximally unsafe (fail-safe) rather than let NaN read as 0.0/safe.
                 clamped = clamp01(prob_f) if math.isfinite(prob_f) else 1.0
                 merged[category] = max(merged.get(category, 0.0), clamped)  # most-unsafe wins
+        if detectors and len(failures) == len(detectors):
+            # Every detector failed (e.g. a CUDA OOM loading the Guard model): no
+            # verdict at all must not read as safe.
+            raise ModerationError(f"every policy detector failed: {'; '.join(failures)}")
         return merged
 
 

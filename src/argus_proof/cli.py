@@ -144,6 +144,9 @@ def run(
     guidance: float | None = Option(
         None, min=0, help="Flux guidance, the template's $guidance slot (default: Flux 3.5)"
     ),
+    no_guidance: bool = Option(
+        False, "--no-guidance", help="Send no guidance, even for a Flux checkpoint (a template with no $guidance slot)"
+    ),
     width: int = Option(1024, min=64),
     height: int = Option(1024, min=64),
     clip_skip: int = Option(1),
@@ -163,6 +166,9 @@ def run(
     if not _re.match(_RUN_PREFIX_RE, prefix):
         typer.echo(f"invalid --run-prefix {prefix!r}: use letters, digits, '.', '_' or '-'", err=True)
         raise typer.Exit(2)
+    if no_guidance and guidance is not None:
+        typer.echo("--guidance and --no-guidance are mutually exclusive", err=True)
+        raise typer.Exit(2)
 
     base_prompts = [prompt] if prompt else read_export_prompts(export)
     defaults = sampling_defaults(checkpoint)  # by the checkpoint's family folder
@@ -176,7 +182,7 @@ def run(
             scheduler=scheduler if scheduler is not None else defaults["scheduler"],
             steps=steps,
             cfg=cfg if cfg is not None else defaults["cfg"],
-            guidance=guidance if guidance is not None else defaults["guidance"],
+            guidance=None if no_guidance else guidance if guidance is not None else defaults["guidance"],
             clip_skip=clip_skip,
             width=width,
             height=height,

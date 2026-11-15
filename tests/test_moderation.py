@@ -308,6 +308,10 @@ def test_a_model_that_cannot_load_aborts_the_ensemble() -> None:
     mod = PolicyModerator(text_detectors=[Flaky("safe"), _ScriptedText("unsafe\nS1", 0.6)])
     assert mod.moderate_texts(["x"]) == [{"violence": 0.6}]
 
+    # ...but when every detector fails there is no verdict, which must not read as safe
+    with pytest.raises(ModerationError, match="every policy detector failed"):
+        PolicyModerator(text_detectors=[Flaky("safe")]).moderate_texts(["x"])
+
 
 def test_adapters_take_a_device() -> None:
     assert LlamaGuardTextDetector(device="cpu").device == "cpu"

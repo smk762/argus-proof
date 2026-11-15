@@ -91,6 +91,11 @@ ENV_DEVMODE = "ARGUS_PROOF_DEVMODE"
 # The body a /purge request must carry (same as argus-darkroom's).
 _PURGE_CONFIRM = {"confirm": "purge"}
 
+# Claimed in the active-run set while ``POST /purge`` runs, so no run starts
+# mid-purge without holding the lock (and blocking the event loop) throughout.
+# Not a valid run id (fails _SAFE_ID), so it can't collide with one.
+_PURGING_ALL = "*purge-all*"
+
 # run_id / image_id / export names become path segments under a fixed root —
 # allow only a strict filename charset so traversal is impossible by construction.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -231,7 +236,7 @@ def create_app(
 
     def _claim_run(run_id: str) -> None:
         with active_lock:
-            if run_id in active_runs:
+            if run_id in active_runs or _PURGING_ALL in active_runs:
                 raise HTTPException(status_code=409, detail=f"run {run_id!r} is in progress")
             active_runs.add(run_id)
 
@@ -425,15 +430,23 @@ def create_app(
 
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
+        # Exactly one side releases the claim: work() once the body has started,
+        # else the response's background task (the body never ran). A release
+        # that isn't tied to this claim could free a later claim on the same id
+        # (a purge, or a new stream) or free this one while work() still runs.
+        started = False
 
         def emit(frame: dict | None) -> None:
             loop.call_soon_threadsafe(queue.put_nowait, frame)
 
         def work() -> None:
+            errored = False  # the backend already streamed an error frame
             try:
                 backend = backend_from_env()
 
                 def on_progress(event) -> None:  # noqa: ANN001 - ProgressEvent
+                    nonlocal errored
+                    errored = errored or event.type == "error"
                     emit(event.model_dump(exclude_none=True))
 
                 result = backend.generate(spec, run_dir, progress=on_progress)
@@ -442,12 +455,15 @@ def create_app(
                 store.save(report)
                 emit(CompleteFrame(run_id=run_id, report=summarise_report(report)).model_dump(mode="json"))
             except (EvaluateError, ProofError, ValueError) as exc:
-                emit(ProgressEvent(run_id=run_id, type="error", message=str(exc)).model_dump(exclude_none=True))
+                if not errored:
+                    emit(ProgressEvent(run_id=run_id, type="error", message=str(exc)).model_dump(exclude_none=True))
             finally:
                 _release_run(run_id)  # before the sentinel: a client that saw the end can purge
                 emit(None)  # sentinel: stream is over
 
         async def stream():
+            nonlocal started
+            started = True
             worker = loop.run_in_executor(None, work)
             try:
                 while True:
@@ -458,10 +474,14 @@ def create_app(
             finally:
                 await worker
 
-        # Also released after the response, in case the body never started
-        # (a client gone before the first frame) and so work() never ran.
+        def release_if_unstarted() -> None:
+            # The body never started (a client gone before the first frame), so
+            # work() never ran and won't release.
+            if not started:
+                _release_run(run_id)
+
         return StreamingResponse(
-            stream(), media_type="application/x-ndjson", background=BackgroundTask(_release_run, run_id)
+            stream(), media_type="application/x-ndjson", background=BackgroundTask(release_if_unstarted)
         )
 
     @app.get("/reports")
@@ -625,21 +645,27 @@ def create_app(
             await _require_confirm(request)
 
             def purge_everything() -> dict[str, int]:
-                with active_lock:
-                    if active_runs:
-                        raise HTTPException(status_code=409, detail="a run is in progress")
-                    # Hold the lock throughout so no run starts mid-purge.
-                    removed = {"reports": 0, "run_dirs": 0}
-                    for run_id in store.run_ids():
-                        if _SAFE_ID.match(run_id) and store.delete(run_id):
-                            removed["reports"] += 1
-                    root = _runs_root()
-                    if root.is_dir():
-                        for path in sorted(root.iterdir()):
-                            if _SAFE_ID.match(path.name) and _remove_run_dir(path.name):
-                                removed["run_dirs"] += 1
-                    return removed
+                removed = {"reports": 0, "run_dirs": 0}
+                for run_id in store.run_ids():
+                    if _SAFE_ID.match(run_id) and store.delete(run_id):
+                        removed["reports"] += 1
+                root = _runs_root()
+                if root.is_dir():
+                    for path in sorted(root.iterdir()):
+                        if _SAFE_ID.match(path.name) and _remove_run_dir(path.name):
+                            removed["run_dirs"] += 1
+                return removed
 
-            return await run_in_threadpool(purge_everything)
+            # Claim the whole store rather than hold active_lock across the
+            # deletes: _claim_run/_release_run take that lock on the event loop,
+            # which would stall every request until the purge finished.
+            with active_lock:
+                if active_runs:
+                    raise HTTPException(status_code=409, detail="a run is in progress")
+                active_runs.add(_PURGING_ALL)
+            try:
+                return await run_in_threadpool(purge_everything)
+            finally:
+                _release_run(_PURGING_ALL)
 
     return app
