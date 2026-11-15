@@ -4,7 +4,7 @@ on:
     branches: [dev, main]
 jobs:
   docs:
-    uses: smk762/argus-ci/.github/workflows/docs-check.yml@0a16aa1b0c1a369cc7006be07c892e0a4cf28e9e
+    uses: smk762/argus-ci/.github/workflows/docs-check.yml@3e1b8b5666ca6c80714178005c7003aebf4a61ec
     with:
       cli-module: argus_proof.cli
       cli-name: argus-proof
