@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   ci:
-    uses: smk762/argus-ci/.github/workflows/python-ci.yml@0a16aa1
+    uses: smk762/argus-ci/.github/workflows/python-ci.yml@0a16aa1b0c1a369cc7006be07c892e0a4cf28e9e
     with:
       ruff-version: "0.15.16"
       test-extras: "dev,server,cli"
