@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `cortex-released` dispatch argus-cortex's release sends: only the image job runs,
   rebuilding the newest final `v*` tag without cache and republishing its tags, so the
   image picks up the cortex its pyproject range now resolves to.
+- **`GET /report/{run_id}/manifest`** (#57) serves the `RunManifest` behind a
+  report (checkpoint, VAE, LoRAs, sampling, prompt, seeds), so studio can prefill
+  `/darkroom` from a passed run (argus-studio#125). It is `404` when there is no report,
+  `410 Gone` when the report was kept but its run dir was pruned, and `400` for an
+  unreadable manifest or one belonging to another run. `GET /health` gains a
+  `capabilities` list (`["report_manifest"]`) so a client can detect the route.
 
 ### Fixed
 - README drift (#65): the policy-moderation section now states the Llama Guard
