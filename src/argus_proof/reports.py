@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover - non-POSIX dev machines lose locking, n
 
 from pydantic import BaseModel, Field
 
-from argus_proof.models import EvalReport, GateConfig, ProofError, RejectReason
+from argus_proof.models import EvalReport, GateConfig, ProofError, RejectReason, ReportSummary
 from argus_proof.scoring.summary import summarise
 
 if TYPE_CHECKING:
@@ -37,27 +37,6 @@ if TYPE_CHECKING:
 # deployment (compose mounts a volume here) with ARGUS_PROOF_REPORTS_DIR.
 ENV_REPORTS_DIR = "ARGUS_PROOF_REPORTS_DIR"
 DEFAULT_REPORTS_DIR = "reports"
-
-
-class ReportSummary(BaseModel):
-    """A one-line digest of a stored report for the /proof run browser.
-
-    Everything the list view needs without shipping every per-image row: the
-    verdict, the group-collapsed pass-rate, and how many groups still await
-    human review.
-    """
-
-    run_id: str
-    passed: bool
-    pending: bool
-    pass_rate: float
-    n_images: int
-    n_groups: int | None = None
-    n_needs_hitl: int = 0
-    # How many images carry a second-pass refinement (issue #35's rollup), so the
-    # run browser can show refinement coverage without shipping per-image rows.
-    n_refined: int = 0
-    created_at: str | None = None
 
 
 class HitlImageUpdate(BaseModel):

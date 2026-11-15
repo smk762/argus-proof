@@ -134,7 +134,11 @@
       "required": [
         "n_images",
         "n_passed",
-        "pass_rate"
+        "pass_rate",
+        "means",
+        "n_groups",
+        "n_needs_hitl",
+        "diversity"
       ],
       "title": "AggregateScores",
       "type": "object"
@@ -180,6 +184,31 @@
       "title": "BackendCapabilities",
       "type": "object"
     },
+    "CompleteFrame": {
+      "description": "The run is scored and its report stored; ``report`` is its digest.",
+      "properties": {
+        "report": {
+          "$ref": "#/$defs/ReportSummary"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "complete",
+          "default": "complete",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "type",
+        "report"
+      ],
+      "title": "CompleteFrame",
+      "type": "object"
+    },
     "EvalReport": {
       "description": "Scored evaluation of a generation run: per-image + aggregate + verdict.\n\nLinks to its :class:`RunManifest` by ``run_id`` rather than embedding it, so\nthe run dir stays the single source of truth for generation params.",
       "properties": {
@@ -206,7 +235,7 @@
           "type": "array"
         },
         "proof_version": {
-          "default": "1.3",
+          "default": "1.4",
           "title": "Proof Version",
           "type": "string"
         },
@@ -226,9 +255,13 @@
         }
       },
       "required": [
+        "proof_version",
         "run_id",
+        "images",
         "aggregate",
-        "verdict"
+        "scorers",
+        "verdict",
+        "created_at"
       ],
       "title": "EvalReport",
       "type": "object"
@@ -276,7 +309,10 @@
       },
       "required": [
         "name",
-        "passed"
+        "passed",
+        "actual",
+        "threshold",
+        "detail"
       ],
       "title": "GateCheck",
       "type": "object"
@@ -339,7 +375,8 @@
         }
       },
       "required": [
-        "passed"
+        "passed",
+        "checks"
       ],
       "title": "GateResult",
       "type": "object"
@@ -569,7 +606,8 @@
         "n_images",
         "seconds_per_image",
         "est_gpu_seconds",
-        "est_gpu_hours"
+        "est_gpu_hours",
+        "axes"
       ],
       "title": "GridEstimate",
       "type": "object"
@@ -594,7 +632,8 @@
       },
       "required": [
         "run_id_prefix",
-        "estimate"
+        "estimate",
+        "specs"
       ],
       "title": "GridPlan",
       "type": "object"
@@ -684,7 +723,14 @@
       },
       "required": [
         "image_id",
-        "seed"
+        "seed",
+        "metrics",
+        "hitl_rating",
+        "hitl_rater",
+        "reject_reasons",
+        "passed",
+        "duplicate_group",
+        "refinement"
       ],
       "title": "ImageScores",
       "type": "object"
@@ -710,7 +756,8 @@
       },
       "required": [
         "name",
-        "sha256"
+        "sha256",
+        "weight"
       ],
       "title": "LoRARef",
       "type": "object"
@@ -798,6 +845,13 @@
           "title": "Safety"
         }
       },
+      "required": [
+        "identity",
+        "clip_score",
+        "aesthetic",
+        "preference",
+        "safety"
+      ],
       "title": "MetricScores",
       "type": "object"
     },
@@ -943,7 +997,9 @@
         }
       },
       "required": [
-        "rank"
+        "rank",
+        "notes",
+        "rater"
       ],
       "title": "Refinement",
       "type": "object"
@@ -959,7 +1015,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.3",
+          "default": "1.4",
           "title": "Proof Version",
           "type": "string"
         },
@@ -971,6 +1027,11 @@
           "type": "array"
         }
       },
+      "required": [
+        "proof_version",
+        "manifests",
+        "records"
+      ],
       "title": "RejectArchive",
       "type": "object"
     },
@@ -1073,9 +1134,85 @@
       },
       "required": [
         "run_id",
-        "seed"
+        "seed",
+        "metrics",
+        "hitl_rating",
+        "reasons",
+        "rater_id"
       ],
       "title": "RejectRecord",
+      "type": "object"
+    },
+    "ReportSummary": {
+      "description": "A one-line digest of a stored report for the /proof run browser.\n\nEverything the list view needs without shipping every per-image row: the\nverdict, the group-collapsed pass-rate, and how many groups still await\nhuman review. Sent by ``GET /reports`` and the ``complete`` stream frame.",
+      "properties": {
+        "created_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created At"
+        },
+        "n_groups": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "N Groups"
+        },
+        "n_images": {
+          "title": "N Images",
+          "type": "integer"
+        },
+        "n_needs_hitl": {
+          "default": 0,
+          "title": "N Needs Hitl",
+          "type": "integer"
+        },
+        "n_refined": {
+          "default": 0,
+          "title": "N Refined",
+          "type": "integer"
+        },
+        "pass_rate": {
+          "title": "Pass Rate",
+          "type": "number"
+        },
+        "passed": {
+          "title": "Passed",
+          "type": "boolean"
+        },
+        "pending": {
+          "title": "Pending",
+          "type": "boolean"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "passed",
+        "pending",
+        "pass_rate",
+        "n_images",
+        "n_groups",
+        "n_needs_hitl",
+        "n_refined",
+        "created_at"
+      ],
+      "title": "ReportSummary",
       "type": "object"
     },
     "RunManifest": {
@@ -1121,7 +1258,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.3",
+          "default": "1.4",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1189,13 +1326,21 @@
         }
       },
       "required": [
+        "proof_version",
         "run_id",
         "base_checkpoint",
+        "vae",
+        "loras",
         "sampling",
         "prompt",
+        "negative_prompt",
         "seeds",
         "engine",
-        "engine_version"
+        "engine_version",
+        "source_manifest",
+        "source_manifest_version",
+        "training_run_id",
+        "created_at"
       ],
       "title": "RunManifest",
       "type": "object"
@@ -1297,6 +1442,33 @@
       "title": "RunSpec",
       "type": "object"
     },
+    "RunStreamFrame": {
+      "description": "One NDJSON line of ``POST /run/stream``, discriminated by ``type``.\n\nGeneration streams :class:`ProgressEvent` frames (``start`` / ``progress`` /\n``image`` / ``done``), then a :class:`ScoringFrame`, then either a\n:class:`CompleteFrame` or a ``ProgressEvent`` of type ``error``.",
+      "discriminator": {
+        "mapping": {
+          "complete": "#/$defs/CompleteFrame",
+          "done": "#/$defs/ProgressEvent",
+          "error": "#/$defs/ProgressEvent",
+          "image": "#/$defs/ProgressEvent",
+          "progress": "#/$defs/ProgressEvent",
+          "scoring": "#/$defs/ScoringFrame",
+          "start": "#/$defs/ProgressEvent"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ProgressEvent"
+        },
+        {
+          "$ref": "#/$defs/ScoringFrame"
+        },
+        {
+          "$ref": "#/$defs/CompleteFrame"
+        }
+      ],
+      "title": "RunStreamFrame"
+    },
     "SamplingParams": {
       "description": "The sampler knobs that, with the seed-set, make a run reproducible.",
       "properties": {
@@ -1382,9 +1554,37 @@
       },
       "required": [
         "name",
-        "metric"
+        "metric",
+        "version",
+        "model"
       ],
       "title": "ScorerProvenance",
+      "type": "object"
+    },
+    "ScoringFrame": {
+      "description": "Generation finished; scoring ``n_images`` images has started.",
+      "properties": {
+        "n_images": {
+          "title": "N Images",
+          "type": "integer"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "scoring",
+          "default": "scoring",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "type",
+        "n_images"
+      ],
+      "title": "ScoringFrame",
       "type": "object"
     },
     "Verdict": {
@@ -1408,7 +1608,9 @@
         }
       },
       "required": [
-        "passed"
+        "passed",
+        "pending",
+        "reasons"
       ],
       "title": "Verdict",
       "type": "object"

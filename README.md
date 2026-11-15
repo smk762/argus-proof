@@ -71,7 +71,7 @@ GET  /health                            liveness + version + read_only flag + ca
 GET  /exports                           curator export dirs available to evaluate against
 GET  /models                            checkpoints + LoRAs under $PROOF_MODELS_DIR
 GET  /scorers                           scorers a run applies + whether each is installed
-POST /run/stream                        generate + score + store one run (NDJSON progress)
+POST /run/stream                        generate + score + store one run (NDJSON RunStreamFrame lines)
 GET  /reports                           stored report digests (run browser)
 GET  /report/{run_id}                   full EvalReport            PUT to store one
 GET  /report/{run_id}/manifest          the RunManifest behind a report (410 if its run dir is gone)
