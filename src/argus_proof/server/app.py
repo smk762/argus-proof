@@ -2,7 +2,7 @@
 
 Routes:
 
-    GET  /health                          -> {status, service, version, read_only}
+    GET  /health                          -> {status, service, version, read_only, capabilities}
     GET  /exports                         -> {exports: [...]}  (curator export dirs to evaluate against)
     GET  /models                          -> {checkpoints: [...], loras: [...]}  (engine-loadable names)
     GET  /scorers                         -> {scorers: [{metric, name, available}]}  (installed-scorer probe)
@@ -10,6 +10,7 @@ Routes:
     GET  /reports                         -> {reports: [ReportSummary, ...]}  (run browser)
     GET  /report/{run_id}                 -> EvalReport
     PUT  /report/{run_id}                 -> EvalReport   (store/overwrite a scored report)
+    GET  /report/{run_id}/manifest        -> RunManifest  (the validated setup; 410 if the run dir is gone)
     GET  /report/{run_id}/refined         -> {images: [...]}  (passing subset, refined order first)
     GET  /report/{run_id}/image/{image_id} -> image bytes (from the run dir; ids, never paths)
     GET  /report/{run_id}/image_at/{index} -> image bytes (by report position; seed-free blind-review URL)
@@ -49,7 +50,7 @@ from argus_cortex.server import WriteGuard, constant_refuse, env_flag
 from pydantic import BaseModel, Field
 
 from argus_proof import __version__
-from argus_proof.models import EvalReport, LoRASpec, ProofError, RunSpec, SamplingParams
+from argus_proof.models import EvalReport, LoRASpec, ProofError, RunManifest, RunSpec, SamplingParams
 from argus_proof.refinement import RefinementRequest, refined_ranking
 from argus_proof.reports import HitlRequest, ReportStore, ReportSummary, summarise_report
 
@@ -75,6 +76,11 @@ def _require_safe(value: str, label: str) -> str:
         raise HTTPException(status_code=400, detail=f"invalid {label} {value!r}")
     return value
 
+
+# Optional routes a client can't infer from ``version`` alone, advertised on
+# ``GET /health`` so a consumer (argus-studio) can tell an older proof that
+# lacks a route from a run that lacks the data. Append-only.
+CAPABILITIES = ("report_manifest",)
 
 # The message a refused write carries in read-only mode.
 _READ_ONLY_REFUSAL = "argus-proof is in read-only (replay) mode; writes and live evaluation are disabled"
@@ -128,7 +134,8 @@ def create_app(
     compute. Omitted (``None``) it falls back to ``$ARGUS_PROOF_READ_ONLY``;
     ``GET /health`` reports the resolved flag.
     """
-    from argus_proof.evaluate import runs_root
+    from argus_proof.backends.base import MANIFEST_NAME
+    from argus_proof.evaluate import EvaluateError, load_manifest, runs_root
 
     read_only = env_flag(ENV_READ_ONLY) if read_only is None else read_only
 
@@ -210,11 +217,18 @@ def create_app(
         return path
 
     @app.get("/health")
-    async def health() -> dict[str, str | bool]:
+    async def health() -> dict[str, str | bool | list[str]]:
         """Liveness + capability probe. ``read_only`` tells the UI whether live
         evaluation is available — a replay/demo host reports ``True`` and the
-        frontend hides the "run evaluation" action (argus-studio#59)."""
-        return {"status": "ok", "service": "argus-proof", "version": __version__, "read_only": read_only}
+        frontend hides the "run evaluation" action (argus-studio#59).
+        ``capabilities`` lists optional routes (see :data:`CAPABILITIES`)."""
+        return {
+            "status": "ok",
+            "service": "argus-proof",
+            "version": __version__,
+            "read_only": read_only,
+            "capabilities": list(CAPABILITIES),
+        }
 
     @app.get("/exports")
     async def list_exports() -> dict[str, list[dict]]:
@@ -393,6 +407,38 @@ def create_app(
         except ProofError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return report
+
+    @app.get("/report/{run_id}/manifest")
+    def get_manifest(run_id: str) -> RunManifest:
+        """The :class:`RunManifest` behind a report — checkpoint, VAE, LoRAs (each
+        SHA256-pinned), sampling, prompt and seeds — so a client can carry a
+        validated setup forward (e.g. studio's proof -> darkroom handoff).
+
+        The report is the anchor: no report -> ``404``. The manifest lives in the
+        run dir, which can be pruned while the report is kept; a report whose
+        manifest is gone -> ``410 Gone``, so a client can tell "never existed"
+        from "existed, setup no longer recoverable". Sync ``def``: file I/O runs
+        in the threadpool.
+        """
+        _require_safe(run_id, "run_id")
+        _load_report(run_id)
+        run_dir = _runs_root() / run_id
+        if not (run_dir / MANIFEST_NAME).is_file():
+            raise HTTPException(
+                status_code=410,
+                detail=f"run {run_id!r} has a report but its run directory (and manifest) is no longer available",
+            )
+        try:
+            manifest = load_manifest(run_dir)
+        except EvaluateError as exc:
+            raise HTTPException(status_code=400, detail=f"unreadable manifest for run {run_id!r}") from exc
+        if manifest.run_id != run_id:
+            # Never hand a client another run's setup under this run's name.
+            raise HTTPException(
+                status_code=400,
+                detail=f"manifest in run dir {run_id!r} is for run {manifest.run_id!r}",
+            )
+        return manifest
 
     @app.get("/report/{run_id}/refined")
     async def get_refined(run_id: str) -> dict:

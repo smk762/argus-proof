@@ -61,25 +61,33 @@ argus-proof schema [--output PATH] [--check]
 ```bash
 argus-proof serve --port 8104 --cors   # peer to lens :8100, curator :8101, quarry :8102, forge :8103
 argus-proof serve --read-only          # replay/demo mode: serve stored reports, 403 live eval + writes
-curl -s localhost:8104/health          # {"status":"ok","service":"argus-proof","version":"...","read_only":false}
+curl -s localhost:8104/health          # {"status":"ok","service":"argus-proof","version":"...","read_only":false,"capabilities":["report_manifest"]}
 ```
 
 Routes (the backend of the argus-studio `/proof` view):
 
 ```
-GET  /health                            liveness + version + read_only flag
+GET  /health                            liveness + version + read_only flag + capabilities
 GET  /exports                           curator export dirs available to evaluate against
 GET  /models                            checkpoints + LoRAs under $PROOF_MODELS_DIR
 GET  /scorers                           scorers a run applies + whether each is installed
 POST /run/stream                        generate + score + store one run (NDJSON progress)
 GET  /reports                           stored report digests (run browser)
 GET  /report/{run_id}                   full EvalReport            PUT to store one
+GET  /report/{run_id}/manifest          the RunManifest behind a report (410 if its run dir is gone)
 GET  /report/{run_id}/refined           passing subset, refined ranks first
 GET  /report/{run_id}/image/{image_id}  a generated sample (ids only — no path input)
 GET  /report/{run_id}/image_at/{index}  sample by position — seed-free URL for blind review
 POST /report/{run_id}/hitl              apply a review; recomputes pass-rate + verdict
 POST /report/{run_id}/refine            second-pass re-rank (rank: null retracts)
 ```
+
+`/report/{run_id}/manifest` serves the SHA256-pinned setup (checkpoint, VAE,
+LoRAs, sampling, prompt, seeds) so a client can carry a passed run forward, e.g.
+studio's proof → darkroom handoff. It is `404` when there is no report and `410
+Gone` when the report was kept but the run dir was pruned. `/health` lists
+`report_manifest` in `capabilities`, so a client can tell an older proof (route
+absent) from a run with no manifest.
 
 Concurrent reviews of the same run are serialised with a per-run file lock, so
 a streaming run's report write and a reviewer's HITL save can't drop updates.

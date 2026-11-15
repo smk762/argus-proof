@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -47,6 +49,7 @@ def test_health(client: TestClient) -> None:
     assert body["service"] == "argus-proof"
     assert body["version"] == __version__
     assert body["read_only"] is False  # live host: eval available
+    assert "report_manifest" in body["capabilities"]  # GET /report/{run_id}/manifest
 
 
 def test_health_reports_read_only(read_only_client: TestClient) -> None:
@@ -349,6 +352,68 @@ def test_image_at_serves_by_index(suite_client: TestClient, monkeypatch) -> None
     report["images"][0]["image_id"] = "../../../../etc/passwd"
     assert suite_client.put(f"/report/{run_id}", json=report).status_code == 200
     assert suite_client.get(f"/report/{run_id}/image_at/0").status_code == 400
+
+
+def test_report_manifest_serves_the_run_setup(suite_client: TestClient, suite_dirs, monkeypatch) -> None:  # noqa: ANN001
+    """Studio's proof -> darkroom handoff reads the validated setup from here."""
+    _fake_backend(monkeypatch)
+    frames = _stream_frames(
+        suite_client,
+        {"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "export": "rufina", "seeds": [1, 2]},
+    )
+    run_id = frames[-1]["run_id"]
+
+    resp = suite_client.get(f"/report/{run_id}/manifest")
+    assert resp.status_code == 200
+    body = resp.json()
+    on_disk = json.loads((suite_dirs["runs"] / run_id / "manifest.json").read_text(encoding="utf-8"))
+    assert body == on_disk
+    assert body["run_id"] == run_id
+    assert body["seeds"] == [1, 2]
+    # ModelRef / LoRARef / SamplingParams field names — what studio prefills from
+    assert {"name", "sha256"} <= set(body["base_checkpoint"])
+    assert body["loras"] and {"name", "sha256", "weight"} <= set(body["loras"][0])
+    assert {"sampler", "scheduler", "steps", "cfg"} <= set(body["sampling"])
+
+
+def test_report_manifest_missing_cases(suite_client: TestClient, suite_dirs, monkeypatch) -> None:  # noqa: ANN001
+    import shutil
+
+    _fake_backend(monkeypatch)
+    frames = _stream_frames(
+        suite_client,
+        {"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "export": "rufina", "seeds": [1]},
+    )
+    run_id = frames[-1]["run_id"]
+    manifest_path = suite_dirs["runs"] / run_id / "manifest.json"
+
+    # no report at all -> 404; unsafe run_id -> 400 (never joined under the runs root)
+    assert suite_client.get("/report/nope/manifest").status_code == 404
+    assert suite_client.get("/report/..%2Fetc/manifest").status_code in (400, 404)
+
+    # a manifest belonging to another run is refused, not served under this name
+    original = manifest_path.read_text(encoding="utf-8")
+    data = json.loads(original)
+    data["run_id"] = "someone-else"
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+    assert suite_client.get(f"/report/{run_id}/manifest").status_code == 400
+
+    # corrupt manifest -> 400 (not a 500)
+    manifest_path.write_text("{not json", encoding="utf-8")
+    assert suite_client.get(f"/report/{run_id}/manifest").status_code == 400
+
+    # report kept, run dir pruned -> 410 Gone (distinguishable from "no such run")
+    shutil.rmtree(suite_dirs["runs"] / run_id)
+    resp = suite_client.get(f"/report/{run_id}/manifest")
+    assert resp.status_code == 410
+    assert suite_client.get(f"/report/{run_id}").status_code == 200
+
+
+def test_report_manifest_served_in_read_only_mode(tmp_path) -> None:  # noqa: ANN001
+    """It's a read: the replay/demo host must still serve it."""
+    app = TestClient(create_app(reports_dir=str(tmp_path / "reports"), runs_dir=str(tmp_path / "runs"), read_only=True))
+    # no report -> 404, i.e. routed and not refused by the write guard
+    assert app.get("/report/r/manifest").status_code == 404
 
 
 def test_scorers_reports_availability(client: TestClient) -> None:
