@@ -1,0 +1,11 @@
+name: Docs
+on:
+  pull_request:
+    branches: [dev, main]
+jobs:
+  docs:
+    uses: smk762/argus-ci/.github/workflows/docs-check.yml@0a16aa1
+    with:
+      cli-module: argus_proof.cli
+      cli-name: argus-proof
+      install-extras: cli
