@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other family, unless `PROOF_WORKFLOW_TEMPLATE` overrides both. `/run/stream` and
   `argus-proof run` take `guidance`, and leaving out `cfg`/`sampler`/`scheduler`/`guidance`
   gets the family's defaults (Flux: cfg 1, `euler`/`simple`, guidance 3.5).
+- **Llama Guard 3 moderation adapters** (#67): `LlamaGuardImageDetector`
+  (Llama-Guard-3-11B-Vision) and `LlamaGuardTextDetector` (Llama-Guard-3-8B) now run
+  the model instead of raising `NotImplementedError`. They lazy-load, place the model
+  through cortex's `resolve_device`, and score each flagged category with P(unsafe) at
+  the verdict token. `parse_guard_output` reads the verdict. The checkpoints are gated
+  (`HF_TOKEN`); the README covers the licenses. `[moderation]` now needs
+  `transformers>=4.45`.
 
 ### Changed
 - **The wire schema lists defaulted fields as required where proof always sends them**
@@ -47,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gets `-max(clip_skip, 2)`, so 1 and 2 both mean the penultimate layer SDXL uses.
   `-1` blanked some SDXL checkpoints. A rerun of an older `clip_skip: 1` manifest
   now renders at layer -2.
+- **Moderation no longer reads as safe when a Guard model can't load** (#67).
+  `PolicyModerator` re-raises `ModerationError` (a gated checkpoint with no token, an
+  unreadable verdict) instead of skipping the detector as flaky. Other per-item errors
+  are still skipped.
 - README drift (#65): the policy-moderation section now states the Llama Guard
   adapters are stubs (inject your own detectors) and lists the `sexual` category;
   the route list adds `/health`, `/scorers` and `/report/{run_id}/image_at/{index}`;

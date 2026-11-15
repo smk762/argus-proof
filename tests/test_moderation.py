@@ -17,6 +17,7 @@ from argus_proof.moderation import (
     category_tails,
     moderate_images,
     moderate_texts,
+    parse_guard_output,
 )
 
 
@@ -200,3 +201,114 @@ def test_hazard_codes_map_to_the_taxonomy() -> None:
 def test_text_detector_defaults_to_the_text_guard_model_not_vision() -> None:
     assert "Vision" in LlamaGuardImageDetector().model_id
     assert LlamaGuardTextDetector().model_id == "meta-llama/Llama-Guard-3-8B"
+
+
+# --- Llama Guard adapters: everything after the model call (issue #67) --------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("safe", (False, [])),
+        ("\n\nsafe", (False, [])),
+        ("Safe ", (False, [])),
+        ("unsafe\nS1", (True, ["S1"])),
+        ("\n\nunsafe\nS1,S10", (True, ["S1", "S10"])),
+        ("unsafe\ns12, S3 ", (True, ["S12", "S3"])),
+        ("unsafe", (True, [])),
+    ],
+)
+def test_parse_guard_output(text: str, expected: tuple) -> None:
+    assert parse_guard_output(text) == expected
+
+
+@pytest.mark.parametrize("text", ["", "I cannot help with that", "safety first", "unsafely"])
+def test_unreadable_guard_output_fails_loud(text: str) -> None:
+    with pytest.raises(ModerationError, match="unreadable"):
+        parse_guard_output(text)
+
+
+class _ScriptedText(LlamaGuardTextDetector):
+    """The real text adapter with its model call replaced by a script."""
+
+    def __init__(self, output: str, p_unsafe: float | None = None) -> None:
+        super().__init__()
+        self.output, self.p_unsafe, self.calls = output, p_unsafe, []
+
+    def is_available(self) -> bool:
+        return True
+
+    def _generate(self, text: str) -> tuple[str, float | None]:
+        self.calls.append(text)
+        return self.output, self.p_unsafe
+
+
+class _ScriptedImage(LlamaGuardImageDetector):
+    def __init__(self, output: str, p_unsafe: float | None = None) -> None:
+        super().__init__()
+        self.output, self.p_unsafe = output, p_unsafe
+
+    def is_available(self) -> bool:
+        return True
+
+    def _generate(self, image_path: Path) -> tuple[str, float | None]:
+        return self.output, self.p_unsafe
+
+
+def test_text_adapter_maps_a_verdict_to_category_scores() -> None:
+    assert _ScriptedText("\n\nsafe").moderate_text("a cat") == {}
+    detector = _ScriptedText("\n\nunsafe\nS1,S10", p_unsafe=0.83)
+    assert detector.moderate_text("x") == {"violence": 0.83, "hate": 0.83}
+    assert detector.calls == ["x"]
+    # no readable probability -> a hard 1.0
+    assert _ScriptedText("unsafe\nS12").moderate_text("x") == {"sexual": 1.0}
+    assert _ScriptedText("unsafe\nS12", p_unsafe=float("nan")).moderate_text("x") == {"sexual": 1.0}
+
+
+def test_image_adapter_maps_a_verdict_to_category_scores() -> None:
+    assert _ScriptedImage("unsafe\nS9", p_unsafe=0.7).moderate_image(Path("a.png")) == {"weapons": 0.7}
+
+
+def test_unsafe_without_codes_flags_every_category() -> None:
+    """Fail-safe: an unsafe verdict that names nothing must not read as safe."""
+    scores = _ScriptedText("unsafe", p_unsafe=0.9).moderate_text("x")
+    assert scores == dict.fromkeys(CATEGORIES, 0.9)
+
+
+def test_unmapped_codes_read_safe_for_this_taxonomy_but_s4_is_logged() -> None:
+    import structlog
+
+    assert _ScriptedText("unsafe\nS6").moderate_text("x") == {}  # specialized advice: not tracked
+    with structlog.testing.capture_logs() as logs:
+        assert _ScriptedText("unsafe\nS4").moderate_text("x") == {}
+    assert any(entry["event"] == "moderation.csam_code" for entry in logs)
+
+
+def test_an_unreadable_verdict_aborts_the_ensemble_instead_of_reading_safe() -> None:
+    mod = PolicyModerator(text_detectors=[_ScriptedText("I'm sorry, I can't")])
+    with pytest.raises(ModerationError):
+        mod.moderate_texts(["x"])
+
+
+def test_a_model_that_cannot_load_aborts_the_ensemble() -> None:
+    """A gated checkpoint with no HF_TOKEN must not read every item as safe."""
+
+    class Gated(_ScriptedText):
+        def _generate(self, text: str) -> tuple[str, float | None]:
+            raise ModerationError("cannot load meta-llama/Llama-Guard-3-8B — set HF_TOKEN")
+
+    with pytest.raises(ModerationError, match="HF_TOKEN"):
+        PolicyModerator(text_detectors=[Gated("safe")]).moderate_texts(["x"])
+
+    # an ordinary per-item failure is still a flaky skip
+    class Flaky(_ScriptedText):
+        def _generate(self, text: str) -> tuple[str, float | None]:
+            raise RuntimeError("CUDA hiccup")
+
+    mod = PolicyModerator(text_detectors=[Flaky("safe"), _ScriptedText("unsafe\nS1", 0.6)])
+    assert mod.moderate_texts(["x"]) == [{"violence": 0.6}]
+
+
+def test_adapters_take_a_device() -> None:
+    assert LlamaGuardTextDetector(device="cpu").device == "cpu"
+    assert LlamaGuardImageDetector().device == "auto"
