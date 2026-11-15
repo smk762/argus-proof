@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-15
+
 ### Added
 - **A new argus-cortex rebuilds the published image.** `release.yml` also runs on
   the `cortex-released` dispatch argus-cortex's release sends: only the image job runs,
@@ -64,8 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PolicyModerator` re-raises `ModerationError` (a gated checkpoint with no token, an
   unreadable verdict) instead of skipping the detector as flaky. Other per-item errors
   are still skipped.
-- README drift (#65): the policy-moderation section now states the Llama Guard
-  adapters are stubs (inject your own detectors) and lists the `sexual` category;
+- README drift (#65): the policy-moderation section lists the `sexual` category;
   the route list adds `/health`, `/scorers` and `/report/{run_id}/image_at/{index}`;
   the CLI section documents `argus-proof schema [--check]`; the `gate` example is
   copy-pasteable and mentions `--confidence`; the experiment sample cell id is
@@ -152,7 +153,8 @@ First release: the MVP evaluation pipeline for trained LoRAs.
   `/run/stream`, report/HITL/refine endpoints, and model and export listings.
 - Container image `ghcr.io/smk762/argus-proof`.
 
-[Unreleased]: https://github.com/smk762/argus-proof/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/smk762/argus-proof/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/smk762/argus-proof/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/smk762/argus-proof/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/smk762/argus-proof/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/smk762/argus-proof/compare/v0.1.0...v0.2.0
