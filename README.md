@@ -80,6 +80,8 @@ GET  /report/{run_id}/image/{image_id}  a generated sample (ids only — no path
 GET  /report/{run_id}/image_at/{index}  sample by position — seed-free URL for blind review
 POST /report/{run_id}/hitl              apply a review; recomputes pass-rate + verdict
 POST /report/{run_id}/refine            second-pass re-rank (rank: null retracts)
+POST /purge/{run_id}                    devmode only: delete one run's report + run dir
+POST /purge                             devmode only: delete every report + run dir
 ```
 
 `/report/{run_id}/manifest` serves the SHA256-pinned setup (checkpoint, VAE,
@@ -88,6 +90,13 @@ studio's proof → darkroom handoff. It is `404` when there is no report and `41
 Gone` when the report was kept but the run dir was pruned. `/health` lists
 `report_manifest` in `capabilities`, so a client can tell an older proof (route
 absent) from a run with no manifest.
+
+The `/purge` routes are a dev tool, since reports are the evaluation record. They exist
+only with `ARGUS_PROOF_DEVMODE=1` (or `serve --devmode`), need a `{"confirm": "purge"}`
+body, return `409` while the run (or, for `POST /purge`, any run) is still generating,
+and read-only mode refuses them. A run's HITL review and refinement are stored in its
+report, so they go with it. `/health` echoes `devmode` and lists `purge` in
+`capabilities` only when the routes will work.
 
 Concurrent reviews of the same run are serialised with a per-run file lock, so
 a streaming run's report write and a reviewer's HITL save can't drop updates.
