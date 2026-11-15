@@ -245,20 +245,38 @@ it to a **Guard-class policy taxonomy** (sexual / violence / hate / self-harm /
 weapons / illegal) — over both the **generated images** and the **input prompts /
 captions**, so a toxic prompt is flagged even when its output is clean.
 
-> **Status: the bundled Llama Guard adapters are stubs.** `LlamaGuardImageDetector`
-> (Llama-Guard-3-11B-Vision) and `LlamaGuardTextDetector` (text-only
-> Llama-Guard-3-8B) map Guard hazard codes onto the taxonomy, but their model call
-> (`_classify`) is not implemented yet and raises `NotImplementedError`. With the
-> `[moderation]` extra installed, a default `PolicyModerator()` therefore **fails
-> loud** rather than silently reading everything as safe. Until the adapter lands,
-> inject your own detectors (any object with `name`, `version`, `is_available()`
-> and `moderate_image(path)` / `moderate_text(text)` returning per-category
-> `[0,1]` scores):
+The default detectors are **Llama Guard 3**: `LlamaGuardImageDetector`
+(`meta-llama/Llama-Guard-3-11B-Vision`, about 22 GB in bf16) for outputs and
+`LlamaGuardTextDetector` (`meta-llama/Llama-Guard-3-8B`, about 16 GB) for prompts and
+captions. Install `argus-proof[moderation]`. Both checkpoints are **gated** on Hugging
+Face: accept the license on each model page and set `HF_TOKEN`. The weights download
+at first use; nothing is bundled. Device placement goes through argus-cortex's
+`resolve_device` (`device="auto"` picks cuda, then mps, then cpu).
+
+Each verdict (`safe`, or `unsafe` plus hazard codes `S1`–`S14`) maps onto the taxonomy.
+A flagged category scores P(unsafe) at the verdict token rather than a hard 1.0.
+Moderation fails loud rather than reading as safe. A model that can't load (no
+token, license not accepted) or an unreadable verdict raises `ModerationError`, and an
+`unsafe` verdict naming no code flags every category. An image is sent with the
+neutral prompt `"Describe this image."`, so a flag comes from the image.
+
+> **Licenses.** Llama-Guard-3-8B is under the Llama 3.1 Community License, and
+> Llama-Guard-3-11B-Vision under the Llama 3.2 Community License. The 3.2 license
+> does **not** grant its rights for multimodal models to individuals domiciled in,
+> or companies with their principal place of business in, the European Union
+> (end users of a product built on them are exempt). Both carry Meta's acceptable
+> use policy. argus-proof only downloads the weights at runtime and doesn't
+> redistribute them. Check the terms against your use, and pass your own detectors
+> if they don't fit.
+
+Any object with `name`, `version`, `is_available()` and `moderate_image(path)` /
+`moderate_text(text)` returning per-category `[0,1]` scores can replace them:
 
 ```python
 from argus_proof.moderation import PolicyModerator, moderate_images, moderate_texts
 
-mod = PolicyModerator(image_detectors=[MyImageGuard()], text_detectors=[MyTextGuard()])
+mod = PolicyModerator()                          # Llama Guard 3 Vision + text
+# mod = PolicyModerator(image_detectors=[MyImageGuard()], text_detectors=[MyTextGuard()])
 out = moderate_images(image_paths, mod)         # per-category tails over the outputs
 inp = moderate_texts(prompt_grid_variants, mod) # ...and over the inputs
 out.flagged()                                   # e.g. ["violence", "hate"], worst first
@@ -268,9 +286,9 @@ report.scorers.append(mod.provenance("output")) # version-stamp the Guard model 
 Each category gets a **tail** view (any-hit / max / 95th percentile — the extremes
 that matter, not the mean, same rule as `safety`), combined conservatively across
 an ensemble (most-unsafe detector wins). Detectors are pluggable and injectable, so
-the taxonomy/ensemble/tail logic is dependency-free and unit-tested; the Llama
-Guard adapters (once implemented) are the only part that needs the
-`[moderation]` extra. A reviewer's HITL flag attributes to a
+the taxonomy/ensemble/tail logic is dependency-free and unit-tested. Of the Llama
+Guard adapters, only the model call needs the `[moderation]` extra; verdict parsing
+and mapping are unit-tested. A reviewer's HITL flag attributes to a
 category via `RejectReason.category`. CSAM matching stays a **separate** policy gate
 (Thorn Safer / PhotoDNA), not an ML metric here.
 

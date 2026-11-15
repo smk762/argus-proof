@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `409`, and read-only mode refuses them. The HITL review and refinement go with the report.
   `/health` gains `devmode`, and lists `purge` in `capabilities` when the routes work.
   `/run/stream` now also refuses (`409`) a `run_id` that is already generating.
+- **Llama Guard 3 moderation adapters** (#67): `LlamaGuardImageDetector`
+  (Llama-Guard-3-11B-Vision) and `LlamaGuardTextDetector` (Llama-Guard-3-8B) now run
+  the model instead of raising `NotImplementedError`. They lazy-load, place the model
+  through cortex's `resolve_device`, and score each flagged category with P(unsafe) at
+  the verdict token. `parse_guard_output` reads the verdict. The checkpoints are gated
+  (`HF_TOKEN`); the README covers the licenses. `[moderation]` now needs
+  `transformers>=4.45`.
 
 ### Changed
 - **The wire schema lists defaulted fields as required where proof always sends them**
@@ -38,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. Payloads and validation are the same; generated client types get stricter.
 
 ### Fixed
+- **Moderation no longer reads as safe when a Guard model can't load** (#67).
+  `PolicyModerator` re-raises `ModerationError` (a gated checkpoint with no token, an
+  unreadable verdict) instead of skipping the detector as flaky. Other per-item errors
+  are still skipped.
 - README drift (#65): the policy-moderation section now states the Llama Guard
   adapters are stubs (inject your own detectors) and lists the `sexual` category;
   the route list adds `/health`, `/scorers` and `/report/{run_id}/image_at/{index}`;
