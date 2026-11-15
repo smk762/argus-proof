@@ -16,6 +16,8 @@ Routes:
     GET  /report/{run_id}/image_at/{index} -> image bytes (by report position; seed-free blind-review URL)
     POST /report/{run_id}/hitl            -> EvalReport   (apply a HITL review, recompute)
     POST /report/{run_id}/refine          -> EvalReport   (second-pass re-rank of the passing subset)
+    POST /purge/{run_id}                  -> {run_id, report, run_dir}  (devmode only: delete one run)
+    POST /purge                           -> {reports, run_dirs}        (devmode only: delete every run)
 
 Reports are served from a directory of ``<run_id>.json`` files
 (``$ARGUS_PROOF_REPORTS_DIR``, default ``reports/``); generated runs live under
@@ -28,6 +30,12 @@ replay/demo mode (issue #45): stored reports keep serving, but every mutating
 request — live GPU eval (``POST /run/stream``) above all — is refused with
 ``403``, so the GPU-less public demo host can't kick off compute. ``GET /health``
 echoes the resolved flag so the frontend can hide the "run evaluation" action.
+
+Set ``$ARGUS_PROOF_DEVMODE`` (or ``create_app(devmode=True)``) to register the
+``/purge`` routes, which delete a run's report *and* its run dir (issue #59).
+Reports are the evaluation record, so the routes don't exist otherwise; they
+need a ``{"confirm": "purge"}`` body, refuse a run that is still generating
+(``409``), and read-only mode refuses them like every other write.
 """
 
 from __future__ import annotations
@@ -37,12 +45,16 @@ import json
 import os
 import re
 import secrets
+import shutil
+import threading
 import time
 from pathlib import Path
 
 try:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
+    from fastapi.concurrency import run_in_threadpool
     from fastapi.responses import FileResponse, StreamingResponse
+    from starlette.background import BackgroundTask
 except ImportError as exc:  # pragma: no cover
     raise ImportError("Server requires: pip install argus-proof[server]") from exc
 
@@ -72,6 +84,13 @@ ENV_EXPORTS_DIR = "ARGUS_PROOF_EXPORTS_DIR"
 # kick off compute. Truthy values: 1/true/yes/on.
 ENV_READ_ONLY = "ARGUS_PROOF_READ_ONLY"
 
+# Dev mode (issue #59): registers the /purge routes that delete runs. Off by
+# default — reports are the evaluation record. Compose sets it from DEVMODE.
+ENV_DEVMODE = "ARGUS_PROOF_DEVMODE"
+
+# The body a /purge request must carry (same as argus-darkroom's).
+_PURGE_CONFIRM = {"confirm": "purge"}
+
 # run_id / image_id / export names become path segments under a fixed root —
 # allow only a strict filename charset so traversal is impossible by construction.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -91,6 +110,8 @@ def _require_safe(value: str, label: str) -> str:
 # ``GET /health`` so a consumer (argus-studio) can tell an older proof that
 # lacks a route from a run that lacks the data. Append-only.
 CAPABILITIES = ("report_manifest",)
+# Advertised on top of CAPABILITIES only when devmode registers /purge.
+DEVMODE_CAPABILITIES = ("purge",)
 
 # The message a refused write carries in read-only mode.
 _READ_ONLY_REFUSAL = "argus-proof is in read-only (replay) mode; writes and live evaluation are disabled"
@@ -130,6 +151,7 @@ def create_app(
     runs_dir: str | None = None,
     exports_dir: str | None = None,
     read_only: bool | None = None,
+    devmode: bool | None = None,
 ) -> FastAPI:
     """Create the proof FastAPI application.
 
@@ -143,11 +165,17 @@ def create_app(
     above all — is refused with ``403`` so the GPU-less demo host can't kick off
     compute. Omitted (``None``) it falls back to ``$ARGUS_PROOF_READ_ONLY``;
     ``GET /health`` reports the resolved flag.
+
+    ``devmode`` registers the ``/purge`` routes (issue #59); omitted it falls
+    back to ``$ARGUS_PROOF_DEVMODE``. ``GET /health`` reports it, and lists
+    ``purge`` in ``capabilities`` when the routes will actually work (devmode
+    on and not read-only).
     """
     from argus_proof.backends.base import MANIFEST_NAME
     from argus_proof.evaluate import EvaluateError, load_manifest, runs_root
 
     read_only = env_flag(ENV_READ_ONLY) if read_only is None else read_only
+    devmode = env_flag(ENV_DEVMODE) if devmode is None else devmode
 
     app = FastAPI(
         title="Argus Proof",
@@ -178,6 +206,22 @@ def create_app(
         )
 
     store = ReportStore(reports_dir)
+
+    # run_ids a live /run/stream is generating into (or a purge is deleting),
+    # so a purge can't pull a run dir out from under its generation and two
+    # streams can't write into the same run dir.
+    active_runs: set[str] = set()
+    active_lock = threading.Lock()
+
+    def _claim_run(run_id: str) -> None:
+        with active_lock:
+            if run_id in active_runs:
+                raise HTTPException(status_code=409, detail=f"run {run_id!r} is in progress")
+            active_runs.add(run_id)
+
+    def _release_run(run_id: str) -> None:
+        with active_lock:
+            active_runs.discard(run_id)
 
     def _runs_root() -> Path:
         return runs_root(runs_dir)
@@ -231,13 +275,15 @@ def create_app(
         """Liveness + capability probe. ``read_only`` tells the UI whether live
         evaluation is available — a replay/demo host reports ``True`` and the
         frontend hides the "run evaluation" action (argus-studio#59).
-        ``capabilities`` lists optional routes (see :data:`CAPABILITIES`)."""
+        ``capabilities`` lists optional routes (see :data:`CAPABILITIES`);
+        ``purge`` appears only when devmode is on and the host isn't read-only."""
         return {
             "status": "ok",
             "service": "argus-proof",
             "version": __version__,
             "read_only": read_only,
-            "capabilities": list(CAPABILITIES),
+            "devmode": devmode,
+            "capabilities": list(CAPABILITIES) + (list(DEVMODE_CAPABILITIES) if devmode and not read_only else []),
         }
 
     @app.get("/exports")
@@ -358,6 +404,7 @@ def create_app(
             source_manifest=source_manifest,
         )
         run_dir = _runs_root() / run_id
+        _claim_run(run_id)  # 409 if this run_id is already generating or being purged
 
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
@@ -380,6 +427,7 @@ def create_app(
             except (EvaluateError, ProofError, ValueError) as exc:
                 emit(ProgressEvent(run_id=run_id, type="error", message=str(exc)).model_dump(exclude_none=True))
             finally:
+                _release_run(run_id)  # before the sentinel: a client that saw the end can purge
                 emit(None)  # sentinel: stream is over
 
         async def stream():
@@ -393,7 +441,11 @@ def create_app(
             finally:
                 await worker
 
-        return StreamingResponse(stream(), media_type="application/x-ndjson")
+        # Also released after the response, in case the body never started
+        # (a client gone before the first frame) and so work() never ran.
+        return StreamingResponse(
+            stream(), media_type="application/x-ndjson", background=BackgroundTask(_release_run, run_id)
+        )
 
     @app.get("/reports")
     async def list_reports() -> dict[str, list[ReportSummary]]:
@@ -505,5 +557,72 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no report for run {run_id!r}") from exc
         except ProofError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if devmode:
+
+        async def _require_confirm(request: Request) -> None:
+            try:
+                body = await request.json()
+            except ValueError:
+                body = None
+            if body != _PURGE_CONFIRM:
+                raise HTTPException(status_code=400, detail='the body must be {"confirm": "purge"}')
+
+        def _remove_run_dir(run_id: str) -> bool:
+            """Delete <runs_root>/<run_id> (a validated id, never a path). A symlink
+            is unlinked, not followed, so a purge can't reach outside the runs root."""
+            path = _runs_root() / run_id
+            if path.is_symlink():
+                path.unlink()
+                return True
+            if path.is_dir():
+                shutil.rmtree(path)
+                return True
+            return False
+
+        @app.post("/purge/{run_id}")
+        async def purge_run(run_id: str, request: Request) -> dict:
+            """Delete one run: its report (with the HITL review and refinement
+            stored in it) and its run dir (manifest + images). ``404`` when neither
+            exists; a run dir without a report (a failed generation) is purgeable."""
+            _require_safe(run_id, "run_id")
+            await _require_confirm(request)
+            _claim_run(run_id)  # 409 while generating; also blocks a new run on this id meanwhile
+
+            def purge_one() -> dict:
+                report = store.delete(run_id)
+                run_dir = _remove_run_dir(run_id)
+                if not (report or run_dir):
+                    raise HTTPException(status_code=404, detail=f"no run {run_id!r}")
+                return {"run_id": run_id, "report": report, "run_dir": run_dir}
+
+            try:
+                return await run_in_threadpool(purge_one)
+            finally:
+                _release_run(run_id)
+
+        @app.post("/purge")
+        async def purge_all(request: Request) -> dict[str, int]:
+            """Delete every report and run dir. Refused (``409``) while any run is
+            generating. Only entries with a valid run id are touched."""
+            await _require_confirm(request)
+
+            def purge_everything() -> dict[str, int]:
+                with active_lock:
+                    if active_runs:
+                        raise HTTPException(status_code=409, detail="a run is in progress")
+                    # Hold the lock throughout so no run starts mid-purge.
+                    removed = {"reports": 0, "run_dirs": 0}
+                    for run_id in store.run_ids():
+                        if _SAFE_ID.match(run_id) and store.delete(run_id):
+                            removed["reports"] += 1
+                    root = _runs_root()
+                    if root.is_dir():
+                        for path in sorted(root.iterdir()):
+                            if _SAFE_ID.match(path.name) and _remove_run_dir(path.name):
+                                removed["run_dirs"] += 1
+                    return removed
+
+            return await run_in_threadpool(purge_everything)
 
     return app

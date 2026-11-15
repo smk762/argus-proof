@@ -220,6 +220,28 @@ class ReportStore:
             finally:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
+    def run_ids(self) -> list[str]:
+        """The run ids with a stored report file (sorted), readable or not."""
+        if not self.root.is_dir():
+            return []
+        return sorted(path.stem for path in self.root.glob("*.json") if not path.name.startswith("."))
+
+    def delete(self, run_id: str) -> bool:
+        """Remove a run's report; ``True`` if there was one.
+
+        Under the per-run update lock, so a review or refinement already in
+        flight finishes first, and one that starts after finds no report rather
+        than writing it back. The HITL review and refinement live inside the
+        report, so they go with it. The lock sidecar is left in place: unlinking
+        a file another process may be waiting to ``flock`` would split the lock.
+        """
+        with self._update_lock(run_id):
+            path = self._path(run_id)
+            if not path.is_file():
+                return False
+            path.unlink()
+            return True
+
     def review(self, run_id: str, request: HitlRequest) -> EvalReport:
         """Apply a HITL batch to a stored report and persist the result."""
         with self._update_lock(run_id):

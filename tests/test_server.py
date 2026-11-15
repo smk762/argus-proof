@@ -32,6 +32,7 @@ def _isolate_read_only_env(monkeypatch) -> None:  # noqa: ANN001
     (e.g. a demo-configured shell) can't flip the default-mode assertions. Tests
     that exercise env resolution re-set it via the same monkeypatch."""
     monkeypatch.delenv("ARGUS_PROOF_READ_ONLY", raising=False)
+    monkeypatch.delenv("ARGUS_PROOF_DEVMODE", raising=False)
 
 
 def _report(run_id: str = "run-1") -> dict:
@@ -477,3 +478,143 @@ def test_get_image_rejects_traversal_ids(suite_client: TestClient) -> None:
 
 def test_get_image_missing_404(suite_client: TestClient) -> None:
     assert suite_client.get("/report/run-1/image/nope").status_code == 404
+
+
+# --- devmode purge (issue #59) ------------------------------------------------
+
+PURGE = {"confirm": "purge"}
+
+
+@pytest.fixture
+def dev_client(suite_dirs) -> TestClient:  # noqa: ANN001
+    return TestClient(
+        create_app(
+            reports_dir=str(suite_dirs["reports"]),
+            runs_dir=str(suite_dirs["runs"]),
+            exports_dir=str(suite_dirs["exports"]),
+            devmode=True,
+        )
+    )
+
+
+def _make_run(client: TestClient, monkeypatch, run_id: str | None = None) -> str:  # noqa: ANN001
+    _fake_backend(monkeypatch)
+    payload = {"lora": "l.safetensors", "base_checkpoint": "c.safetensors", "prompt": "p", "seeds": [1]}
+    if run_id:
+        payload["run_id"] = run_id
+    return _stream_frames(client, payload)[-1]["run_id"]
+
+
+def test_purge_routes_absent_without_devmode(suite_client: TestClient, monkeypatch) -> None:  # noqa: ANN001
+    run_id = _make_run(suite_client, monkeypatch)
+    assert suite_client.post(f"/purge/{run_id}", json=PURGE).status_code == 404
+    assert suite_client.post("/purge", json=PURGE).status_code == 404
+    health = suite_client.get("/health").json()
+    assert health["devmode"] is False and "purge" not in health["capabilities"]
+    assert suite_client.get(f"/report/{run_id}").status_code == 200  # untouched
+
+
+def test_devmode_resolves_from_env(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("ARGUS_PROOF_DEVMODE", "1")
+    health = TestClient(create_app(reports_dir=str(tmp_path))).get("/health").json()
+    assert health["devmode"] is True and "purge" in health["capabilities"]
+
+
+def test_purge_one_run_removes_report_and_run_dir(dev_client: TestClient, suite_dirs, monkeypatch) -> None:  # noqa: ANN001
+    keep = _make_run(dev_client, monkeypatch, "keep-me")
+    run_id = _make_run(dev_client, monkeypatch, "drop-me")
+    # a reviewed run: the HITL data lives in the report and goes with it
+    review = {"rater": "r", "updates": [{"image_id": f"{run_id}-1", "hitl_rating": 5}]}
+    assert dev_client.post(f"/report/{run_id}/hitl", json=review).status_code == 200
+
+    # confirm body required
+    assert dev_client.post(f"/purge/{run_id}").status_code == 400
+    assert dev_client.post(f"/purge/{run_id}", json={"confirm": "yes"}).status_code == 400
+
+    resp = dev_client.post(f"/purge/{run_id}", json=PURGE)
+    assert resp.status_code == 200
+    assert resp.json() == {"run_id": run_id, "report": True, "run_dir": True}
+    assert dev_client.get(f"/report/{run_id}").status_code == 404
+    assert not (suite_dirs["runs"] / run_id).exists()
+    assert [r["run_id"] for r in dev_client.get("/reports").json()["reports"]] == [keep]
+    assert (suite_dirs["runs"] / keep).is_dir()
+
+    # gone -> 404; unsafe id -> 400
+    assert dev_client.post(f"/purge/{run_id}", json=PURGE).status_code == 404
+    assert dev_client.post("/purge/.hidden", json=PURGE).status_code == 400
+
+
+def test_purge_a_run_dir_without_a_report(dev_client: TestClient, suite_dirs) -> None:  # noqa: ANN001
+    (suite_dirs["runs"] / "failed-run").mkdir(parents=True)
+    resp = dev_client.post("/purge/failed-run", json=PURGE)
+    assert resp.json() == {"run_id": "failed-run", "report": False, "run_dir": True}
+
+
+def test_purge_unlinks_a_symlinked_run_dir_without_following_it(dev_client: TestClient, suite_dirs, tmp_path) -> None:  # noqa: ANN001
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "precious.png").write_bytes(b"x")
+    suite_dirs["runs"].mkdir(parents=True, exist_ok=True)
+    (suite_dirs["runs"] / "linked").symlink_to(outside, target_is_directory=True)
+    assert dev_client.post("/purge/linked", json=PURGE).status_code == 200
+    assert (outside / "precious.png").exists()
+    assert not (suite_dirs["runs"] / "linked").exists()
+
+
+def test_purge_refuses_a_run_in_progress(dev_client: TestClient, monkeypatch) -> None:  # noqa: ANN001
+    """A purge must not pull a run dir out from under its generation."""
+    import threading
+
+    from fakebackend import FakeBackend
+
+    import argus_proof.evaluate as evaluate
+
+    started, release = threading.Event(), threading.Event()
+
+    class SlowBackend(FakeBackend):
+        def generate(self, spec, out_dir, progress=None):  # noqa: ANN001, ANN201
+            started.set()
+            release.wait(5)
+            return super().generate(spec, out_dir, progress=progress)
+
+    monkeypatch.setattr(evaluate, "backend_from_env", lambda *a, **k: SlowBackend())
+    payload = {"lora": "l", "base_checkpoint": "c", "prompt": "p", "seeds": [1], "run_id": "busy"}
+    done: dict = {}
+    worker = threading.Thread(target=lambda: done.setdefault("resp", dev_client.post("/run/stream", json=payload)))
+    worker.start()
+    try:
+        assert started.wait(5)
+        assert dev_client.post("/purge/busy", json=PURGE).status_code == 409
+        assert dev_client.post("/purge", json=PURGE).status_code == 409
+        # and a second stream can't write into the same run dir
+        assert dev_client.post("/run/stream", json=payload).status_code == 409
+    finally:
+        release.set()
+        worker.join(10)
+    assert done["resp"].status_code == 200
+    # once the stream has ended the run is purgeable
+    assert dev_client.post("/purge/busy", json=PURGE).status_code == 200
+
+
+def test_purge_all(dev_client: TestClient, suite_dirs, monkeypatch) -> None:  # noqa: ANN001
+    _make_run(dev_client, monkeypatch, "one")
+    _make_run(dev_client, monkeypatch, "two")
+    (suite_dirs["runs"] / "orphan").mkdir()
+    assert dev_client.post("/purge").status_code == 400
+    resp = dev_client.post("/purge", json=PURGE)
+    assert resp.json() == {"reports": 2, "run_dirs": 3}
+    assert dev_client.get("/reports").json() == {"reports": []}
+    assert list(suite_dirs["runs"].iterdir()) == []
+    # idempotent on an empty store
+    assert dev_client.post("/purge", json=PURGE).json() == {"reports": 0, "run_dirs": 0}
+
+
+def test_purge_refused_in_read_only_mode(tmp_path) -> None:  # noqa: ANN001
+    client = TestClient(
+        create_app(reports_dir=str(tmp_path), runs_dir=str(tmp_path / "runs"), read_only=True, devmode=True)
+    )
+    assert client.post("/purge/r", json=PURGE).status_code == 403
+    assert client.post("/purge", json=PURGE).status_code == 403
+    health = client.get("/health").json()
+    # devmode is on but the button would not work, so it isn't advertised
+    assert health["devmode"] is True and "purge" not in health["capabilities"]

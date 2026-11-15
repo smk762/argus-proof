@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunStreamFrame` union discriminated by `type`, describe every NDJSON line, and the server
   builds its frames from them. `ReportSummary` moved to `argus_proof.models` and is still
   importable from `argus_proof.reports`.
+- **Devmode purge** (#59): `POST /purge/{run_id}` deletes one run's report and run dir,
+  and `POST /purge` deletes all of them. They're registered only with `ARGUS_PROOF_DEVMODE=1`
+  (`serve --devmode`) and need a `{"confirm": "purge"}` body. A run still generating gets
+  `409`, and read-only mode refuses them. The HITL review and refinement go with the report.
+  `/health` gains `devmode`, and lists `purge` in `capabilities` when the routes work.
+  `/run/stream` now also refuses (`409`) a `run_id` that is already generating.
 
 ### Changed
 - **The wire schema lists defaulted fields as required where proof always sends them**
