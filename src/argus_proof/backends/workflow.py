@@ -10,11 +10,22 @@ alone.
 Placeholders:
 
 * scalars — ``$base_checkpoint`` ``$vae`` ``$positive`` ``$negative`` ``$seed``
-  ``$steps`` ``$cfg`` ``$sampler`` ``$scheduler`` ``$width`` ``$height``
-  ``$clip_skip`` (emitted as ComfyUI's negative ``stop_at_clip_layer``);
+  ``$steps`` ``$cfg`` ``$guidance`` ``$sampler`` ``$scheduler`` ``$width``
+  ``$height`` ``$clip_skip`` (emitted as ComfyUI's negative
+  ``stop_at_clip_layer``, see :func:`clip_layer`);
 * LoRAs — ``$lora`` / ``$lora_weight`` for the first LoRA, ``$lora_2`` /
   ``$lora_2_weight`` for the second, and so on. The template's LoRA slots and
   the spec's LoRA list must match exactly, so a run can't silently drop a LoRA.
+
+No value is silently dropped: a run that sets something the template has no
+slot for — a VAE, a non-empty negative prompt (Flux takes none), ``guidance``,
+or a ``clip_skip`` above 2 — is refused rather than recorded in the manifest
+as used. The placeholders match argus-darkroom's.
+
+Templates are per checkpoint *family* — the checkpoint's top-level folder under
+``checkpoints/`` (``flux/flux1-dev.safetensors`` -> ``flux``), as in
+argus-darkroom. :func:`packaged_templates` ships SDXL (the default for any
+other family) and Flux.
 """
 
 from __future__ import annotations
@@ -34,6 +45,12 @@ _LORA_RE = re.compile(r"^\$lora(?:_(\d+))?(_weight)?$")
 # skip, checkpoint's built-in VAE). A starting point users adapt to their graph.
 EXAMPLE_TEMPLATE = "comfyui_sdxl_lora.json"
 
+# Packaged templates for families other than the SDXL default. Flux.1: the
+# checkpoint is a bare transformer, so the template loads the T5/CLIP-L text
+# encoders and the ae VAE by name; no negative (ConditioningZeroOut), guidance
+# through FluxGuidance.
+FAMILY_TEMPLATES = {"flux": "comfyui_flux_lora.json"}
+
 
 def load_template(path: Path) -> dict:
     """Load and lightly validate a ComfyUI API-format workflow template."""
@@ -46,10 +63,53 @@ def load_template(path: Path) -> dict:
     return template
 
 
+def _packaged(name: str) -> dict:
+    resource = importlib.resources.files("argus_proof").joinpath("templates", name)
+    return json.loads(resource.read_text(encoding="utf-8"))
+
+
 def example_template() -> dict:
     """The packaged example SDXL+LoRA workflow template, as a graph dict."""
-    resource = importlib.resources.files("argus_proof").joinpath("templates", EXAMPLE_TEMPLATE)
-    return json.loads(resource.read_text(encoding="utf-8"))
+    return _packaged(EXAMPLE_TEMPLATE)
+
+
+def packaged_templates() -> dict[str, dict]:
+    """The packaged per-family templates (family -> graph), SDXL excluded: it
+    is the default for every family not listed here."""
+    return {family: _packaged(name) for family, name in FAMILY_TEMPLATES.items()}
+
+
+def checkpoint_family(checkpoint: str) -> str | None:
+    """The checkpoint's family: its top-level folder (``flux/x.safetensors`` ->
+    ``flux``), lower-cased. None for a checkpoint at the top level."""
+    parts = checkpoint.replace("\\", "/").split("/")
+    return parts[0].lower() if len(parts) > 1 and parts[0] else None
+
+
+# Sampling defaults per family, for a request that leaves a knob out. SDXL's are
+# the long-standing ones (and the default for any family not listed); Flux.1-dev
+# runs at cfg 1 (its negative is zeroed out) with distilled guidance instead.
+_SDXL_DEFAULTS: dict[str, object] = {"cfg": 7.0, "sampler": "dpmpp_2m", "scheduler": "karras", "guidance": None}
+FAMILY_SAMPLING_DEFAULTS: dict[str, dict[str, object]] = {
+    "flux": {"cfg": 1.0, "sampler": "euler", "scheduler": "simple", "guidance": 3.5},
+}
+
+
+def sampling_defaults(checkpoint: str) -> dict[str, object]:
+    """``cfg`` / ``sampler`` / ``scheduler`` / ``guidance`` defaults for
+    *checkpoint*'s family (SDXL's for a family without its own)."""
+    return dict(FAMILY_SAMPLING_DEFAULTS.get(checkpoint_family(checkpoint) or "", _SDXL_DEFAULTS))
+
+
+def clip_layer(clip_skip: int) -> int:
+    """ComfyUI's ``stop_at_clip_layer`` for *clip_skip*, read as A1111 reads it
+    for SDXL: 1 and 2 are both -2.
+
+    SDXL conditions on the penultimate text-encoder layer, ComfyUI's own default.
+    -1 would run the last layer, which SDXL never uses, and some checkpoints ship
+    it as all NaN, so the render comes back blank (argus-darkroom#19).
+    """
+    return -max(clip_skip, 2)
 
 
 def _scalar_values(spec: RunSpec, seed: int) -> dict[str, object]:
@@ -63,11 +123,12 @@ def _scalar_values(spec: RunSpec, seed: int) -> dict[str, object]:
         "$seed": seed,
         "$steps": s.steps,
         "$cfg": s.cfg,
+        "$guidance": s.guidance,  # None unless the run sets it (Flux)
         "$sampler": s.sampler,
         "$scheduler": s.scheduler,
         "$width": s.width,
         "$height": s.height,
-        "$clip_skip": -s.clip_skip,  # ComfyUI CLIPSetLastLayer wants a negative index
+        "$clip_skip": clip_layer(s.clip_skip),  # ComfyUI CLIPSetLastLayer wants a negative index
     }
 
 
@@ -75,8 +136,10 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
     """Return a concrete ComfyUI graph for *spec* at *seed*.
 
     Raises :class:`BackendError` if a used placeholder has no value (e.g. a
-    ``$vae`` slot but ``spec.vae is None``) or if the template's LoRA slots and
-    ``spec.loras`` don't line up one-for-one.
+    ``$vae`` slot but ``spec.vae is None``), if the template's LoRA slots and
+    ``spec.loras`` don't line up one-for-one, or if the run sets a value the
+    template would ignore (a VAE, a negative prompt, ``guidance``, a
+    ``clip_skip`` above 2).
     """
     scalars = _scalar_values(spec, seed)
     lora_by_index = {i: lora for i, lora in enumerate(spec.loras, start=1)}
@@ -141,4 +204,17 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
             "run spec sets a vae but the workflow template has no $vae slot — it would be ignored at "
             "generation yet recorded in the manifest; add a $vae slot or clear spec.vae"
         )
+    # Same rule for the other knobs a template may not have a slot for.
+    if spec.negative_prompt.strip() and "$negative" not in seen_scalars:
+        raise BackendError(
+            "run spec has a negative prompt but the workflow template has no $negative slot "
+            "(Flux takes no negative prompt) — clear negative_prompt"
+        )
+    if spec.sampling.guidance is not None and "$guidance" not in seen_scalars:
+        raise BackendError(
+            "run spec sets guidance but the workflow template has no $guidance slot "
+            "(guidance is Flux's; SDXL has none) — clear sampling.guidance"
+        )
+    if clip_layer(spec.sampling.clip_skip) != clip_layer(1) and "$clip_skip" not in seen_scalars:
+        raise BackendError("run spec sets clip_skip above 2 but the workflow template has no $clip_skip slot")
     return rendered

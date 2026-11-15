@@ -139,6 +139,25 @@ checkpoint/LoRA by **SHA256** so the run reconstructs exactly. See
 [`templates/comfyui_sdxl_lora.json`](src/argus_proof/templates/comfyui_sdxl_lora.json)
 for the shipped example.
 
+**SDXL and Flux.** The template is chosen by the base checkpoint's *family*, its
+top-level folder under `checkpoints/`: `flux/…` renders
+[`templates/comfyui_flux_lora.json`](src/argus_proof/templates/comfyui_flux_lora.json)
+and every other family renders the SDXL template, so one server evaluates both.
+`PROOF_WORKFLOW_TEMPLATE` replaces both for every checkpoint. The Flux checkpoints
+are bare transformers, so the Flux template loads `t5xxl_fp8_e4m3fn.safetensors`
+and `clip_l.safetensors` (`DualCLIPLoader`, type `flux`) and `ae.safetensors`
+(`VAELoader`) by those names; they must be in ComfyUI's `clip/` and `vae/`
+folders. Flux takes no negative prompt (the template zeroes the positive) and runs
+at `cfg` 1 with `sampling.guidance` (the `$guidance` slot, a `FluxGuidance` node).
+A request that leaves `cfg`/`sampler`/`scheduler`/`guidance` out gets its family's
+defaults: SDXL cfg 7, `dpmpp_2m`/`karras`; Flux cfg 1, `euler`/`simple`, guidance 3.5.
+
+Nothing a run sets is silently dropped. A run is refused when it sets a value
+the template has no slot for: a VAE, a non-empty negative prompt, `guidance`,
+or a `clip_skip` above 2. The `diffusers` and `a1111` backends refuse `guidance`
+outright. `clip_skip` is sent to ComfyUI as `-max(clip_skip, 2)`: SDXL uses the
+penultimate layer, and `-1` blanks some checkpoints.
+
 **More backends.** `get_backend(name, ...)` selects the engine by config
 (`PROOF_BACKEND` in [`.env.example`](.env.example)); scoring/report code is
 unchanged regardless of which produced the run, and the `RunManifest` records the

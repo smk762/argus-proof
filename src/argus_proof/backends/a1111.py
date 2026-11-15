@@ -120,6 +120,10 @@ class A1111Backend:
         return produced
 
     def _payload(self, spec: RunSpec, seed: int) -> dict:
+        if spec.sampling.guidance is not None:
+            # /sdapi has no guidance field; sending it nowhere while the manifest
+            # records it would misrepresent the run.
+            raise BackendError("the a1111 backend can't apply sampling.guidance (Flux) — use comfyui")
         # A1111 applies LoRAs via the prompt: "<lora:name:weight>" — keep any
         # subdirectory (with_suffix drops only the extension) so a nested LoRA
         # (loras/char/subject.safetensors) resolves as "<lora:char/subject:...>".

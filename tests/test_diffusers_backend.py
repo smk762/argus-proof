@@ -89,3 +89,16 @@ def test_progress_events_streamed(models: Path, tmp_path: Path) -> None:
     types = [e.type for e in events]
     assert types[0] == "start" and types[-1] == "done"
     assert types.count("image") == 2
+
+
+def test_guidance_is_refused_not_dropped(models: Path, tmp_path: Path) -> None:
+    import pytest
+
+    from argus_proof.backends.base import BackendError
+
+    renderer = FakeRenderer()
+    spec = _spec([1])
+    spec = spec.model_copy(update={"sampling": spec.sampling.model_copy(update={"guidance": 3.5})})
+    with pytest.raises(BackendError, match="guidance"):
+        _backend(models, renderer).generate(spec, tmp_path / "out")
+    assert renderer.calls == []

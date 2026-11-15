@@ -1481,6 +1481,19 @@
           "title": "Clip Skip",
           "type": "integer"
         },
+        "guidance": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Guidance"
+        },
         "height": {
           "exclusiveMinimum": 0,
           "title": "Height",

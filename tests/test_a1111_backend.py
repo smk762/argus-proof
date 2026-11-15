@@ -122,3 +122,12 @@ def test_no_images_raises(models: Path, tmp_path: Path) -> None:
 
     with pytest.raises(BackendError, match="no images"):
         _backend(models, Empty(make_png())).generate(_spec([1]), tmp_path / "run")
+
+
+def test_guidance_is_refused_not_dropped(models: Path, tmp_path: Path) -> None:
+    transport = FakeTransport(make_png(8, 8))
+    spec = _spec([1])
+    spec = spec.model_copy(update={"sampling": spec.sampling.model_copy(update={"guidance": 3.5})})
+    with pytest.raises(BackendError, match="guidance"):
+        _backend(models, transport).generate(spec, tmp_path / "out")
+    assert transport.payloads == []

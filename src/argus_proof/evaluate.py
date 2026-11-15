@@ -17,7 +17,7 @@ from pathlib import Path
 from argus_proof.backends import GenBackend, get_backend
 from argus_proof.backends.base import MANIFEST_NAME, ModelResolver, make_dir_resolver
 from argus_proof.backends.pnginfo import read_dimensions
-from argus_proof.backends.workflow import example_template, load_template
+from argus_proof.backends.workflow import example_template, load_template, packaged_templates
 from argus_proof.models import EvalReport, GateConfig, GeneratedImage, ProofError, RunManifest
 from argus_proof.scoring import ScoreContext, score_run
 
@@ -114,9 +114,13 @@ def backend_from_env(
     """
     resolved = (name or os.environ.get(ENV_BACKEND) or DEFAULT_BACKEND).strip().lower()
     if resolved == "comfyui":
+        explicit = workflow_template or os.environ.get(ENV_WORKFLOW_TEMPLATE)
         return get_backend(
             "comfyui",
             workflow_template=_comfy_template(workflow_template),
+            # A user's template applies to every checkpoint; the packaged
+            # defaults pick SDXL or Flux by the checkpoint's family folder.
+            family_templates=None if explicit else packaged_templates(),
             resolve_model=models_resolver(models_dir),
             base_url=os.environ.get(ENV_COMFYUI_URL, "http://127.0.0.1:8188"),
         )

@@ -138,9 +138,12 @@ def run(
     negative: str = Option("", "--negative", help="Negative prompt"),
     max_prompts: int = Option(1, "--max-prompts", min=1, help="Base prompts to take from the export"),
     steps: int = Option(25, min=1),
-    cfg: float = Option(7.0),
-    sampler: str = Option("dpmpp_2m"),
-    scheduler: str = Option("karras"),
+    cfg: float | None = Option(None, help="CFG scale (default: the checkpoint family's — SDXL 7, Flux 1)"),
+    sampler: str | None = Option(None, help="Sampler (default: SDXL dpmpp_2m, Flux euler)"),
+    scheduler: str | None = Option(None, help="Scheduler (default: SDXL karras, Flux simple)"),
+    guidance: float | None = Option(
+        None, min=0, help="Flux guidance, the template's $guidance slot (default: Flux 3.5)"
+    ),
     width: int = Option(1024, min=64),
     height: int = Option(1024, min=64),
     clip_skip: int = Option(1),
@@ -152,6 +155,7 @@ def run(
     import re as _re
 
     from argus_proof.backends import BackendError
+    from argus_proof.backends.workflow import sampling_defaults
     from argus_proof.evaluate import EvaluateError, backend_from_env, runs_root
     from argus_proof.grid import GridError, build_grid, read_export_prompts
     from argus_proof.models import GridConfig, SamplingParams
@@ -161,13 +165,21 @@ def run(
         raise typer.Exit(2)
 
     base_prompts = [prompt] if prompt else read_export_prompts(export)
+    defaults = sampling_defaults(checkpoint)  # by the checkpoint's family folder
     export_manifest = export / "manifest.jsonl"
     config = GridConfig(
         base_checkpoint=checkpoint,
         lora_checkpoints=[lora],
         lora_weights=weight,
         sampling=SamplingParams(
-            sampler=sampler, scheduler=scheduler, steps=steps, cfg=cfg, clip_skip=clip_skip, width=width, height=height
+            sampler=sampler if sampler is not None else defaults["sampler"],
+            scheduler=scheduler if scheduler is not None else defaults["scheduler"],
+            steps=steps,
+            cfg=cfg if cfg is not None else defaults["cfg"],
+            guidance=guidance if guidance is not None else defaults["guidance"],
+            clip_skip=clip_skip,
+            width=width,
+            height=height,
         ),
         negative_prompt=negative,
         seeds=seed,

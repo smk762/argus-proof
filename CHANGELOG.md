@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunStreamFrame` union discriminated by `type`, describe every NDJSON line, and the server
   builds its frames from them. `ReportSummary` moved to `argus_proof.models` and is still
   importable from `argus_proof.reports`.
+- **Flux LoRAs** (#60): `SamplingParams.guidance` (wire 1.4; same field as darkroom's)
+  and a `$guidance` template slot. A packaged `comfyui_flux_lora.json` is picked when
+  the base checkpoint sits under `checkpoints/flux/`, with SDXL's template for every
+  other family, unless `PROOF_WORKFLOW_TEMPLATE` overrides both. `/run/stream` and
+  `argus-proof run` take `guidance`, and leaving out `cfg`/`sampler`/`scheduler`/`guidance`
+  gets the family's defaults (Flux: cfg 1, `euler`/`simple`, guidance 3.5).
 - **Devmode purge** (#59): `POST /purge/{run_id}` deletes one run's report and run dir,
   and `POST /purge` deletes all of them. They're registered only with `ARGUS_PROOF_DEVMODE=1`
   (`serve --devmode`) and need a `{"confirm": "purge"}` body. A run still generating gets
@@ -45,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. Payloads and validation are the same; generated client types get stricter.
 
 ### Fixed
+- **A run is refused instead of silently dropping a value** (#60) when the template
+  has no slot for it: a non-empty negative prompt (`$negative`, which Flux templates
+  don't have), `guidance` (`$guidance`), or `clip_skip` above 2 (`$clip_skip`). The
+  `diffusers` and `a1111` backends refuse `guidance`. ComfyUI renders validate before
+  the first seed is queued.
+- **`clip_skip` 1 no longer selects CLIP's last layer** (#60, as darkroom #19): ComfyUI
+  gets `-max(clip_skip, 2)`, so 1 and 2 both mean the penultimate layer SDXL uses.
+  `-1` blanked some SDXL checkpoints. A rerun of an older `clip_skip: 1` manifest
+  now renders at layer -2.
 - **Moderation no longer reads as safe when a Guard model can't load** (#67).
   `PolicyModerator` re-raises `ModerationError` (a gated checkpoint with no token, an
   unreadable verdict) instead of skipping the detector as flaky. Other per-item errors

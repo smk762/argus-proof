@@ -480,6 +480,18 @@ def test_get_image_missing_404(suite_client: TestClient) -> None:
     assert suite_client.get("/report/run-1/image/nope").status_code == 404
 
 
+def test_run_request_takes_the_checkpoint_familys_sampling_defaults() -> None:
+    from argus_proof.server.app import RunRequest
+
+    sdxl = RunRequest(lora="l", base_checkpoint="sdxl/base.safetensors")
+    assert (sdxl.cfg, sdxl.sampler, sdxl.scheduler, sdxl.guidance) == (7.0, "dpmpp_2m", "karras", None)
+    flux = RunRequest(lora="l", base_checkpoint="flux/flux1-dev.safetensors")
+    assert (flux.cfg, flux.sampler, flux.scheduler, flux.guidance) == (1.0, "euler", "simple", 3.5)
+    # explicit values win; an explicit null guidance stays off
+    custom = RunRequest(lora="l", base_checkpoint="flux/f.safetensors", cfg=2.0, guidance=None)
+    assert (custom.cfg, custom.guidance) == (2.0, None)
+
+
 # --- devmode purge (issue #59) ------------------------------------------------
 
 PURGE = {"confirm": "purge"}
