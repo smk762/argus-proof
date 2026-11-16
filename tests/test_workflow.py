@@ -89,8 +89,12 @@ def test_lora_name_slot_without_weight_slot_raises() -> None:
 
 
 def test_lora_weight_slot_without_name_slot_raises() -> None:
-    template = {"10": {"class_type": "LoraLoader", "inputs": {"lora_name": "fixed.safetensors", "w": "$lora_weight"}}}
+    template = {"10": {"class_type": "LoraLoader", "inputs": {"lora_name": "$other", "w": "$lora_weight"}}}
     with pytest.raises(BackendError, match=r"missing LoRA placeholder"):
+        render_workflow(template, make_spec(), seed=1)
+    # A literal LoRA file is refused before that: it would load unpinned.
+    template["10"]["inputs"]["lora_name"] = "fixed.safetensors"
+    with pytest.raises(BackendError, match=r"loads lora_name='fixed.safetensors' by name"):
         render_workflow(template, make_spec(), seed=1)
 
 
@@ -105,6 +109,7 @@ def test_vae_set_but_template_has_no_vae_slot_raises() -> None:
 from argus_proof.backends.workflow import (  # noqa: E402
     checkpoint_family,
     clip_layer,
+    model_defaults,
     packaged_templates,
     sampling_defaults,
 )
@@ -117,6 +122,7 @@ def _flux_spec(**overrides) -> RunSpec:
             sampler="euler", scheduler="simple", steps=20, cfg=1.0, guidance=3.5, width=1024, height=1024
         ),
         negative_prompt="",
+        **model_defaults("flux/flux1-dev.safetensors"),
     )
     base.update(overrides)
     return make_spec(**base)
@@ -191,3 +197,70 @@ def test_checkpoint_family_and_sampling_defaults() -> None:
     }
     assert sampling_defaults("base.safetensors")["guidance"] is None
     assert sampling_defaults("sd15/x.safetensors")["cfg"] == 7.0
+
+
+# --- text encoders + the VAE are pinned, never loaded by name (issue #77) ---------
+
+
+def test_flux_template_takes_its_encoders_and_vae_from_the_run() -> None:
+    graph = render_workflow(packaged_templates()["flux"], _flux_spec(), seed=1)
+    clip = _find(graph, "DualCLIPLoader")
+    assert (clip["clip_name1"], clip["clip_name2"]) == ("t5xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors")
+    assert _find(graph, "VAELoader")["vae_name"] == "ae.safetensors"
+    fp16 = _flux_spec(text_encoders=["t5xxl_fp16.safetensors", "clip_l.safetensors"], vae="ae-v2.safetensors")
+    graph = render_workflow(packaged_templates()["flux"], fp16, seed=1)
+    assert _find(graph, "DualCLIPLoader")["clip_name1"] == "t5xxl_fp16.safetensors"
+    assert _find(graph, "VAELoader")["vae_name"] == "ae-v2.safetensors"
+
+
+def test_family_model_defaults() -> None:
+    assert model_defaults("flux/x.safetensors") == {
+        "vae": "ae.safetensors",
+        "text_encoders": ["t5xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors"],
+    }
+    assert model_defaults("base.safetensors") == {"vae": None, "text_encoders": []}
+    model_defaults("flux/x.safetensors")["text_encoders"].append("x")  # a copy, not the shared default
+    assert len(model_defaults("flux/x.safetensors")["text_encoders"]) == 2
+
+
+@pytest.mark.parametrize(
+    ("encoders", "match"),
+    [
+        ([], r"no text encoder #1"),  # a slot with no spec entry
+        (["t5.safetensors"], r"no text encoder #2"),
+        (["t5.safetensors", "clip_l.safetensors", "extra.safetensors"], r"missing text encoder placeholder"),
+    ],
+)
+def test_text_encoder_slots_and_the_spec_match_one_for_one(encoders, match) -> None:  # noqa: ANN001
+    with pytest.raises(BackendError, match=match):
+        render_workflow(packaged_templates()["flux"], _flux_spec(text_encoders=encoders), seed=1)
+
+
+def test_text_encoders_on_a_template_without_slots_are_refused() -> None:
+    with pytest.raises(BackendError, match=r"missing text encoder placeholder\(s\) \['\$text_encoder'\]"):
+        render_workflow(example_template(), make_spec(text_encoders=["t5.safetensors"]), seed=1)
+
+
+@pytest.mark.parametrize(
+    ("class_type", "key"),
+    [
+        ("DualCLIPLoader", "clip_name1"),
+        ("CLIPLoader", "clip_name"),
+        ("VAELoader", "vae_name"),
+        ("UNETLoader", "unet_name"),
+        ("CheckpointLoaderSimple", "ckpt_name"),
+        ("ControlNetLoader", "control_net_name"),
+        ("UpscaleModelLoader", "model_name"),
+    ],
+)
+def test_a_literal_model_file_in_a_template_is_refused(class_type, key) -> None:  # noqa: ANN001
+    template = example_template()
+    template["99"] = {"class_type": class_type, "inputs": {key: "some.safetensors"}}
+    with pytest.raises(BackendError, match=rf"node 99 \({class_type}\) loads {key}='some.safetensors' by name"):
+        render_workflow(template, make_spec(), seed=1)
+
+
+def test_a_sampler_name_is_not_a_model_file() -> None:
+    template = example_template()
+    template["99"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}}
+    render_workflow(template, make_spec(), seed=1)

@@ -129,12 +129,16 @@ class ExperimentMatrix(GridAxes):
         ``RunSpec`` run_id) — and becomes the cell's ``run_id_prefix`` so no two
         cells' :class:`RunSpec` ids collide.
         """
+        from argus_proof.backends.workflow import model_defaults  # noqa: PLC0415 - keeps backends off the import
+
         cells: list[tuple[str, str, str, GridConfig]] = []
         for ci, checkpoint in enumerate(self.base_checkpoints):
             for step in self.step_configs:
                 cell_id = f"{self.run_id_prefix}-c{ci:02d}-{_slug(checkpoint)}-{_slug(step.name)}"
                 overrides = {
                     "base_checkpoint": checkpoint,
+                    # The checkpoint family's VAE + text encoders (Flux), as a single run gets them.
+                    **model_defaults(checkpoint),
                     # copy so cells (and the specs they expand into) don't alias one
                     # mutable SamplingParams — pydantic v2 doesn't copy nested models.
                     "sampling": step.sampling.model_copy(),

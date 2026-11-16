@@ -111,6 +111,8 @@ class DiffusersBackend:
             if spec.sampling.guidance is not None:
                 # The renderer is an SDXL pipeline: guidance would be recorded, never applied.
                 raise BackendError("the diffusers backend renders SDXL and can't apply sampling.guidance (Flux)")
+            if spec.text_encoders:
+                raise BackendError("the diffusers backend renders SDXL and can't load separate text_encoders (Flux)")
             # Manifest first: resolves + hashes every model, so a missing checkpoint
             # fails fast (before loading the pipeline) and via the error-event path.
             manifest = build_local_manifest(

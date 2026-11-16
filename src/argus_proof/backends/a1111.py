@@ -124,6 +124,9 @@ class A1111Backend:
             # /sdapi has no guidance field; sending it nowhere while the manifest
             # records it would misrepresent the run.
             raise BackendError("the a1111 backend can't apply sampling.guidance (Flux) — use comfyui")
+        if spec.text_encoders:
+            # /sdapi loads a checkpoint's own encoders; the manifest would record files that never loaded.
+            raise BackendError("the a1111 backend can't load separate text_encoders (Flux) — use comfyui")
         # A1111 applies LoRAs via the prompt: "<lora:name:weight>" — keep any
         # subdirectory (with_suffix drops only the extension) so a nested LoRA
         # (loras/char/subject.safetensors) resolves as "<lora:char/subject:...>".

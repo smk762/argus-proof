@@ -492,6 +492,20 @@ def test_run_request_takes_the_checkpoint_familys_sampling_defaults() -> None:
     assert (custom.cfg, custom.guidance) == (2.0, None)
 
 
+def test_run_request_takes_the_checkpoint_familys_model_files() -> None:
+    from argus_proof.server.app import RunRequest
+
+    sdxl = RunRequest(lora="l", base_checkpoint="sdxl/base.safetensors")
+    assert (sdxl.vae, sdxl.text_encoders) == (None, [])
+    flux = RunRequest(lora="l", base_checkpoint="flux/flux1-dev.safetensors")
+    assert (flux.vae, flux.text_encoders) == ("ae.safetensors", ["t5xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors"])
+    # explicit values win; an explicit null VAE / null encoders stay off
+    custom = RunRequest(lora="l", base_checkpoint="flux/f.safetensors", vae=None, text_encoders=None)
+    assert (custom.vae, custom.text_encoders) == (None, [])
+    fp16 = RunRequest(lora="l", base_checkpoint="flux/f.safetensors", text_encoders=["t5xxl_fp16.safetensors", "c"])
+    assert fp16.text_encoders == ["t5xxl_fp16.safetensors", "c"] and fp16.vae == "ae.safetensors"
+
+
 # --- devmode purge (issue #59) ------------------------------------------------
 
 PURGE = {"confirm": "purge"}

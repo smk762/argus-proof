@@ -50,7 +50,10 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #      proof-side producer sends list their defaulted fields as required (the
 #      payloads are unchanged; issue #58). SamplingParams.guidance carries Flux's
 #      distilled guidance (issue #60).
-PROOF_VERSION = "1.4"
+# 1.5: additive — RunSpec.text_encoders / RunManifest.text_encoders pin the text
+#      encoders a template loads (Flux's T5 + CLIP-L) by SHA256, like the VAE, and
+#      GridConfig carries vae + text_encoders into the specs it expands (issue #77).
+PROOF_VERSION = "1.5"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -170,6 +173,8 @@ class RunManifest(_Versioned):
     run_id: str
     base_checkpoint: ModelRef
     vae: ModelRef | None = None
+    # The text encoders a template loads separately from the checkpoint (Flux: T5, then CLIP-L), in slot order.
+    text_encoders: list[ModelRef] = Field(default_factory=list)
     loras: list[LoRARef] = Field(default_factory=list)
     sampling: SamplingParams
     prompt: str
@@ -199,11 +204,16 @@ class RunSpec(BaseModel):
     ``seeds`` is the seed strategy made concrete — one fixed seed for a
     within-checkpoint sweep, or a fixed seed-set (so seed luck averages out) for
     a cross-checkpoint comparison. One image is produced per seed.
+
+    ``text_encoders`` fill a template's ``$text_encoder`` / ``$text_encoder_2`` …
+    slots in order (Flux: T5, then CLIP-L); the slots and the list must match one
+    for one, like LoRAs.
     """
 
     run_id: str
     base_checkpoint: str
     vae: str | None = None
+    text_encoders: list[str] = Field(default_factory=list)
     loras: list[LoRASpec] = Field(default_factory=list)
     sampling: SamplingParams
     prompt: str
@@ -320,6 +330,10 @@ class GridConfig(GridAxes):
 
     base_checkpoint: str
     sampling: SamplingParams
+    # Model files every run in the grid loads besides the checkpoint and LoRA. Callers fill them
+    # from the checkpoint family's defaults (workflow.model_defaults) when a run doesn't name them.
+    vae: str | None = None
+    text_encoders: list[str] = Field(default_factory=list)
 
 
 class GridEstimate(BaseModel):

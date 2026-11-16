@@ -16,6 +16,14 @@ Placeholders:
 * LoRAs — ``$lora`` / ``$lora_weight`` for the first LoRA, ``$lora_2`` /
   ``$lora_2_weight`` for the second, and so on. The template's LoRA slots and
   the spec's LoRA list must match exactly, so a run can't silently drop a LoRA.
+* text encoders — ``$text_encoder``, ``$text_encoder_2``, … take
+  ``spec.text_encoders`` in order (Flux: T5, then CLIP-L), matched one for one
+  like LoRAs.
+
+Every model file a graph loads comes from the run, so the manifest can pin it by
+SHA256: a template whose loader names a file literally (``"vae_name":
+"ae.safetensors"``) is refused, since that file would load unrecorded and could
+change on the ComfyUI host while the manifest stays the same.
 
 No value is silently dropped: a run that sets something the template has no
 slot for — a VAE, a non-empty negative prompt (Flux takes none), ``guidance``,
@@ -40,6 +48,14 @@ from argus_proof.backends.base import BackendError
 from argus_proof.models import RunSpec
 
 _LORA_RE = re.compile(r"^\$lora(?:_(\d+))?(_weight)?$")
+_TEXT_ENCODER_RE = re.compile(r"^\$text_encoder(?:_(\d+))?$")
+# Loader inputs that name a model file (ComfyUI's core loaders: ckpt_name, vae_name, lora_name,
+# clip_name / clip_name1…, unet_name, control_net_name, style_model_name, …). sampler_name is a
+# sampler, not a file.
+_MODEL_INPUT_RE = re.compile(
+    r"^(ckpt|vae|lora|clip|unet|control_net|style_model|clip_vision|upscale_model|gligen|hypernetwork|model)"
+    r"_name\d*$"
+)
 
 # The example SDXL+LoRA template shipped with the package (single LoRA, clip
 # skip, checkpoint's built-in VAE). A starting point users adapt to their graph.
@@ -47,7 +63,8 @@ EXAMPLE_TEMPLATE = "comfyui_sdxl_lora.json"
 
 # Packaged templates for families other than the SDXL default. Flux.1: the
 # checkpoint is a bare transformer, so the template loads the T5/CLIP-L text
-# encoders and the ae VAE by name; no negative (ConditioningZeroOut), guidance
+# encoders ($text_encoder, $text_encoder_2) and the ae VAE ($vae) the run names
+# (FAMILY_MODEL_DEFAULTS by default); no negative (ConditioningZeroOut), guidance
 # through FluxGuidance.
 FAMILY_TEMPLATES = {"flux": "comfyui_flux_lora.json"}
 
@@ -95,6 +112,21 @@ FAMILY_SAMPLING_DEFAULTS: dict[str, dict[str, object]] = {
 }
 
 
+# Model files per family, for a request that names none: Flux.1 checkpoints are bare
+# transformers, so the run loads the T5 and CLIP-L text encoders and the ae VAE. SDXL
+# (and any family not listed) uses the checkpoint's own.
+_SDXL_MODELS: dict[str, object] = {"vae": None, "text_encoders": []}
+FAMILY_MODEL_DEFAULTS: dict[str, dict[str, object]] = {
+    "flux": {"vae": "ae.safetensors", "text_encoders": ["t5xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors"]},
+}
+
+
+def model_defaults(checkpoint: str) -> dict[str, object]:
+    """``vae`` / ``text_encoders`` defaults for *checkpoint*'s family (SDXL's, none, for a family without its own)."""
+    defaults = FAMILY_MODEL_DEFAULTS.get(checkpoint_family(checkpoint) or "", _SDXL_MODELS)
+    return {"vae": defaults["vae"], "text_encoders": list(defaults["text_encoders"])}  # type: ignore[call-overload]
+
+
 def sampling_defaults(checkpoint: str) -> dict[str, object]:
     """``cfg`` / ``sampler`` / ``scheduler`` / ``guidance`` defaults for
     *checkpoint*'s family (SDXL's for a family without its own)."""
@@ -136,10 +168,10 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
     """Return a concrete ComfyUI graph for *spec* at *seed*.
 
     Raises :class:`BackendError` if a used placeholder has no value (e.g. a
-    ``$vae`` slot but ``spec.vae is None``), if the template's LoRA slots and
-    ``spec.loras`` don't line up one-for-one, or if the run sets a value the
-    template would ignore (a VAE, a negative prompt, ``guidance``, a
-    ``clip_skip`` above 2).
+    ``$vae`` slot but ``spec.vae is None``), if the template's LoRA or text-encoder
+    slots and the spec's lists don't line up one-for-one, if a loader names a model
+    file literally, or if the run sets a value the template would ignore (a VAE, a
+    negative prompt, ``guidance``, a ``clip_skip`` above 2).
     """
     scalars = _scalar_values(spec, seed)
     lora_by_index = {i: lora for i, lora in enumerate(spec.loras, start=1)}
@@ -149,6 +181,8 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
     # otherwise silently drop the spec's weight while the manifest records it.
     seen_lora_names: set[int] = set()
     seen_lora_weights: set[int] = set()
+    encoder_by_index = {i: name for i, name in enumerate(spec.text_encoders, start=1)}
+    seen_encoders: set[int] = set()
 
     def resolve(value: object) -> object:
         if not isinstance(value, str) or not value.startswith("$"):
@@ -174,14 +208,31 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
             (seen_lora_weights if is_weight else seen_lora_names).add(index)
             return lora.weight if is_weight else lora.name
 
+        m = _TEXT_ENCODER_RE.match(value)
+        if m:
+            index = int(m.group(1)) if m.group(1) else 1
+            if index not in encoder_by_index:
+                raise BackendError(
+                    f"workflow template references {value} but the run spec has no text encoder #{index} "
+                    f"({len(spec.text_encoders)} text encoder(s) supplied)"
+                )
+            seen_encoders.add(index)
+            return encoder_by_index[index]
+
         # An unknown "$..." string: leave it untouched (it may be a literal).
         return value
 
     rendered = copy.deepcopy(template)
-    for node in rendered.values():
+    for node_id, node in rendered.items():
         inputs = node.get("inputs") if isinstance(node, dict) else None
         if isinstance(inputs, dict):
             for key, val in inputs.items():
+                if _MODEL_INPUT_RE.match(key) and isinstance(val, str) and not val.startswith("$"):
+                    raise BackendError(
+                        f"workflow template node {node_id} ({node.get('class_type')}) loads {key}={val!r} by name, "
+                        "so the manifest can't pin it by SHA256 — use a placeholder ($base_checkpoint, $vae, "
+                        "$text_encoder, $lora …) and name the file in the run"
+                    )
                 inputs[key] = resolve(val)
 
     def _slot(index: int, weight: bool) -> str:
@@ -195,6 +246,14 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
             f"workflow template is missing LoRA placeholder(s) {sorted(missing)} — "
             f"the spec supplies {len(spec.loras)} LoRA(s); every LoRA needs both its name and weight slot "
             "so a LoRA (or its weight) can't be silently dropped"
+        )
+
+    unused = [f"$text_encoder{'' if i == 1 else f'_{i}'}" for i in encoder_by_index if i not in seen_encoders]
+    if unused:
+        raise BackendError(
+            f"workflow template is missing text encoder placeholder(s) {unused} — the spec supplies "
+            f"{len(spec.text_encoders)} text encoder(s), and one the template doesn't load would be recorded in "
+            "the manifest as used; add the slots or drop them from the spec"
         )
 
     # A configured VAE that the template never consumes would be silently ignored

@@ -344,3 +344,26 @@ def test_count_prompt_items_matches_actual_expansion() -> None:
         plan = build_grid(config, PROMPTS)
         n_items = plan.estimate.n_runs // (len(config.lora_checkpoints) * len(config.lora_weights))
         assert count_prompt_items(config, PROMPTS) == n_items, cid
+
+
+def test_a_flux_cell_gets_its_familys_model_files() -> None:
+    cells = _matrix(
+        base_checkpoints=["sdxl/base.safetensors", "flux/flux1-dev.safetensors"],
+        step_configs=[StepConfig(name="q", sampling=_sampling())],
+    ).cell_configs()
+    by_checkpoint = {checkpoint: config for _, checkpoint, _, config in cells}
+    assert by_checkpoint["sdxl/base.safetensors"].text_encoders == []
+    flux = by_checkpoint["flux/flux1-dev.safetensors"]
+    assert flux.vae == "ae.safetensors" and flux.text_encoders == ["t5xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors"]
+    spec = (
+        expand_experiment(
+            _matrix(
+                base_checkpoints=["flux/flux1-dev.safetensors"],
+                step_configs=[StepConfig(name="q", sampling=_sampling())],
+            ),
+            PROMPTS,
+        )
+        .cells[0]
+        .plan.specs[0]
+    )
+    assert spec.vae == "ae.safetensors" and len(spec.text_encoders) == 2

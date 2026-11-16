@@ -279,3 +279,89 @@ def test_resolver_matches_filenames_with_glob_metacharacters(tmp_path: Path) -> 
     weird = tmp_path / "loras" / "subject[v2].safetensors"
     weird.write_bytes(b"x")
     assert make_dir_resolver(tmp_path)("subject[v2].safetensors") == weird
+
+
+# --------------------------------------------------------------------------
+# Flux's text encoders + VAE are pinned by SHA256 (issue #77)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def flux_models(tmp_path: Path) -> Path:
+    root = tmp_path / "flux-models"
+    for rel, data in {
+        "checkpoints/flux/flux1-dev.safetensors": b"flux-transformer",
+        "loras/subject.safetensors": b"the-lora-bytes",
+        "clip/t5xxl_fp8_e4m3fn.safetensors": b"t5-fp8",
+        "clip/clip_l.safetensors": b"clip-l",
+        "vae/ae.safetensors": b"ae",
+    }.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(data)
+    return root
+
+
+def _flux_backend(models: Path, transport: FakeTransport) -> ComfyUIBackend:
+    from argus_proof.backends.workflow import packaged_templates
+
+    return ComfyUIBackend(
+        workflow_template=example_template(),
+        family_templates=packaged_templates(),
+        resolve_model=make_dir_resolver(models),
+        transport=transport,
+        poll_interval=0,
+    )
+
+
+def _flux_spec(**overrides) -> RunSpec:
+    from argus_proof.backends.workflow import model_defaults
+
+    spec = make_spec([1]).model_copy(
+        update={
+            "base_checkpoint": "flux/flux1-dev.safetensors",
+            "negative_prompt": "",
+            "sampling": SamplingParams(
+                sampler="euler", scheduler="simple", steps=4, cfg=1.0, guidance=3.5, width=64, height=64
+            ),
+            **model_defaults("flux/flux1-dev.safetensors"),
+        }
+    )
+    return spec.model_copy(update=overrides)
+
+
+def test_a_flux_manifest_pins_its_text_encoders_and_vae(flux_models: Path, tmp_path: Path) -> None:
+    manifest = _flux_backend(flux_models, FakeTransport(make_png())).generate(_flux_spec(), tmp_path / "a").manifest
+    assert [(te.name, te.sha256) for te in manifest.text_encoders] == [
+        ("t5xxl_fp8_e4m3fn.safetensors", sha256_file(flux_models / "clip" / "t5xxl_fp8_e4m3fn.safetensors")),
+        ("clip_l.safetensors", sha256_file(flux_models / "clip" / "clip_l.safetensors")),
+    ]
+    assert manifest.vae is not None
+    assert manifest.vae.sha256 == sha256_file(flux_models / "vae" / "ae.safetensors")
+
+    # Swap the T5 on disk (fp8 -> another build under the same name): the manifest changes.
+    (flux_models / "clip" / "t5xxl_fp8_e4m3fn.safetensors").write_bytes(b"t5-fp16-renamed")
+    again = _flux_backend(flux_models, FakeTransport(make_png())).generate(_flux_spec(), tmp_path / "b").manifest
+    assert again.text_encoders[0].sha256 != manifest.text_encoders[0].sha256
+
+
+@pytest.mark.parametrize(
+    "encoders",
+    [
+        [],
+        ["t5xxl_fp8_e4m3fn.safetensors"],
+        ["t5xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors", "clip_l.safetensors"],
+    ],
+)
+def test_a_slot_spec_mismatch_is_refused_before_generation(flux_models: Path, tmp_path: Path, encoders) -> None:  # noqa: ANN001
+    transport = FakeTransport(make_png())
+    with pytest.raises(BackendError, match="text encoder"):
+        _flux_backend(flux_models, transport).generate(_flux_spec(text_encoders=encoders), tmp_path)
+    assert transport.posts == []
+
+
+def test_a_missing_text_encoder_fails_fast(flux_models: Path, tmp_path: Path) -> None:
+    (flux_models / "clip" / "clip_l.safetensors").unlink()
+    transport = FakeTransport(make_png())
+    with pytest.raises(BackendError, match="clip_l.safetensors"):
+        _flux_backend(flux_models, transport).generate(_flux_spec(), tmp_path)
+    assert transport.posts == []
