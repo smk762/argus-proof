@@ -143,8 +143,22 @@ class _NudeNet(BaseHTTPRequestHandler):
         ],
     }
 
+    health: dict | None = None  # GET /health; None answers 404, as the upstream 320n image does
+
     def log_message(self, *args) -> None:  # keep test output quiet
         pass
+
+    def do_GET(self) -> None:
+        if self.path != "/health" or self.health is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        out = json.dumps(self.health).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
 
     def do_POST(self) -> None:
         body = self.rfile.read(int(self.headers["Content-Length"]))
@@ -163,7 +177,19 @@ class _NudeNet(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def nudenet_url() -> Iterator[str]:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _NudeNet)
+    yield from _serve(_NudeNet)
+
+
+@pytest.fixture
+def nudenet_640m_url() -> Iterator[str]:
+    class _640m(_NudeNet):
+        health = {"model_state": "cpu", "detector": "NudeNet", "model": "640m.onnx", "resolution": 640}
+
+    yield from _serve(_640m)
+
+
+def _serve(handler: type[BaseHTTPRequestHandler]) -> Iterator[str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         yield f"http://127.0.0.1:{server.server_port}"
@@ -214,3 +240,45 @@ def test_nudenet_unavailable_without_a_server_and_degrades(monkeypatch: pytest.M
     assert d.is_available() is False  # no NudeNet server configured
     # calling anyway must not crash — the config error is caught -> None
     assert d.unsafe_probability(Path("nope.png")) is None
+
+
+# --------------------------------------------------------------------------
+# The detector the server runs is recorded (#80): 320n and 640m don't compare
+# --------------------------------------------------------------------------
+
+
+def test_the_report_names_a_640m_detector(nudenet_640m_url: str) -> None:
+    detector = NudeNetDetector(base_url=nudenet_640m_url, timeout=5)
+    assert detector.detector() == "640m"
+    assert SafetyScorer([detector]).provenance().model == "nudenet-640m"
+
+
+def test_a_server_without_health_is_an_unnamed_nudenet(nudenet_url: str) -> None:
+    detector = NudeNetDetector(base_url=nudenet_url, timeout=5)  # the upstream 320n image has no /health
+    assert detector.detector() is None
+    assert SafetyScorer([detector]).provenance().model == "nudenet"
+
+
+def test_an_unreachable_server_is_asked_again() -> None:
+    detector = NudeNetDetector(base_url="http://127.0.0.1:9", timeout=0.5)
+    assert detector.detector() is None
+    assert detector._asked is False  # not recorded as "unknown" for good
+
+
+def test_cross_run_stats_keep_the_safety_detector() -> None:
+    from argus_proof.crossrun import CrossRunStore, run_stats
+    from argus_proof.models import ModelRef, RunManifest, SamplingParams, ScorerProvenance
+
+    report = _report([0.9, 0.2])
+    report.scorers = [ScorerProvenance(name="safety", metric="safety", model="nudenet-640m")]
+    manifest = RunManifest(
+        run_id=report.run_id,
+        base_checkpoint=ModelRef(name="base.safetensors", sha256="0" * 64),
+        sampling=SamplingParams(sampler="euler", scheduler="normal", steps=4, cfg=7.0, width=64, height=64),
+        prompt="p",
+        seeds=[1, 2],
+        engine="fake",
+        engine_version="1",
+    )
+    assert run_stats(manifest, report).safety_detector == "nudenet-640m"
+    assert "safety_detector" in CrossRunStore.SLICEABLE

@@ -61,6 +61,9 @@ class RunStats(BaseModel):
     safety_hit_rate: float | None = None
     proof_version: str = ""
     scorers: str | None = None
+    # The safety scorer's model (e.g. "nudenet-640m"): 320n and 640m score the same image
+    # differently, so safety figures are only comparable within one detector.
+    safety_detector: str | None = None
     created_at: str | None = None
     # The experiment arm this run belongs to (argus_proof.experiment): the named
     # sampler variant, plus the upstream factors proof observes but can't vary
@@ -123,6 +126,7 @@ def run_stats(
         safety_min, safety_hit_rate = tail["min_safety"], tail["hit_rate"]
 
     scorers = ",".join(f"{p.name}@{p.version}" if p.version else p.name for p in report.scorers) or None
+    safety_detector = next((p.model for p in report.scorers if p.metric == "safety"), None)
     return RunStats(
         run_id=report.run_id,
         training_run_id=manifest.training_run_id,
@@ -144,6 +148,7 @@ def run_stats(
         safety_hit_rate=safety_hit_rate,
         proof_version=report.proof_version,
         scorers=scorers,
+        safety_detector=safety_detector,
         created_at=report.created_at,
         step_config=step_config,
         labels=dict(labels or {}),
@@ -174,7 +179,15 @@ class CrossRunStore:
     """A parquet file of :class:`RunStats` rows, keyed by ``run_id`` (re-append updates)."""
 
     # Columns a slice can group by (identity dimensions, not measured outcomes).
-    SLICEABLE = ("base_checkpoint", "lora", "lora_weight", "prompt", "training_run_id", "step_config")
+    SLICEABLE = (
+        "base_checkpoint",
+        "lora",
+        "lora_weight",
+        "prompt",
+        "training_run_id",
+        "step_config",
+        "safety_detector",
+    )
 
     # Arbitrary experiment labels are sliced as "label:<key>" (they have no fixed
     # schema, so they're stored as a JSON text column rather than one column each).

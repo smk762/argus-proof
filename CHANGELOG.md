@@ -16,8 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest hashed that node's models. A refused or timed-out lease, or a broker error, fails the
   run with a message that says so, and a failed run is reported to the broker as failed.
   `gpu-tenant.yaml` declares both kinds; `.env.example` and the README list the variables.
+- **The report names the NudeNet detector** (#80). The safety scorer asks the server
+  (`NudeNetClient.info()`, cortex 0.7) and records `nudenet-640m`, `nudenet-320n`, or `nudenet`
+  when the server doesn't say as its `model` in the report's `scorers`. Cross-run stats gain a
+  `safety_detector` column, sliceable, so 320n and 640m safety figures aren't pooled.
 
 ### Changed
+- **The suggested NudeNet server is the suite's shared 640m** (#80): argus-retina's
+  `ghcr.io/smk762/argus-retina-nudenet` on morpheus :8130, in `.env.example`, the README and the
+  safety scorer's docstring, in place of the upstream 320n image.
 - **argus-cortex `>=0.7,<0.8`**, with the `[remote,yaml]` extras for the broker client and
   tenant-manifest loading (was `>=0.4,<0.5`).
 
