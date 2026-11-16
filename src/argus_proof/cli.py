@@ -55,9 +55,6 @@ def _load_report(report_json: Path):  # noqa: ANN202 - EvalReport imported lazil
     return _load_model(report_json, EvalReport, "EvalReport")
 
 
-_RUN_PREFIX_RE = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
-
-
 def _echo_progress(event) -> None:  # noqa: ANN001 - ProgressEvent, imported lazily by callers
     """Print a backend ProgressEvent as a compact CLI line."""
     if event.type == "image":
@@ -162,7 +159,7 @@ def run(
     prefix: str = Option("proof", "--run-prefix", help="run_id prefix for the generated runs"),
 ) -> None:
     """Generate a sample grid from a trained LoRA via the configured backend."""
-    import re as _re
+    from argus_cortex.fs import PathRefused, safe_name
 
     from argus_proof.backends import BackendError
     from argus_proof.backends.workflow import model_defaults, sampling_defaults
@@ -170,9 +167,11 @@ def run(
     from argus_proof.grid import GridError, build_grid, read_export_prompts
     from argus_proof.models import GridConfig, SamplingParams
 
-    if not _re.fullmatch(_RUN_PREFIX_RE, prefix):
+    try:
+        safe_name(prefix)
+    except PathRefused:
         typer.echo(f"invalid --run-prefix {prefix!r}: use letters, digits, '.', '_' or '-'", err=True)
-        raise typer.Exit(2)
+        raise typer.Exit(2) from None
     if no_guidance and guidance is not None:
         typer.echo("--guidance and --no-guidance are mutually exclusive", err=True)
         raise typer.Exit(2)
