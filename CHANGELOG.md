@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Identity references that are resized or re-encoded copies of training images are refused**
+  (#87). With the `[score]` extra, the held-out check adds a whole-image pHash within 6 bits to
+  the SHA256 match. Measured on real photos, a resize plus JPEG re-encode lands at 0–2 bits. A crop
+  is still not caught. The report's `scorers` gains a `held-out-references` row naming the check
+  that ran (`sha256+phash<=6`, `sha256` without the extra, or why none could).
 - **GPU leases from the argus-iris broker** (#79). The `comfyui` and `diffusers` backends hold
   one `batch` lease per run (kinds `generate` on `comfyui` and `generate-local` in-process),
   through argus-cortex's coordinator and the host-wide `ARGUS_GPU_*` variables; unset, nothing
