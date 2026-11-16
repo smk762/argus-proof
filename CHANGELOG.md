@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/run/stream` takes `vae` and `text_encoders`; `argus-proof run` takes `--text-encoder`.
   `GridConfig` carries `vae` and `text_encoders`. The remote backend compares the field.
 
+- **Identity references that are training images are refused** (#81). `evaluate.check_held_out`
+  compares each reference's SHA256 with the export's training images (the export's files outside
+  `references/`, plus the `manifest.jsonl` rows' `exported_path`/`abs_path`). `/run/stream`
+  answers `400` before generating, and `argus-proof score` exits 1 when the run's `source_manifest`
+  is readable. Exact copies only; near-duplicates are #87.
+- CLAUDE.md has a "Must never happen" table naming the check behind each rule (#81). New guards:
+  no in-process AGPL import, no heavy optional dependency at module load, no committed model weights
+  and none fetched by the Dockerfile, a wire change bumps `PROOF_VERSION` (a schema digest per
+  version in `test_schema.py`), and every test the table cites exists.
+
 ### Fixed
 - `argus-proof run --vae` reaches the run. It was accepted and dropped.
 

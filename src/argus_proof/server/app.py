@@ -389,7 +389,13 @@ def create_app(
         can't drift from the wire schema. Generation runs in a worker thread;
         frames bridge back via a queue.
         """
-        from argus_proof.evaluate import EvaluateError, backend_from_env, reference_images, score_images
+        from argus_proof.evaluate import (
+            EvaluateError,
+            backend_from_env,
+            check_held_out,
+            reference_images,
+            score_images,
+        )
         from argus_proof.grid import read_export_prompts
 
         # Resolve everything that can fail on bad input BEFORE streaming starts,
@@ -403,6 +409,10 @@ def create_app(
             refs_dir = export_dir / "references"
             if refs_dir.is_dir():
                 references = reference_images(refs_dir)
+                try:
+                    check_held_out(references, export_dir)  # before any GPU spend
+                except EvaluateError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
             if prompt is None:
                 prompts = read_export_prompts(export_dir)
                 if not prompts:
