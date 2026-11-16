@@ -144,12 +144,31 @@ def test_score_run_dir_produces_report(tmp_path: Path) -> None:
 # -- identity references are held out from training (CLAUDE.md must-never) -----
 
 
+def _photo(path: Path, seed: int, size: tuple[int, int] = (320, 240)) -> Path:
+    """A structured stand-in for a photo: seeded shapes, so distinct seeds hash far apart under pHash."""
+    import random
+
+    from PIL import Image, ImageDraw, ImageFilter
+
+    rng = random.Random(seed)
+    im = Image.new("RGB", size, tuple(rng.randrange(256) for _ in range(3)))
+    draw = ImageDraw.Draw(im)
+    for _ in range(25):
+        x, y = rng.randrange(size[0]), rng.randrange(size[1])
+        draw.ellipse(
+            (x, y, x + rng.randrange(20, 140), y + rng.randrange(20, 140)),
+            fill=tuple(rng.randrange(256) for _ in range(3)),
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    im.filter(ImageFilter.GaussianBlur(2)).save(path)
+    return path
+
+
 def _export(tmp_path: Path) -> Path:
     export = tmp_path / "export"
-    save_png(export / "train" / "a.png", color=(1, 2, 3))
-    save_png(export / "references" / "held_out.png", color=(9, 9, 9))
-    elsewhere = tmp_path / "dataset" / "b.png"  # a manifest-only row pointing at the dataset
-    save_png(elsewhere, color=(4, 5, 6))
+    _photo(export / "train" / "a.png", seed=1)
+    _photo(export / "references" / "held_out.png", seed=2)
+    elsewhere = _photo(tmp_path / "dataset" / "b.png", seed=3)  # a manifest-only row pointing at the dataset
     (export / "manifest.jsonl").write_text(
         f'{{"exported_path": "train/a.png", "abs_path": "{elsewhere}"}}\nnot json\n', encoding="utf-8"
     )
@@ -171,8 +190,9 @@ def test_held_out_references_pass(tmp_path: Path) -> None:
 def test_a_reference_that_is_a_training_image_is_refused(tmp_path: Path) -> None:
     export = _export(tmp_path)
     copy = tmp_path / "refs" / "renamed.png"  # the same bytes under another name
-    save_png(copy, color=(4, 5, 6))
-    with pytest.raises(EvaluateError, match=r"1 identity reference\(s\) are training images.*renamed.png"):
+    copy.parent.mkdir()
+    copy.write_bytes((tmp_path / "dataset" / "b.png").read_bytes())
+    with pytest.raises(EvaluateError, match=r"1 identity reference\(s\) are training images.*renamed.png.*same bytes"):
         check_held_out([copy], export)
 
 
@@ -184,4 +204,65 @@ def test_scoring_refuses_overlapping_references(tmp_path: Path) -> None:
     manifest_path.write_text(manifest.model_dump_json(), encoding="utf-8")
     with pytest.raises(EvaluateError, match="training images"):
         score_run_dir(run_dir, references=[export / "train" / "a.png"])
-    assert score_run_dir(run_dir, references=reference_images(export / "references")).run_id == "run-1"
+    report = score_run_dir(run_dir, references=reference_images(export / "references"))
+    assert report.run_id == "run-1"
+    [check] = [p for p in report.scorers if p.name == "held-out-references"]
+    assert check.model == "sha256+phash<=6"  # the report says which check ran
+
+
+# -- near-duplicates (#87) ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        pytest.param(lambda im: im.resize((im.width // 2, im.height // 2)), id="downscaled"),
+        pytest.param(lambda im: im.resize((im.width * 2, im.height * 2)), id="upscaled"),
+        pytest.param(lambda im: im, id="re-encoded"),
+    ],
+)
+def test_a_resized_or_reencoded_training_image_is_refused(tmp_path: Path, transform) -> None:  # noqa: ANN001
+    from PIL import Image
+
+    export = _export(tmp_path)
+    ref = tmp_path / "refs" / "copy.jpg"
+    ref.parent.mkdir()
+    with Image.open(export / "train" / "a.png") as im:
+        transform(im.convert("RGB")).save(ref, "JPEG", quality=60)
+    with pytest.raises(EvaluateError, match=r"copy.jpg = .*a.png \(near-duplicate, \d bits\)"):
+        check_held_out([ref], export)
+
+
+def test_a_different_photo_passes_the_near_duplicate_check(tmp_path: Path) -> None:
+    export = _export(tmp_path)
+    others = [_photo(tmp_path / "refs" / f"r{seed}.png", seed=seed) for seed in range(10, 20)]
+    assert check_held_out(others, export) == "sha256+phash<=6"
+
+
+def test_without_the_score_extra_only_exact_copies_are_checked(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    import argus_proof.evaluate as evaluate
+
+    monkeypatch.setattr(evaluate, "near_duplicates_checked", lambda: False)
+    export = _export(tmp_path)
+    ref = tmp_path / "refs" / "copy.jpg"
+    ref.parent.mkdir()
+    from PIL import Image
+
+    with Image.open(export / "train" / "a.png") as im:
+        im.convert("RGB").save(ref, "JPEG", quality=60)
+    assert check_held_out([ref], export) == "sha256"  # not caught, and the report will say so
+
+
+def test_an_unreadable_training_file_is_skipped(tmp_path: Path) -> None:
+    export = _export(tmp_path)
+    (export / "train" / "broken.png").write_bytes(b"not an image")
+    assert check_held_out(reference_images(export / "references"), export) == "sha256+phash<=6"
+
+
+def test_the_report_says_when_no_check_could_run(tmp_path: Path) -> None:
+    export = _export(tmp_path)
+    run_dir = _generated_run(tmp_path)
+    report = score_run_dir(run_dir, references=reference_images(export / "references"))  # no source_manifest
+    [check] = [p for p in report.scorers if p.name == "held-out-references"]
+    assert check.model == "not checked: no training export"
+    assert not any(p.name == "held-out-references" for p in score_run_dir(run_dir).scorers)  # no references

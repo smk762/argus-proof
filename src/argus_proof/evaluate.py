@@ -15,13 +15,17 @@ import os
 import re
 from pathlib import Path
 
+import structlog
+
 from argus_proof.backends import GenBackend, get_backend
 from argus_proof.backends.base import MANIFEST_NAME, ModelResolver, make_dir_resolver
 from argus_proof.backends.pnginfo import read_dimensions
 from argus_proof.backends.workflow import example_template, load_template, packaged_templates
 from argus_proof.hashing import sha256_cached
-from argus_proof.models import EvalReport, GateConfig, GeneratedImage, ProofError, RunManifest
+from argus_proof.models import EvalReport, GateConfig, GeneratedImage, ProofError, RunManifest, ScorerProvenance
 from argus_proof.scoring import ScoreContext, score_run
+
+logger = structlog.get_logger()
 
 
 class EvaluateError(ProofError):
@@ -246,25 +250,80 @@ def training_images(export_dir: Path) -> list[Path]:
     return sorted(found)
 
 
-def check_held_out(references: list[Path], export_dir: Path) -> None:
+# Near-duplicate tier of the held-out check (#87): a 64-bit pHash of the whole image, and a Hamming distance at or
+# below this is the same photograph. Measured on real photos: a resize plus JPEG re-encode lands at 0-2 bits, and
+# the pairs at or under 6 were re-scans and re-uploads of one photo. A crop is NOT caught: trimming even 5% moves
+# the hash 8+ bits, into the range of unrelated photos.
+NEAR_DUP_BITS = 6
+HELD_OUT_CHECK = "held-out-references"
+
+
+def _phash_bits(path: Path) -> int | None:
+    """64-bit pHash of *path* as an int, or None when it can't be read as an image."""
+    import imagehash  # noqa: PLC0415 - the [score] extra
+    from PIL import Image, UnidentifiedImageError  # noqa: PLC0415
+
+    try:
+        with Image.open(path) as im:
+            im.draft("L", (256, 256))  # JPEG: decode at reduced size; pHash downsamples to 32x32 anyway
+            return int(str(imagehash.phash(im.convert("L"))), 16)
+    except (OSError, UnidentifiedImageError, ValueError):
+        return None
+
+
+def near_duplicates_checked() -> bool:
+    """Whether :func:`check_held_out` can compare perceptual hashes (``imagehash`` + ``PIL``, the ``[score]`` extra)."""
+    from argus_proof.scoring.scorers._util import module_available  # noqa: PLC0415
+
+    return module_available("imagehash", "PIL")
+
+
+def check_held_out(references: list[Path], export_dir: Path) -> str:
     """Refuse identity *references* that are training images of the export at *export_dir*.
 
     A reference the LoRA trained on measures memorisation, not likeness, and
-    makes every identity score meaningless. Compares SHA256 of the bytes, so an
-    exact copy is caught under any name; a re-encoded or cropped copy is not.
-    Raises :class:`EvaluateError` naming each overlap.
+    makes every identity score meaningless. Two tiers:
+
+    * the SHA256 of the bytes, so an exact copy is caught under any name;
+    * with the ``[score]`` extra, a whole-image pHash within :data:`NEAR_DUP_BITS`,
+      so a resized or re-encoded copy is caught too.
+
+    A crop is not caught. The training set includes each manifest row's
+    ``abs_path`` source, so a reference that is the source of a curator crop is.
+
+    Raises :class:`EvaluateError` naming each overlap. Returns which tiers ran
+    (``"sha256+phash<=6"`` or ``"sha256"``), for the report.
     """
     if not references:
-        return
-    training = {sha256_cached(p): p for p in training_images(export_dir)}
-    overlap = [(ref, training[digest]) for ref in references if (digest := sha256_cached(ref)) in training]
+        return "sha256"
+    training = training_images(export_dir)
+    by_digest = {sha256_cached(p): p for p in training}
+    overlap: list[tuple[Path, Path, str]] = []
+    for ref in references:
+        match = by_digest.get(sha256_cached(ref))
+        if match is not None:
+            overlap.append((ref, match, "same bytes"))
+    method = "sha256"
+    if near_duplicates_checked():
+        method = f"sha256+phash<={NEAR_DUP_BITS}"
+        exact = {ref for ref, _, _ in overlap}
+        train_hashes = [(p, h) for p in training if (h := _phash_bits(p)) is not None]
+        for ref in references:
+            if ref in exact or (ref_hash := _phash_bits(ref)) is None:
+                continue
+            best = min(train_hashes, key=lambda t: (t[1] ^ ref_hash).bit_count(), default=None)
+            if best is not None and (dist := (best[1] ^ ref_hash).bit_count()) <= NEAR_DUP_BITS:
+                overlap.append((ref, best[0], f"near-duplicate, {dist} bits"))
+    else:
+        logger.warning("held_out.near_duplicates_unchecked", reason="imagehash/PIL not installed ([score] extra)")
     if overlap:
-        pairs = ", ".join(f"{ref.name} = {train}" for ref, train in overlap[:5])
+        pairs = ", ".join(f"{ref.name} = {train} ({how})" for ref, train, how in overlap[:5])
         more = f" (+{len(overlap) - 5} more)" if len(overlap) > 5 else ""
         raise EvaluateError(
             f"{len(overlap)} identity reference(s) are training images, so identity would measure memorisation: "
             f"{pairs}{more}. References must be held out from the training set."
         )
+    return method
 
 
 # ---------------------------------------------------------------------------
@@ -312,15 +371,21 @@ def score_images(
 
     With *references*, the run's training export (``manifest.source_manifest``'s
     directory, when it is readable here) is checked first: a reference that is a
-    training image raises :class:`EvaluateError` (:func:`check_held_out`).
+    training image raises :class:`EvaluateError` (:func:`check_held_out`). The
+    report's ``scorers`` records which check ran, or that none could, as
+    ``held-out-references``.
     """
-    if references and manifest.source_manifest:
-        export_dir = Path(manifest.source_manifest).parent
-        if export_dir.is_dir():
-            check_held_out(references, export_dir)
+    held_out: str | None = None
+    if references:
+        held_out = "not checked: no training export"
+        if manifest.source_manifest:
+            export_dir = Path(manifest.source_manifest).parent
+            held_out = "not checked: training export not readable here"
+            if export_dir.is_dir():
+                held_out = check_held_out(references, export_dir)
     deduper, diversity = default_phash_scorers()
     ctx = ScoreContext(prompt=manifest.prompt, reference_images=list(references or []))
-    return score_run(
+    report = score_run(
         manifest,
         images,
         scorers=default_scorers(),
@@ -329,6 +394,9 @@ def score_images(
         context=ctx,
         gate=gate,
     )
+    if held_out is not None:
+        report.scorers.append(ScorerProvenance(name=HELD_OUT_CHECK, metric="identity", model=held_out))
+    return report
 
 
 def score_run_dir(
