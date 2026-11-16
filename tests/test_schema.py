@@ -168,6 +168,7 @@ def test_the_error_frame_is_a_stream_frame(tmp_path, monkeypatch) -> None:  # no
 # an existing entry: a shipped version's shape is fixed.
 SCHEMA_DIGESTS = {
     "1.5": "9c349411243316294ca466bb8a267918e882b681193f369fd90983eaeb5aed2a",
+    "1.6": "305e949056d00055426bf6bcc007cdaac6ff502861ae645038cedcde65b191fb",
 }
 
 

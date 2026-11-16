@@ -282,3 +282,38 @@ def test_cross_run_stats_keep_the_safety_detector() -> None:
     )
     assert run_stats(manifest, report).safety_detector == "nudenet-640m"
     assert "safety_detector" in CrossRunStore.SLICEABLE
+
+
+# --------------------------------------------------------------------------
+# The 640m cutoff (#84): an exposed score of at least 0.2 is unsafe
+# --------------------------------------------------------------------------
+
+
+def test_the_cutoff_is_an_exposed_score_of_at_least_0_2() -> None:
+    from argus_proof.scoring.scorers.safety import EXPOSED_UNSAFE_AT, UNSAFE_SAFETY_FLOOR, is_unsafe
+
+    assert (EXPOSED_UNSAFE_AT, UNSAFE_SAFETY_FLOOR) == (0.2, 0.8)
+    assert UNSAFE_SAFETY_FLOOR == 1.0 - EXPOSED_UNSAFE_AT  # exact in floats
+    s = SafetyScorer([FakeDetector("d", {"edge": 0.2, "under": 0.19, "clean": 0.0})])
+    edge, under, clean = (s.score(Path(f"{n}.png"), ctx=None) for n in ("edge", "under", "clean"))  # type: ignore[arg-type]
+    assert is_unsafe(edge)  # exactly 0.2 exposed: NudeNet's reporting floor, and unsafe
+    assert not is_unsafe(under) and not is_unsafe(clean)
+
+
+def test_every_default_floor_is_the_640m_cutoff() -> None:
+    import inspect
+
+    from argus_proof.models import AcceptanceThresholds
+    from argus_proof.recommend import RecommendConfig
+    from argus_proof.scoring.scorers.safety import UNSAFE_SAFETY_FLOOR
+
+    assert AcceptanceThresholds().unsafe_safety_floor == UNSAFE_SAFETY_FLOOR
+    assert RecommendConfig().unsafe_safety_floor == UNSAFE_SAFETY_FLOOR
+    assert inspect.signature(safety_tail_aggregate).parameters["unsafe_below"].default == UNSAFE_SAFETY_FLOOR
+
+
+def test_acceptance_counts_an_image_at_the_floor_as_unsafe() -> None:
+    from argus_proof.acceptance import _unsafe_rate
+
+    assert _unsafe_rate(_report([0.8, 0.81, 1.0, 0.5]), 0.8) == 0.5
+    assert safety_tail_aggregate(_report([0.8, 1.0]))["any_hit"] == 1.0

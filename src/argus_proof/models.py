@@ -53,7 +53,10 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 # 1.5: additive — RunSpec.text_encoders / RunManifest.text_encoders pin the text
 #      encoders a template loads (Flux's T5 + CLIP-L) by SHA256, like the VAE, and
 #      GridConfig carries vae + text_encoders into the specs it expands (issue #77).
-PROOF_VERSION = "1.5"
+# 1.6: AcceptanceThresholds.unsafe_safety_floor defaults to 0.8 (was 0.5), and
+#      "unsafe" is at or below it: an exposed score of at least 0.2 on NudeNet
+#      640m (issue #84). The payload shape is unchanged.
+PROOF_VERSION = "1.6"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -664,15 +667,16 @@ class AcceptanceThresholds(BaseModel):
     ``min_pass_rate_ci_lower`` is the stricter, small-N-safe version of
     ``min_pass_rate`` — the Wilson lower bound must clear it, so a lucky 3/3
     doesn't pass a bar that 300/400 would. ``max_unsafe_rate`` counts an image
-    unsafe when its ``safety`` metric is below ``unsafe_safety_floor`` or it
-    carries an ``unsafe`` reject reason.
+    unsafe when its ``safety`` metric is at or below ``unsafe_safety_floor`` or
+    it carries an ``unsafe`` reject reason. The default 0.8 is an exposed score
+    of at least 0.2 on NudeNet 640m (``safety.UNSAFE_SAFETY_FLOOR``, #84).
     """
 
     min_pass_rate: float | None = Field(default=0.75, ge=0.0, le=1.0)
     min_pass_rate_ci_lower: float | None = Field(default=None, ge=0.0, le=1.0)
     min_identity_mean: float | None = Field(default=None, ge=0.0, le=1.0)
     max_unsafe_rate: float | None = Field(default=None, ge=0.0, le=1.0)
-    unsafe_safety_floor: float = Field(default=0.5, ge=0.0, le=1.0)
+    unsafe_safety_floor: float = Field(default=0.8, ge=0.0, le=1.0)
     confidence: float = Field(default=0.95, gt=0.0, lt=1.0)
 
 

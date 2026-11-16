@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `argus-proof run --vae` reaches the run. It was accepted and dropped.
 
 ### Changed
+- **The safety cutoff is set for NudeNet 640m** (#84; wire 1.6): an exposed score of at least
+  0.2 is unsafe. `AcceptanceThresholds.unsafe_safety_floor` and `RecommendConfig.unsafe_safety_floor`
+  default to 0.8 (were 0.5), as does `safety_tail_aggregate(unsafe_below=)`, and an image **at or
+  below** the floor counts as unsafe (was strictly below), so an exposed score of exactly 0.2 is
+  caught. 0.2 is NudeNet's reporting floor, so any exposed detection now counts, as in curator and
+  cull. Conservative by design; it may flag the odd false positive. `safety.EXPOSED_UNSAFE_AT`,
+  `UNSAFE_SAFETY_FLOOR` and `is_unsafe()` are the single definition.
 - **A template that loads a model file by name is refused** (#77). A loader input such as
   `vae_name`, `clip_name1`, `unet_name` or `ckpt_name` must be a placeholder, since a literal file
   would load without a SHA256 in the manifest. A user template with a hard-coded file needs a slot.

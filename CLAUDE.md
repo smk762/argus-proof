@@ -52,7 +52,7 @@ Each row names what enforces it. An **UNENFORCED** row is a known gap: when one 
 
 - `models.py` is the API contract. `argus-proof schema` writes the schema file itself: don't redirect its stdout into the file, because that appends a status line.
 - Backends sit behind `GenBackend` and the `_BACKENDS` registry, so swapping one is a config change (`PROOF_BACKEND`). Optional adapters, scorers, moderation and explore are `is_available()`-guarded.
-- The quality scorers' `[0,1]` `lo`/`hi` bounds and the 0.5 `unsafe_safety_floor` are placeholders, not calibrated. The floor still needs tuning against NudeNet 640m (#84).
+- The quality scorers' `[0,1]` `lo`/`hi` bounds are placeholders, not calibrated. The safety cutoff is set for NudeNet 640m: an exposed score of at least 0.2 is unsafe (`safety.UNSAFE_SAFETY_FLOOR` = 0.8, inclusive via `is_unsafe`). It is conservative on purpose (#84).
 - GPU work leases through argus-cortex's coordinator (`gpu.py`, `gpu-tenant.yaml`; `ARGUS_GPU_*`), with one `batch` lease per run.
 - Reuse argus-cortex for shared code (taxonomy, wire-schema tooling, the write guard, env flags, the NudeNet client, GPU leases) instead of re-implementing it.
 - The server listens on **:8104** (peers: lens :8100, curator :8101, quarry :8102, forge :8103) and backs argus-studio's `/proof` view.

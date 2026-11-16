@@ -15,13 +15,14 @@ from argus_proof.models import (
     GateCheck,
     GateResult,
 )
+from argus_proof.scoring.scorers.safety import is_unsafe
 from argus_proof.stats import wilson_lower_bound
 
 
 def _unsafe_rate(report: EvalReport, safety_floor: float) -> float:
     """Fraction of images that are unsafe.
 
-    An image counts as unsafe if its ``safety`` metric is below *safety_floor*
+    An image counts as unsafe if its ``safety`` metric is at or below *safety_floor*
     OR it carries an ``unsafe`` reject reason. Keying off the metric (not only
     the reject reason) matters: the ``unsafe`` reason is only produced when the
     gate has a ``safety`` hard gate, so a run scored with the default gate could
@@ -33,7 +34,7 @@ def _unsafe_rate(report: EvalReport, safety_floor: float) -> float:
     unsafe = sum(
         1
         for img in report.images
-        if (img.metrics.safety is not None and img.metrics.safety < safety_floor)
+        if (img.metrics.safety is not None and is_unsafe(img.metrics.safety, safety_floor))
         or any(r.code == "unsafe" for r in img.reject_reasons)
     )
     return unsafe / n
