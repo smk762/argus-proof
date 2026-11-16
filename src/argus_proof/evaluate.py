@@ -10,6 +10,7 @@ server, and a compose deployment build the same pipeline from the same knobs.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -18,6 +19,7 @@ from argus_proof.backends import GenBackend, get_backend
 from argus_proof.backends.base import MANIFEST_NAME, ModelResolver, make_dir_resolver
 from argus_proof.backends.pnginfo import read_dimensions
 from argus_proof.backends.workflow import example_template, load_template, packaged_templates
+from argus_proof.hashing import sha256_cached
 from argus_proof.models import EvalReport, GateConfig, GeneratedImage, ProofError, RunManifest
 from argus_proof.scoring import ScoreContext, score_run
 
@@ -206,6 +208,65 @@ def reference_images(directory: Path) -> list[Path]:
     return sorted(p for p in Path(directory).rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
 
 
+# The subdir of a curator export that holds its held-out identity references.
+REFERENCES_DIR = "references"
+
+
+def training_images(export_dir: Path) -> list[Path]:
+    """The training images of the curator export at *export_dir*.
+
+    Every image under the export except its ``references/`` subdir, plus each
+    ``manifest.jsonl`` row's ``exported_path`` (relative to the export),
+    ``exported_abs_path`` and ``abs_path`` that exist here: a manifest-only
+    export points at the dataset where it lives.
+    """
+    export_dir = Path(export_dir)
+    found: set[Path] = set()
+    for path in export_dir.rglob("*"):
+        rel = path.relative_to(export_dir)
+        if rel.parts and rel.parts[0] == REFERENCES_DIR:
+            continue
+        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
+            found.add(path)
+    manifest = export_dir / "manifest.jsonl"
+    if manifest.is_file():
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            for key, base in (("exported_path", export_dir), ("exported_abs_path", None), ("abs_path", None)):
+                value = row.get(key)
+                if isinstance(value, str) and value:
+                    candidate = base / value if base is not None else Path(value)
+                    if candidate.is_file():
+                        found.add(candidate)
+    return sorted(found)
+
+
+def check_held_out(references: list[Path], export_dir: Path) -> None:
+    """Refuse identity *references* that are training images of the export at *export_dir*.
+
+    A reference the LoRA trained on measures memorisation, not likeness, and
+    makes every identity score meaningless. Compares SHA256 of the bytes, so an
+    exact copy is caught under any name; a re-encoded or cropped copy is not.
+    Raises :class:`EvaluateError` naming each overlap.
+    """
+    if not references:
+        return
+    training = {sha256_cached(p): p for p in training_images(export_dir)}
+    overlap = [(ref, training[digest]) for ref in references if (digest := sha256_cached(ref)) in training]
+    if overlap:
+        pairs = ", ".join(f"{ref.name} = {train}" for ref, train in overlap[:5])
+        more = f" (+{len(overlap) - 5} more)" if len(overlap) > 5 else ""
+        raise EvaluateError(
+            f"{len(overlap)} identity reference(s) are training images, so identity would measure memorisation: "
+            f"{pairs}{more}. References must be held out from the training set."
+        )
+
+
 # ---------------------------------------------------------------------------
 # scoring — the default availability-guarded scorer set
 # ---------------------------------------------------------------------------
@@ -247,7 +308,16 @@ def score_images(
     references: list[Path] | None = None,
     gate: GateConfig | None = None,
 ) -> EvalReport:
-    """Score *images* with the default scorers + phash dedup/diversity."""
+    """Score *images* with the default scorers + phash dedup/diversity.
+
+    With *references*, the run's training export (``manifest.source_manifest``'s
+    directory, when it is readable here) is checked first: a reference that is a
+    training image raises :class:`EvaluateError` (:func:`check_held_out`).
+    """
+    if references and manifest.source_manifest:
+        export_dir = Path(manifest.source_manifest).parent
+        if export_dir.is_dir():
+            check_held_out(references, export_dir)
     deduper, diversity = default_phash_scorers()
     ctx = ScoreContext(prompt=manifest.prompt, reference_images=list(references or []))
     return score_run(

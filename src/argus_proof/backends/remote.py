@@ -115,6 +115,7 @@ class RemoteBackend:
             for field, want, got in (
                 ("base_checkpoint", spec.base_checkpoint, manifest.base_checkpoint.name),
                 ("vae", spec.vae, manifest_vae),
+                ("text_encoders", list(spec.text_encoders), [te.name for te in manifest.text_encoders]),
                 ("prompt", spec.prompt, manifest.prompt),
                 ("negative_prompt", spec.negative_prompt, manifest.negative_prompt),
                 ("sampling", spec.sampling, manifest.sampling),

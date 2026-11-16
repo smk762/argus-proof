@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **GPU leases from the argus-iris broker** (#79). The `comfyui` and `diffusers` backends hold
+  one `batch` lease per run (kinds `generate` on `comfyui` and `generate-local` in-process),
+  through argus-cortex's coordinator and the host-wide `ARGUS_GPU_*` variables; unset, nothing
+  is gated, as before. A ComfyUI run goes to the URL the grant names. Between seeds a run gives
+  the lease back when `should_yield()` is set and queues again on the same node, since the
+  manifest hashed that node's models. A refused or timed-out lease, or a broker error, fails the
+  run with a message that says so, and a failed run is reported to the broker as failed.
+  `gpu-tenant.yaml` declares both kinds; `.env.example` and the README list the variables.
+- **The report names the NudeNet detector** (#80). The safety scorer asks the server
+  (`NudeNetClient.info()`, cortex 0.7) and records `nudenet-640m`, `nudenet-320n`, or `nudenet`
+  when the server doesn't say as its `model` in the report's `scorers`. Cross-run stats gain a
+  `safety_detector` column, sliceable, so 320n and 640m safety figures aren't pooled.
+
+- **Flux's text encoders and VAE are pinned by SHA256** (#77; wire 1.5). `RunSpec.text_encoders`
+  and `RunManifest.text_encoders` (a `ModelRef` each) fill the Flux template's new
+  `$text_encoder` / `$text_encoder_2` slots, and the template's VAE is `$vae`, so the manifest
+  records the T5, CLIP-L and VAE a run loaded. A Flux run that names none gets
+  `t5xxl_fp8_e4m3fn` + `clip_l` and `ae` (`workflow.model_defaults`), on `/run/stream`,
+  `argus-proof run` and experiment cells. The slots and the list must match one for one.
+  `/run/stream` takes `vae` and `text_encoders`; `argus-proof run` takes `--text-encoder`.
+  `GridConfig` carries `vae` and `text_encoders`. The remote backend compares the field.
+
+- **Identity references that are training images are refused** (#81). `evaluate.check_held_out`
+  compares each reference's SHA256 with the export's training images (the export's files outside
+  `references/`, plus the `manifest.jsonl` rows' `exported_path`/`abs_path`). `/run/stream`
+  answers `400` before generating, and `argus-proof score` exits 1 when the run's `source_manifest`
+  is readable. Exact copies only; near-duplicates are #87.
+- CLAUDE.md has a "Must never happen" table naming the check behind each rule (#81). New guards:
+  no in-process AGPL import, no heavy optional dependency at module load, no committed model weights
+  and none fetched by the Dockerfile, a wire change bumps `PROOF_VERSION` (a schema digest per
+  version in `test_schema.py`), and every test the table cites exists.
+
+### Fixed
+- `argus-proof run --vae` reaches the run. It was accepted and dropped.
+
+### Changed
+- **A template that loads a model file by name is refused** (#77). A loader input such as
+  `vae_name`, `clip_name1`, `unet_name` or `ckpt_name` must be a placeholder, since a literal file
+  would load without a SHA256 in the manifest. A user template with a hard-coded file needs a slot.
+- The `diffusers` and `a1111` backends refuse `text_encoders`, as they refuse `guidance`.
+- **The suggested NudeNet server is the suite's shared 640m** (#80): argus-retina's
+  `ghcr.io/smk762/argus-retina-nudenet` on morpheus :8130, in `.env.example`, the README and the
+  safety scorer's docstring, in place of the upstream 320n image.
+- **argus-cortex `>=0.7,<0.8`**, with the `[remote,yaml]` extras for the broker client and
+  tenant-manifest loading (was `>=0.4,<0.5`).
+
 ## [0.3.0] - 2026-11-15
 
 ### Added

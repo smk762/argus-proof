@@ -150,7 +150,14 @@ def run(
     width: int = Option(1024, min=64),
     height: int = Option(1024, min=64),
     clip_skip: int = Option(1),
-    vae: str | None = Option(None, help="Explicit VAE (template needs a $vae slot)"),
+    vae: str | None = Option(
+        None, help="VAE file (template needs a $vae slot; default: Flux ae, SDXL the checkpoint's)"
+    ),
+    text_encoder: list[str] | None = Option(
+        None,
+        "--text-encoder",
+        help="Text encoder file, repeat in slot order (default: Flux t5xxl_fp8_e4m3fn + clip_l, SDXL none)",
+    ),
     backend: str | None = Option(None, "--backend", help="Override $PROOF_BACKEND (comfyui/diffusers/a1111/remote)"),
     prefix: str = Option("proof", "--run-prefix", help="run_id prefix for the generated runs"),
 ) -> None:
@@ -158,7 +165,7 @@ def run(
     import re as _re
 
     from argus_proof.backends import BackendError
-    from argus_proof.backends.workflow import sampling_defaults
+    from argus_proof.backends.workflow import model_defaults, sampling_defaults
     from argus_proof.evaluate import EvaluateError, backend_from_env, runs_root
     from argus_proof.grid import GridError, build_grid, read_export_prompts
     from argus_proof.models import GridConfig, SamplingParams
@@ -172,9 +179,12 @@ def run(
 
     base_prompts = [prompt] if prompt else read_export_prompts(export)
     defaults = sampling_defaults(checkpoint)  # by the checkpoint's family folder
+    models = model_defaults(checkpoint)
     export_manifest = export / "manifest.jsonl"
     config = GridConfig(
         base_checkpoint=checkpoint,
+        vae=vae if vae is not None else models["vae"],
+        text_encoders=text_encoder or models["text_encoders"],
         lora_checkpoints=[lora],
         lora_weights=weight,
         sampling=SamplingParams(

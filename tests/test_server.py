@@ -439,6 +439,20 @@ def test_run_stream_explicit_prompt_needs_no_export(suite_client: TestClient, mo
     assert backend.generated[0].prompt == "hello"
 
 
+def test_run_stream_refuses_references_that_are_training_images(suite_client, suite_dirs, monkeypatch) -> None:  # noqa: ANN001
+    import shutil
+
+    backend = _fake_backend(monkeypatch)
+    export = suite_dirs["exports"] / "rufina"
+    shutil.copy(export / "references" / "ref.png", export / "img.png")  # the reference is also a training image
+    resp = suite_client.post(
+        "/run/stream", json={"lora": "l.safetensors", "base_checkpoint": "sdxl.safetensors", "export": "rufina"}
+    )
+    assert resp.status_code == 400
+    assert "training images" in resp.json()["detail"]
+    assert backend.generated == []  # refused before any GPU spend
+
+
 def test_run_stream_without_prompt_or_export_400(suite_client: TestClient) -> None:
     resp = suite_client.post("/run/stream", json={"lora": "l", "base_checkpoint": "c"})
     assert resp.status_code == 400
@@ -490,6 +504,20 @@ def test_run_request_takes_the_checkpoint_familys_sampling_defaults() -> None:
     # explicit values win; an explicit null guidance stays off
     custom = RunRequest(lora="l", base_checkpoint="flux/f.safetensors", cfg=2.0, guidance=None)
     assert (custom.cfg, custom.guidance) == (2.0, None)
+
+
+def test_run_request_takes_the_checkpoint_familys_model_files() -> None:
+    from argus_proof.server.app import RunRequest
+
+    sdxl = RunRequest(lora="l", base_checkpoint="sdxl/base.safetensors")
+    assert (sdxl.vae, sdxl.text_encoders) == (None, [])
+    flux = RunRequest(lora="l", base_checkpoint="flux/flux1-dev.safetensors")
+    assert (flux.vae, flux.text_encoders) == ("ae.safetensors", ["t5xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors"])
+    # explicit values win; an explicit null VAE / null encoders stay off
+    custom = RunRequest(lora="l", base_checkpoint="flux/f.safetensors", vae=None, text_encoders=None)
+    assert (custom.vae, custom.text_encoders) == (None, [])
+    fp16 = RunRequest(lora="l", base_checkpoint="flux/f.safetensors", text_encoders=["t5xxl_fp16.safetensors", "c"])
+    assert fp16.text_encoders == ["t5xxl_fp16.safetensors", "c"] and fp16.vae == "ae.safetensors"
 
 
 # --- devmode purge (issue #59) ------------------------------------------------

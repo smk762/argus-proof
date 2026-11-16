@@ -8,15 +8,15 @@
   "12": {
     "class_type": "DualCLIPLoader",
     "inputs": {
-      "clip_name1": "t5xxl_fp8_e4m3fn.safetensors",
-      "clip_name2": "clip_l.safetensors",
+      "clip_name1": "$text_encoder",
+      "clip_name2": "$text_encoder_2",
       "type": "flux"
     }
   },
   "13": {
     "class_type": "VAELoader",
     "inputs": {
-      "vae_name": "ae.safetensors"
+      "vae_name": "$vae"
     }
   },
   "10": {

@@ -144,3 +144,13 @@ def test_duplicate_seed_images_do_not_overwrite(tmp_path: Path) -> None:
     result = RemoteBackend("http://svc", transport=transport).generate(_spec([1]), tmp_path / "run")
     paths = {i.path for i in result.images}
     assert len(paths) == 2 and all(Path(p).is_file() for p in paths)  # neither clobbered the other
+
+
+def test_text_encoders_must_match_the_spec(tmp_path: Path) -> None:
+    spec = _spec([1]).model_copy(update={"text_encoders": ["t5.safetensors"]})
+    with pytest.raises(BackendError, match="text_encoders"):
+        RemoteBackend("http://svc", transport=FakeTransport()).generate(spec, tmp_path / "run")
+    ok = _manifest_json()
+    ok["text_encoders"] = [{"name": "t5.safetensors", "sha256": "b" * 64}]
+    result = RemoteBackend("http://svc", transport=FakeTransport(manifest=ok)).generate(spec, tmp_path / "ok")
+    assert result.manifest.text_encoders[0].sha256 == "b" * 64

@@ -241,6 +241,35 @@ def test_run_explicit_prompt_skips_export_captions(tmp_path: Path, fake_backend)
     assert fake_backend.generated[0].prompt == "override"
 
 
+def _run_with(tmp_path: Path, checkpoint: str, *extra: str) -> None:
+    export = tmp_path / "export"
+    if not export.is_dir():
+        export = _export_with_prompt(tmp_path)
+    args = ["run", "l.safetensors", str(export), "-c", checkpoint, "--out", str(tmp_path / "r"), *extra]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+
+
+def test_run_passes_vae_and_text_encoders_through(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
+    # --vae used to stop at the CLI; it and --text-encoder now reach the spec the backend renders (#77).
+    _run_with(tmp_path, "sdxl.safetensors", "--vae", "sdxl_vae.safetensors")
+    assert (fake_backend.generated[0].vae, fake_backend.generated[0].text_encoders) == ("sdxl_vae.safetensors", [])
+    fake_backend.generated.clear()
+    _run_with(tmp_path, "flux/f.safetensors")  # Flux's defaults
+    spec = fake_backend.generated[0]
+    assert (spec.vae, spec.text_encoders) == ("ae.safetensors", ["t5xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors"])
+    fake_backend.generated.clear()
+    _run_with(
+        tmp_path,
+        "flux/f.safetensors",
+        "--text-encoder",
+        "t5xxl_fp16.safetensors",
+        "--text-encoder",
+        "clip_l.safetensors",
+    )
+    assert fake_backend.generated[0].text_encoders == ["t5xxl_fp16.safetensors", "clip_l.safetensors"]
+
+
 def test_run_empty_export_exits_one(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
     empty = tmp_path / "empty"
     empty.mkdir()

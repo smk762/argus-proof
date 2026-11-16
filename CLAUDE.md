@@ -23,44 +23,40 @@ argus-cortex's SUITE.md** (a PR to argus-cortex in the same release).
 
 Not checked out? Read https://github.com/smk762/argus-cortex/blob/main/SUITE.md
 
-## Layout
+## Must never happen
 
-`src/argus_proof/`:
+Each row names what enforces it. An **UNENFORCED** row is a known gap: when one bites, add a check, not more prose. A rule about code shape (a banned import or API) can live in argus-ci's suite-rules catalogue instead of a test here.
 
-- `models.py` — Pydantic v2 wire types, the three versioned top-level shapes (`RunManifest`, `EvalReport`, `RejectArchive`) plus `RunSpec`/grid/gate/acceptance models. **This is the API contract**; `wire_schema()`/`render_wire_schema()` back `argus-proof schema` and the committed `schema/proof-wire.schema.json`.
-- `grid.py` / `experiment.py` — the prompt-grid builder (axes × prompts × seeds → `RunSpec`s) and the A/B `ExperimentMatrix` that varies base-checkpoint × step-config as outer factors.
-- `backends/` — pluggable generation engines over `base.GenBackend`: `comfyui` (shipped), `diffusers`, `a1111`, `remote`; `workflow.py`/`pnginfo.py`/`http.py` are shared helpers. `get_backend(name, ...)` selects by config (`_BACKENDS` registry).
-- `scoring/` — `base.py` (the `ImageScorer`/`Deduper`/`DiversityScorer` protocols + `METRIC_FIELDS`), `orchestrator.py` (`score_run`), `gate.py`, `summary.py`; concrete scorers under `scoring/scorers/` (phash, identity, quality behind the `[score]` extra; safety posts to a NudeNet server at `PROOF_NUDENET_URL` through argus-cortex's `NudeNetClient` — **never import `nudenet` in-process: it is AGPL-3.0**).
-- `reports.py` (`ReportStore`, `apply_hitl`), `refinement.py`, `acceptance.py`, `recommend.py`, `crossrun.py`, `archive.py`, `stats.py`, `moderation.py`, `explore.py` — the report store + the optimisation layers on top of a scored run.
-- `cli.py` — Typer app (`inspect`, `run`, `score`, `report`, `gate`, `recommend`, `experiment`, `explore`, `schema`, `serve`).
-- `server/app.py` — FastAPI micro-server on **:8104** (peer to lens :8100, curator :8101, quarry :8102, forge :8103); backs the argus-studio `/proof` view. Optional `[server]` extra.
-- `templates/comfyui_sdxl_lora.json` — the shipped parametric ComfyUI workflow (`$placeholder` graph).
+| Never | Enforced by |
+|---|---|
+| `nudenet` or `ultralytics` imported in-process (AGPL-3.0). NudeNet is reached over HTTP via argus-cortex's `NudeNetClient` | `test_must_never::test_no_agpl_package_is_imported_in_process`; argus-ci suite rule `agpl-import` once `v1` carries it |
+| A `models.py` wire change without regenerating `schema/proof-wire.schema.json` | CI post-test `argus-proof schema --check`; `test_schema.py` |
+| A wire change without a `PROOF_VERSION` bump (minor additive, major breaking; mind `SUPPORTED_PROOF_MAJORS`) | `test_schema::test_a_wire_change_bumps_proof_version` (record the new version's digest there) |
+| The pass rate counted per image instead of per near-duplicate group (`n_passed / n_groups`; `n_groups == n_images` when no deduper ran) | `test_scoring::test_pass_rate_counts_groups_not_frames` |
+| A scorer reports a made-up `0.0` for an axis that didn't run, instead of `None` | Partial: `test_scoring::test_unavailable_scorer_is_skipped`, `test_scorers_identity::test_no_references_returns_none`, `test_scorers_safety::test_no_detector_can_score_returns_none` |
+| Two scorers on one metric (`METRIC_FIELDS`) | `test_scorer_util::test_duplicate_metric_scorers_rejected` |
+| A model file recorded by name without its SHA256 in the `RunManifest` | `test_backends::test_manifest_pins_files_by_sha256_and_reconstructs_run`, `test_backends::test_a_flux_manifest_pins_its_text_encoders_and_vae` |
+| A workflow template that loads a model file by literal name, unpinned | `test_workflow::test_a_literal_model_file_in_a_template_is_refused` |
+| Identity references that overlap the training set (they measure memorisation) | Exact-byte copies: `test_evaluate::test_a_reference_that_is_a_training_image_is_refused`, `test_evaluate::test_scoring_refuses_overlapping_references`, `test_server::test_run_stream_refuses_references_that_are_training_images`. A re-encoded or cropped copy: **UNENFORCED** (#87) |
+| An image path or thumbnail in `RejectArchive`/`RejectRecord` (keyed by `(run_id, seed)`) | `test_models::test_reject_archive_carries_zero_image_references`, `test_models::test_reject_record_keys_image_by_seed_not_path`, `test_archive::test_reject_archive_has_zero_image_references` |
+| Refinement overwrites the first pass (`hitl_rating`, `reject_reasons`) or the verdict, or refines an image outside the passing subset | `test_refinement::test_refinement_does_not_touch_first_pass_or_verdict`, `test_refinement::test_refining_non_passing_image_raises` |
+| Moderation that fails reads as safe | `test_moderation::test_not_implemented_detector_fails_loud_not_silent_safe`, `test_moderation::test_unreadable_guard_output_fails_loud` |
+| The server resolves a client-supplied filesystem path (images are `(run_id, image_id)` under `_SAFE_ID`) | `test_server::test_get_image_rejects_traversal_ids` |
+| Read-only mode lets a write through (`POST /run/stream` above all) | `test_server::test_read_only_mode_403s_writes_but_serves_reads` |
+| A concurrent report write drops an update (per-run `flock`; a no-op off POSIX, so not multi-host) | `test_reports::test_concurrent_reviews_do_not_lose_updates` |
+| An optional heavy dependency (torch, diffusers, insightface, fiftyone, polars, …) imported at module load | `test_must_never::test_importing_every_module_loads_no_heavy_dependency` |
+| Model weights (Llama Guard, NudeNet, checkpoints) committed, or fetched into the image | `test_must_never::test_no_model_weights_are_committed`, `test_must_never::test_the_image_fetches_no_model_weights` |
+| A failed run reported to the GPU broker as `ok`, or a yielded run re-queued on another node | `test_gpu::test_a_failed_seed_is_reported_to_the_broker_as_failed`, `test_gpu::test_a_yield_releases_and_requeues_on_the_same_node` |
 
-## Commands
+## Facts the code doesn't show
 
-```bash
-make install   # uv venv + editable install with [dev,server,cli]
-make test      # uv run --no-sync pytest --tb=short -q
-make lint      # ruff 0.15.16 check + format --check
-make format    # ruff format + check --fix
-```
-
-Run a single test: `uv run --no-sync pytest tests/test_scoring.py::test_name -q`.
-
-## Conventions & gotchas
-
-- **The wire schema is checked in CI** (`argus-proof schema --check` runs post-test). If you touch `WIRE_MODELS`/types in `models.py`, regenerate with `argus-proof schema` (it writes `schema/proof-wire.schema.json` itself; don't redirect stdout into it, which appends its status line). Bump `PROOF_VERSION` (minor = additive field/metric, major = breaking) and mind `SUPPORTED_PROOF_MAJORS`.
-- **Pass-rate is computed over near-duplicate *groups*, not raw frames** (`n_passed / n_groups`), so a Monte-Carlo cluster counts once. Never revert this to per-image — it's the core anti-inflation invariant. `n_groups == n_images` when no deduper ran.
-- **Scorers return normalised `[0,1]` (higher = better) or `None`** — never a fabricated `0.0` for an axis that didn't run. At most one scorer per metric (`METRIC_FIELDS`); the orchestrator raises if two target the same one. The `[0,1]` quality-scorer normalisation `lo`/`hi` defaults are **placeholders** — calibrate against real generations.
-- **Every model file is pinned by SHA256** in the `RunManifest`, not by filename — a run must reconstruct exactly. Backends resolve a requested name to a file and hash it; don't record a name without its digest. `RejectArchive`/`RejectRecord` are **image-free by construction** (keyed by `(run_id, seed)` — seed + manifest reconstructs the pixels); never add a path/thumbnail field there.
-- **Refinement is a separate layer.** `ImageScores.refinement` never overwrites the first-pass `hitl_rating`/`reject_reasons` or the verdict; refining an image not in the passing subset is refused.
-- **Backend swap is a config change, not a code change** — scoring/report code is engine-agnostic (`PROOF_BACKEND` selects). Keep new engines behind `GenBackend` + the `_BACKENDS` registry; heavy adapters stay lazy-imported and `is_available()`-guarded (same for optional scorers/moderation/explore).
-- **Server safety — don't loosen either boundary:**
-  - Images are addressed by `(run_id, image_id)`, both validated against a strict charset (`_SAFE_ID`) — **no client-supplied filesystem path is ever resolved**. Keep it that way; there is no traversal surface by design.
-  - Read-only/replay mode (`ARGUS_PROOF_READ_ONLY`, `serve --read-only`): every mutating request — `POST /run/stream` (live GPU eval) above all — is refused with `403` via the shared `argus_cortex.server.WriteGuard`. `/health` echoes the flag. It fails *safe*.
-  - Concurrent report writes are serialised by a per-run `flock` sidecar (`reports.py`), so a streaming run's write and a reviewer's HITL save can't drop updates. On non-POSIX it degrades to a no-op — don't rely on it for multi-host.
-- Shared suite code (taxonomy, wire-schema tooling, the server write-guard/env-flag helpers, `RemoteBackend`) lives in **argus-cortex** (`argus-cortex[server]`) — reuse it, don't re-implement.
-- Versioning is git-tag-derived (`hatch-vcs`); `_version.py` is generated (gitignored). `structlog` logging, Pydantic v2, async server (`asyncio_mode = auto`), ruff line-length 120. Scaffolded from `argus-pkg-template` — `copier update` pulls tooling changes.
+- `models.py` is the API contract. `argus-proof schema` writes the schema file itself: don't redirect its stdout into the file, because that appends a status line.
+- Backends sit behind `GenBackend` and the `_BACKENDS` registry, so swapping one is a config change (`PROOF_BACKEND`). Optional adapters, scorers, moderation and explore are `is_available()`-guarded.
+- The quality scorers' `[0,1]` `lo`/`hi` bounds and the 0.5 `unsafe_safety_floor` are placeholders, not calibrated. The floor still needs tuning against NudeNet 640m (#84).
+- GPU work leases through argus-cortex's coordinator (`gpu.py`, `gpu-tenant.yaml`; `ARGUS_GPU_*`), with one `batch` lease per run.
+- Reuse argus-cortex for shared code (taxonomy, wire-schema tooling, the write guard, env flags, the NudeNet client, GPU leases) instead of re-implementing it.
+- The server listens on **:8104** (peers: lens :8100, curator :8101, quarry :8102, forge :8103) and backs argus-studio's `/proof` view.
+- The version comes from git tags (`hatch-vcs`; `_version.py` is generated). The repo uses structlog, Pydantic v2, `asyncio_mode = auto`, ruff 0.15.16 at line length 120, and `make install|test|lint|format`. It was scaffolded from `argus-pkg-template`; `copier update` pulls tooling changes.
 
 ## Branches
 

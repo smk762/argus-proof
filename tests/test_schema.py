@@ -158,3 +158,36 @@ def test_the_error_frame_is_a_stream_frame(tmp_path, monkeypatch) -> None:  # no
     frames = [json.loads(line) for line in resp.text.splitlines() if line.strip()]
     assert frames[-1]["type"] == "error"
     assert RunStreamFrame.model_validate(frames[-1]).root.message == "no backend"
+
+
+# --- a wire change bumps PROOF_VERSION (CLAUDE.md must-never, #81) ------------------------------------------------
+
+# The wire schema's shape, descriptions stripped (prose may change freely), per PROOF_VERSION. When this test fails
+# you changed the wire: bump PROOF_VERSION in models.py (minor for an additive change, major for a breaking one),
+# note it in the version history there, regenerate the schema, and add the new version's digest below. Never edit
+# an existing entry: a shipped version's shape is fixed.
+SCHEMA_DIGESTS = {
+    "1.5": "9c349411243316294ca466bb8a267918e882b681193f369fd90983eaeb5aed2a",
+}
+
+
+def _shape_digest() -> str:
+    import hashlib
+
+    def strip(node: object) -> object:
+        if isinstance(node, dict):
+            return {k: strip(v) for k, v in node.items() if k != "description"}
+        if isinstance(node, list):
+            return [strip(v) for v in node]
+        return node
+
+    return hashlib.sha256(json.dumps(strip(wire_schema()), sort_keys=True).encode()).hexdigest()
+
+
+def test_a_wire_change_bumps_proof_version() -> None:
+    expected = SCHEMA_DIGESTS.get(models.PROOF_VERSION)
+    assert expected is not None, f"PROOF_VERSION {models.PROOF_VERSION} has no digest: add {_shape_digest()!r}"
+    assert _shape_digest() == expected, (
+        f"the wire schema changed but PROOF_VERSION is still {models.PROOF_VERSION}: bump it, then record "
+        f"{_shape_digest()!r} under the new version"
+    )

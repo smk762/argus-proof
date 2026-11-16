@@ -303,6 +303,8 @@ def build_grid(config: GridConfig, base_prompts: list[str]) -> GridPlan:
                     RunSpec(
                         run_id=run_id,
                         base_checkpoint=config.base_checkpoint,
+                        vae=config.vae,
+                        text_encoders=list(config.text_encoders),
                         loras=[LoRASpec(name=checkpoint, weight=weight)],
                         sampling=config.sampling,
                         prompt=item.text,

@@ -144,10 +144,17 @@ top-level folder under `checkpoints/`: `flux/…` renders
 [`templates/comfyui_flux_lora.json`](src/argus_proof/templates/comfyui_flux_lora.json)
 and every other family renders the SDXL template, so one server evaluates both.
 `PROOF_WORKFLOW_TEMPLATE` replaces both for every checkpoint. The Flux checkpoints
-are bare transformers, so the Flux template loads `t5xxl_fp8_e4m3fn.safetensors`
-and `clip_l.safetensors` (`DualCLIPLoader`, type `flux`) and `ae.safetensors`
-(`VAELoader`) by those names; they must be in ComfyUI's `clip/` and `vae/`
-folders. Flux takes no negative prompt (the template zeroes the positive) and runs
+are bare transformers, so the Flux template also loads two text encoders
+(`DualCLIPLoader`, type `flux`: the `$text_encoder` and `$text_encoder_2` slots) and
+a VAE (`VAELoader`: `$vae`). They come from the run (`RunSpec.text_encoders`, `vae`)
+and the manifest pins each by SHA256, like the checkpoint and LoRA, so swapping the
+T5 for another build changes the manifest. A run that names none gets the Flux
+defaults, `t5xxl_fp8_e4m3fn.safetensors` + `clip_l.safetensors` and `ae.safetensors`
+(`/run/stream`'s `text_encoders`/`vae`, `argus-proof run --text-encoder/--vae`); they
+must be in ComfyUI's `clip/` and `vae/` folders and under `PROOF_MODELS_DIR`. The
+template's encoder slots and the run's list must match one for one. **A template
+whose loader names a model file literally** (`"vae_name": "ae.safetensors"`) is
+refused: that file would load unrecorded. Flux takes no negative prompt (the template zeroes the positive) and runs
 at `cfg` 1 with `sampling.guidance` (the `$guidance` slot, a `FluxGuidance` node).
 A request that leaves `cfg`/`sampler`/`scheduler`/`guidance` out gets its family's
 defaults: SDXL cfg 7, `dpmpp_2m`/`karras`; Flux cfg 1, `euler`/`simple`, guidance 3.5.
@@ -155,7 +162,7 @@ defaults: SDXL cfg 7, `dpmpp_2m`/`karras`; Flux cfg 1, `euler`/`simple`, guidanc
 Nothing a run sets is silently dropped. A run is refused when it sets a value
 the template has no slot for: a VAE, a non-empty negative prompt, `guidance`,
 or a `clip_skip` above 2. The `diffusers` and `a1111` backends refuse `guidance`
-outright. `clip_skip` is sent to ComfyUI as `-max(clip_skip, 2)`: SDXL uses the
+and `text_encoders` outright. `clip_skip` is sent to ComfyUI as `-max(clip_skip, 2)`: SDXL uses the
 penultimate layer, and `-1` blanks some checkpoints.
 
 **More backends.** `get_backend(name, ...)` selects the engine by config
@@ -179,6 +186,28 @@ engine + version:
 
 The `a1111` / `remote` adapters need no extra (stdlib HTTP); all three reuse the
 shared manifest + transport helpers and are unit-tested with fakes.
+
+**GPU leases (argus-iris).** The `comfyui` and `diffusers` backends hold a GPU lease
+for each run from the suite's coordinator, set host-wide by `ARGUS_GPU_*` (unset:
+no gating, as before). With `ARGUS_GPU_COORDINATOR=broker`, a run asks
+[argus-iris](https://github.com/smk762/argus-iris) for a `batch` lease, on
+`comfyui` (kind `generate`) or `in-process` (kind `generate-local`), declared in
+[`gpu-tenant.yaml`](gpu-tenant.yaml). The work goes to the ComfyUI the grant
+names (else `COMFYUI_BASE_URL`). Between seeds proof checks `should_yield()`:
+when the broker wants the GPU back, it releases the lease and queues again,
+pinned to the node the run started on, because the manifest hashed one set of
+model files. A refused or timed-out lease fails the run with a message that says
+so. When iris can't be reached, the lease comes from `ARGUS_GPU_BROKER_FALLBACK`
+(`lease`, the host-wide `flock`, by default). The `a1111` and `remote` backends
+take no lease.
+
+| Variable | Value |
+|---|---|
+| `ARGUS_GPU_COORDINATOR` | `broker` (or `lease`, `none`) |
+| `ARGUS_GPU_BROKER_URL` | `http://morpheus:8120` |
+| `ARGUS_GPU_BROKER_TOKEN` | the shared caller token (secret: the host's `.env`, never a repo) |
+| `ARGUS_GPU_TENANT_MANIFEST` | `gpu-tenant.yaml` (the image ships it at `/app/gpu-tenant.yaml`) |
+| `ARGUS_GPU_BROKER_FALLBACK` | `lease` (default) or `none` |
 
 ## Scoring
 
@@ -204,7 +233,7 @@ skips it when the extra is absent). Shipped:
 - **dedup + diversity** — `PhashDeduper`, `PhashDiversityScorer` (perceptual hash, CPU-only)
 - **identity** — `IdentityScorer` (InsightFace ArcFace cosine vs a held-out reference set)
 - **quality / adherence** — `clip_score_scorer()` (CLIPScore), `pyiqa_scorer()` (CLIP-IQA), `image_reward_scorer()` (ImageReward), each normalising its raw score to `[0,1]`
-- **safety** — `SafetyScorer` (NudeNet ensemble, `1 - unsafe`); set a `safety` hard gate to auto-fail unsafe images. `safety_tail_aggregate()` surfaces the any-hit/min/percentile tail. NudeNet runs as a **server over HTTP** (`PROOF_NUDENET_URL`, via argus-cortex's `NudeNetClient`), never in-process (it is AGPL-3.0); without a URL the scorer is skipped. "Unsafe" is the suite's exposed-nudity set (exposed buttocks, breasts, genitalia, anus), the same as curator's
+- **safety** — `SafetyScorer` (NudeNet ensemble, `1 - unsafe`); set a `safety` hard gate to auto-fail unsafe images. `safety_tail_aggregate()` surfaces the any-hit/min/percentile tail. NudeNet runs as a **server over HTTP** (`PROOF_NUDENET_URL`, via argus-cortex's `NudeNetClient`), never in-process (it is AGPL-3.0); without a URL the scorer is skipped. Point it at the suite's shared **640m** server, argus-retina's `ghcr.io/smk762/argus-retina-nudenet` (`http://morpheus:8130` on the LAN); the upstream `notai-tech/nudenet` image is **320n**. The two score the same image differently, so the report records which one ran (the safety scorer's `model`: `nudenet-640m`, `nudenet-320n`, or `nudenet` when the server doesn't say, as the upstream image doesn't), and the cross-run store keeps it as a sliceable `safety_detector` column. The default `unsafe_safety_floor` of 0.5 is not yet calibrated against 640m. "Unsafe" is the suite's exposed-nudity set (exposed buttocks, breasts, genitalia, anus), the same as curator's
 
 The default scorer set used by `argus-proof run` / `score` and the server
 (`evaluate.default_scorers()`, plus phash dedup/diversity) is identity, CLIPScore,

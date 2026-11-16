@@ -8,7 +8,11 @@ set a ``safety`` hard gate to auto-fail (and flag ``unsafe``) anything too risky
 An **ensemble** of detectors is combined conservatively (worst/most-unsafe wins).
 The detector is injectable, so the scoring logic is CI-tested with a fake; the
 real :class:`NudeNetDetector` calls a NudeNet server (``PROOF_NUDENET_URL``)
-and is unavailable without one.
+and is unavailable without one. The suite's server is argus-retina's **640m**
+(``ghcr.io/smk762/argus-retina-nudenet``); the upstream ``notai-tech/nudenet``
+image is **320n**. The two score the same image differently, so the report names
+the detector (``ScorerProvenance.model``: ``nudenet-640m``, ``nudenet-320n``, or
+``nudenet`` when the server doesn't say), and cross-run stats slice by it.
 
 :func:`safety_tail_aggregate` gives the run-level tail view (any-hit / min-safety
 / low percentile) that matters for safety, where the mean hides a single bad frame.
@@ -77,7 +81,8 @@ class SafetyScorer:
         return any(d.is_available() for d in self.detectors)
 
     def provenance(self) -> ScorerProvenance:
-        names = "+".join(d.name for d in self.detectors if d.is_available())
+        # A detector may name its model more exactly than its name (NudeNet: which detector the server runs).
+        names = "+".join(getattr(d, "model_name", d.name) for d in self.detectors if d.is_available())
         return ScorerProvenance(name="safety", metric="safety", model=names or None)
 
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None:
@@ -125,6 +130,8 @@ class NudeNetDetector:
         self._base_url = base_url
         self._timeout = timeout
         self._client: NudeNetClient | None = None
+        self._detector: str | None = None
+        self._asked = False
 
     def _url(self) -> str:
         return (self._base_url if self._base_url is not None else os.environ.get(ENV_NUDENET_URL, "")).strip()
@@ -143,6 +150,26 @@ class NudeNetDetector:
             timeout = self._timeout or _float_env(ENV_NUDENET_TIMEOUT, DEFAULT_NUDENET_TIMEOUT)
             self._client = NudeNetClient(self._url(), timeout=timeout)
         return self._client
+
+    def detector(self) -> str | None:
+        """Which NudeNet detector the server runs (``640m``/``320n``), from its ``GET /health``; ``None`` if unknown.
+
+        Asked once per detector. The upstream 320n image has no ``/health`` and gives ``None``; so does a server that
+        can't be reached, which then fails its checks too.
+        """
+        if not self._asked:
+            try:
+                self._detector = self._load().info().detector
+            except (CheckFailed, ModerationConfigError):
+                return None  # unreachable: ask again next time rather than record "unknown" for good
+            self._asked = True
+        return self._detector
+
+    @property
+    def model_name(self) -> str:
+        """``nudenet-640m``, ``nudenet-320n``, or ``nudenet`` when the server doesn't say."""
+        detector = self.detector()
+        return f"{self.name}-{detector}" if detector else self.name
 
     def _is_unsafe(self, label: str) -> bool:
         return label in self._unsafe_classes

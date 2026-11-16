@@ -134,6 +134,9 @@ class RunRequest(BaseModel):
     ``cfg`` / ``sampler`` / ``scheduler`` / ``guidance`` left out take the
     checkpoint family's defaults (``workflow.sampling_defaults``): SDXL's
     cfg 7 / dpmpp_2m / karras, or Flux's cfg 1 / euler / simple / guidance 3.5.
+    ``vae`` / ``text_encoders`` left out take its model defaults
+    (``workflow.model_defaults``): none for SDXL, Flux's ``ae`` VAE and T5 +
+    CLIP-L encoders. An explicit ``null`` VAE or ``[]`` keeps them off.
     """
 
     lora: str
@@ -151,11 +154,19 @@ class RunRequest(BaseModel):
     width: int = Field(default=1024, gt=0)
     height: int = Field(default=1024, gt=0)
     clip_skip: int = 1
+    vae: str | None = None
+    text_encoders: list[str] | None = None
     run_id: str | None = None
 
     @model_validator(mode="after")
     def _family_defaults(self) -> RunRequest:
-        from argus_proof.backends.workflow import sampling_defaults
+        from argus_proof.backends.workflow import model_defaults, sampling_defaults
+
+        for key, value in model_defaults(self.base_checkpoint).items():
+            if key not in self.model_fields_set:
+                setattr(self, key, value)
+        if self.text_encoders is None:  # an explicit null is no encoders
+            self.text_encoders = []
 
         for key, value in sampling_defaults(self.base_checkpoint).items():
             # guidance is only defaulted when the client sent nothing at all for
@@ -378,7 +389,13 @@ def create_app(
         can't drift from the wire schema. Generation runs in a worker thread;
         frames bridge back via a queue.
         """
-        from argus_proof.evaluate import EvaluateError, backend_from_env, reference_images, score_images
+        from argus_proof.evaluate import (
+            EvaluateError,
+            backend_from_env,
+            check_held_out,
+            reference_images,
+            score_images,
+        )
         from argus_proof.grid import read_export_prompts
 
         # Resolve everything that can fail on bad input BEFORE streaming starts,
@@ -392,6 +409,10 @@ def create_app(
             refs_dir = export_dir / "references"
             if refs_dir.is_dir():
                 references = reference_images(refs_dir)
+                try:
+                    check_held_out(references, export_dir)  # before any GPU spend
+                except EvaluateError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
             if prompt is None:
                 prompts = read_export_prompts(export_dir)
                 if not prompts:
@@ -409,6 +430,8 @@ def create_app(
         spec = RunSpec(
             run_id=run_id,
             base_checkpoint=request.base_checkpoint,
+            vae=request.vae,
+            text_encoders=list(request.text_encoders or []),
             loras=[LoRASpec(name=request.lora, weight=request.lora_weight)],
             sampling=SamplingParams(
                 sampler=request.sampler,

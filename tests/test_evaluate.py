@@ -9,11 +9,13 @@ from argus_proof.backends import BackendError, ComfyUIBackend
 from argus_proof.evaluate import (
     EvaluateError,
     backend_from_env,
+    check_held_out,
     discover_images,
     load_manifest,
     reference_images,
     runs_root,
     score_run_dir,
+    training_images,
 )
 from argus_proof.models import LoRASpec, RunSpec, SamplingParams
 
@@ -137,3 +139,49 @@ def test_score_run_dir_produces_report(tmp_path: Path) -> None:
     assert {img.seed for img in report.images} == {1, 2}
     # phash dedup/diversity are availability-guarded; either way every image has a group label
     assert all(img.duplicate_group is not None for img in report.images)
+
+
+# -- identity references are held out from training (CLAUDE.md must-never) -----
+
+
+def _export(tmp_path: Path) -> Path:
+    export = tmp_path / "export"
+    save_png(export / "train" / "a.png", color=(1, 2, 3))
+    save_png(export / "references" / "held_out.png", color=(9, 9, 9))
+    elsewhere = tmp_path / "dataset" / "b.png"  # a manifest-only row pointing at the dataset
+    save_png(elsewhere, color=(4, 5, 6))
+    (export / "manifest.jsonl").write_text(
+        f'{{"exported_path": "train/a.png", "abs_path": "{elsewhere}"}}\nnot json\n', encoding="utf-8"
+    )
+    return export
+
+
+def test_training_images_skip_references_and_follow_the_manifest(tmp_path: Path) -> None:
+    export = _export(tmp_path)
+    names = {p.name for p in training_images(export)}
+    assert names == {"a.png", "b.png"}
+
+
+def test_held_out_references_pass(tmp_path: Path) -> None:
+    export = _export(tmp_path)
+    check_held_out(reference_images(export / "references"), export)
+    check_held_out([], export)
+
+
+def test_a_reference_that_is_a_training_image_is_refused(tmp_path: Path) -> None:
+    export = _export(tmp_path)
+    copy = tmp_path / "refs" / "renamed.png"  # the same bytes under another name
+    save_png(copy, color=(4, 5, 6))
+    with pytest.raises(EvaluateError, match=r"1 identity reference\(s\) are training images.*renamed.png"):
+        check_held_out([copy], export)
+
+
+def test_scoring_refuses_overlapping_references(tmp_path: Path) -> None:
+    export = _export(tmp_path)
+    run_dir = _generated_run(tmp_path)
+    manifest_path = run_dir / "manifest.json"
+    manifest = load_manifest(run_dir).model_copy(update={"source_manifest": str(export / "manifest.jsonl")})
+    manifest_path.write_text(manifest.model_dump_json(), encoding="utf-8")
+    with pytest.raises(EvaluateError, match="training images"):
+        score_run_dir(run_dir, references=[export / "train" / "a.png"])
+    assert score_run_dir(run_dir, references=reference_images(export / "references")).run_id == "run-1"

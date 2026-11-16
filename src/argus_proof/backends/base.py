@@ -146,7 +146,7 @@ def build_local_manifest(
 ) -> RunManifest:
     """A reproducible :class:`RunManifest` for a backend whose weights are on disk.
 
-    Resolves and SHA256-pins the base checkpoint, VAE, and every LoRA (via
+    Resolves and SHA256-pins the base checkpoint, VAE, text encoders and every LoRA (via
     *resolve_model*) so the run reconstructs exactly — the shared path for the
     local backends (ComfyUI, diffusers, A1111). A missing/unresolvable model
     raises :class:`BackendError` here, before any generation. (A purely remote
@@ -157,6 +157,7 @@ def build_local_manifest(
         run_id=spec.run_id,
         base_checkpoint=ModelRef(name=spec.base_checkpoint, sha256=hash_model(resolve_model, spec.base_checkpoint)),
         vae=ModelRef(name=spec.vae, sha256=hash_model(resolve_model, spec.vae)) if spec.vae else None,
+        text_encoders=[ModelRef(name=te, sha256=hash_model(resolve_model, te)) for te in spec.text_encoders],
         loras=[LoRARef(name=lo.name, sha256=hash_model(resolve_model, lo.name), weight=lo.weight) for lo in spec.loras],
         sampling=spec.sampling,
         prompt=spec.prompt,
