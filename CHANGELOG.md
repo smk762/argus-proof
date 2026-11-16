@@ -9,11 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-11-16
 
-Wire schema 1.6 (from 1.4): new fields and one changed default, no breaking shape change. Changes an
-upgrade may notice: a template that names a
-model file literally is refused; the safety cutoff moves from 0.5 to an exposed score of at least
-0.2, so more images count as unsafe; identity references that are copies of training images are
-refused; and argus-cortex moves to 0.7.
+Wire schema 1.6 (from 1.4): new fields and one changed default, no breaking shape change.
+Changes an upgrade may notice: a template that names a model file literally is refused; the
+safety cutoff moves from 0.5 to an exposed score of at least 0.2, so more images count as unsafe;
+identity references that are copies of training images are refused; and argus-cortex moves to 0.7.
 
 ### Added
 - **Identity references that are resized or re-encoded copies of training images are refused**
