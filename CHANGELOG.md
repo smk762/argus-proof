@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **GPU leases from the argus-iris broker** (#79). The `comfyui` and `diffusers` backends hold
+  one `batch` lease per run (kinds `generate` on `comfyui` and `generate-local` in-process),
+  through argus-cortex's coordinator and the host-wide `ARGUS_GPU_*` variables; unset, nothing
+  is gated, as before. A ComfyUI run goes to the URL the grant names. Between seeds a run gives
+  the lease back when `should_yield()` is set and queues again on the same node, since the
+  manifest hashed that node's models. A refused or timed-out lease, or a broker error, fails the
+  run with a message that says so, and a failed run is reported to the broker as failed.
+  `gpu-tenant.yaml` declares both kinds; `.env.example` and the README list the variables.
+
+### Changed
+- **argus-cortex `>=0.7,<0.8`**, with the `[remote,yaml]` extras for the broker client and
+  tenant-manifest loading (was `>=0.4,<0.5`).
+
 ## [0.3.0] - 2026-11-15
 
 ### Added

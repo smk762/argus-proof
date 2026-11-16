@@ -180,6 +180,28 @@ engine + version:
 The `a1111` / `remote` adapters need no extra (stdlib HTTP); all three reuse the
 shared manifest + transport helpers and are unit-tested with fakes.
 
+**GPU leases (argus-iris).** The `comfyui` and `diffusers` backends hold a GPU lease
+for each run from the suite's coordinator, set host-wide by `ARGUS_GPU_*` (unset:
+no gating, as before). With `ARGUS_GPU_COORDINATOR=broker`, a run asks
+[argus-iris](https://github.com/smk762/argus-iris) for a `batch` lease, on
+`comfyui` (kind `generate`) or `in-process` (kind `generate-local`), declared in
+[`gpu-tenant.yaml`](gpu-tenant.yaml). The work goes to the ComfyUI the grant
+names (else `COMFYUI_BASE_URL`). Between seeds proof checks `should_yield()`:
+when the broker wants the GPU back, it releases the lease and queues again,
+pinned to the node the run started on, because the manifest hashed one set of
+model files. A refused or timed-out lease fails the run with a message that says
+so. When iris can't be reached, the lease comes from `ARGUS_GPU_BROKER_FALLBACK`
+(`lease`, the host-wide `flock`, by default). The `a1111` and `remote` backends
+take no lease.
+
+| Variable | Value |
+|---|---|
+| `ARGUS_GPU_COORDINATOR` | `broker` (or `lease`, `none`) |
+| `ARGUS_GPU_BROKER_URL` | `http://morpheus:8120` |
+| `ARGUS_GPU_BROKER_TOKEN` | the shared caller token (secret: the host's `.env`, never a repo) |
+| `ARGUS_GPU_TENANT_MANIFEST` | `gpu-tenant.yaml` (the image ships it at `/app/gpu-tenant.yaml`) |
+| `ARGUS_GPU_BROKER_FALLBACK` | `lease` (default) or `none` |
+
 ## Scoring
 
 Generated images are scored into an `EvalReport` by a pluggable framework

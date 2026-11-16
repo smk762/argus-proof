@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import structlog
+from argus_cortex.gpu import GpuCoordinator
 
+from argus_proof import gpu
 from argus_proof.backends.base import (
     BackendError,
     GenResult,
@@ -55,6 +57,9 @@ class DiffusersBackend:
     the manifest); ``renderer`` does the actual generation and defaults to a lazy
     :class:`_DiffusersRenderer` (needs the ``[diffusers]`` extra), injectable for
     testing. ``device``/``dtype`` override the default renderer's device selection.
+
+    Each run holds an ``in-process`` GPU lease from ``gpu_coordinator`` (default: the ``ARGUS_GPU_*`` environment, see
+    :mod:`argus_proof.gpu`), given back between seeds when the broker asks.
     """
 
     def __init__(
@@ -64,8 +69,12 @@ class DiffusersBackend:
         engine_version: str | None = None,
         device: str | None = None,
         dtype: str | None = None,
+        gpu_coordinator: GpuCoordinator | None = None,
+        priority: gpu.PriorityClass = gpu.DEFAULT_PRIORITY,
     ) -> None:
         self.resolve_model = resolve_model
+        self.gpu = gpu_coordinator or gpu.default_coordinator()
+        self.priority = priority
         self._renderer = renderer
         self._device = device
         self._dtype = dtype
@@ -108,26 +117,32 @@ class DiffusersBackend:
                 spec, resolve_model=self.resolve_model, engine=BACKEND_NAME, engine_version=self.engine_version()
             )
             renderer = self._renderer_or_default()
-            for done, seed in enumerate(spec.seeds, start=1):
-                image = renderer.render(spec, seed)
-                image_id = f"{spec.run_id}-{seed}"
-                path = out_dir / f"{image_id}.png"
-                image.save(path)
-                images.append(
-                    GeneratedImage(
-                        image_id=image_id,
-                        run_id=spec.run_id,
-                        seed=seed,
-                        path=str(path),
-                        width=image.width,
-                        height=image.height,
+            with gpu.SeedLeases(self.gpu, gpu.GENERATE_LOCAL, caller=spec.run_id, priority=self.priority) as leases:
+                for done, seed in enumerate(spec.seeds, start=1):
+                    leases.current()  # yields the GPU between seeds when the broker asks
+                    image = renderer.render(spec, seed)
+                    image_id = f"{spec.run_id}-{seed}"
+                    path = out_dir / f"{image_id}.png"
+                    image.save(path)
+                    images.append(
+                        GeneratedImage(
+                            image_id=image_id,
+                            run_id=spec.run_id,
+                            seed=seed,
+                            path=str(path),
+                            width=image.width,
+                            height=image.height,
+                        )
                     )
-                )
-                emit(ProgressEvent(run_id=spec.run_id, type="image", seed=seed, image_id=image_id))
-                emit(ProgressEvent(run_id=spec.run_id, type="progress", completed=done, total=total))
+                    emit(ProgressEvent(run_id=spec.run_id, type="image", seed=seed, image_id=image_id))
+                    emit(ProgressEvent(run_id=spec.run_id, type="progress", completed=done, total=total))
         except BackendError as exc:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
+        except gpu.LEASE_ERRORS as exc:
+            error = gpu.lease_failure(exc)
+            emit(ProgressEvent(run_id=spec.run_id, type="error", message=error))
+            raise BackendError(error) from exc
         except Exception as exc:  # torch OOM, disk-full on save, … -> uniform BackendError (GenBackend contract)
             error = f"diffusers generation failed: {exc}"
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=error))
