@@ -26,7 +26,7 @@ dependencies = [
     # 0.6+: argus_cortex.gpu_broker (argus-iris leases; [remote] = httpx, [yaml] = the tenant manifest).
     # Capped below the next minor: argus-cortex is pre-1.0, where a minor bump
     # carries no compatibility guarantee.
-    "argus-cortex[remote,yaml]>=0.7,<0.8",
+    "argus-cortex[remote,yaml]>=0.9,<0.10",
     "pydantic>=2.7",
     "structlog>=24.0",
 ]
@@ -34,7 +34,7 @@ dependencies = [
 [project.optional-dependencies]
 # argus-cortex[server] pulls starlette for the shared write-guard (argus_cortex.server);
 # fastapi provides it too, but the extra declares the dependency honestly.
-server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7", "argus-cortex[server]>=0.7,<0.8"]
+server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7", "argus-cortex[server]>=0.9,<0.10"]
 cli = ["typer>=0.12", "rich>=13.0"]
 # Concrete scorers (implement argus_proof.scoring protocols): dedup/diversity
 # (phash) + identity (InsightFace ArcFace) + quality (CLIPScore/pyiqa/ImageReward).

@@ -43,7 +43,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import secrets
 import shutil
 import threading
@@ -58,6 +57,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError("Server requires: pip install argus-proof[server]") from exc
 
+from argus_cortex.fs import PathRefused, safe_name
 from argus_cortex.server import WriteGuard, constant_refuse, env_flag
 from pydantic import BaseModel, Field, model_validator
 
@@ -93,12 +93,20 @@ _PURGE_CONFIRM = {"confirm": "purge"}
 
 # Claimed in the active-run set while ``POST /purge`` runs, so no run starts
 # mid-purge without holding the lock (and blocking the event loop) throughout.
-# Not a valid run id (fails _SAFE_ID), so it can't collide with one.
+# Not a valid run id (fails _is_safe_id), so it can't collide with one.
 _PURGING_ALL = "*purge-all*"
 
-# run_id / image_id / export names become path segments under a fixed root —
-# allow only a strict filename charset so traversal is impossible by construction.
-_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# run_id / image_id / export names become path segments under a fixed root: argus-cortex's
+# safe_name allows one segment (starts alphanumeric, then letters, digits, '.', '_' or '-'),
+# matched against the whole string, so traversal is impossible by construction.
+def _is_safe_id(value: str) -> bool:
+    try:
+        safe_name(value)
+    except PathRefused:
+        return False
+    return True
+
 
 _IMAGE_MEDIA = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 
@@ -106,7 +114,7 @@ _MODEL_SUFFIXES = (".safetensors", ".ckpt", ".pt")
 
 
 def _require_safe(value: str, label: str) -> str:
-    if not _SAFE_ID.fullmatch(value or ""):
+    if not _is_safe_id(value or ""):
         raise HTTPException(status_code=400, detail=f"invalid {label} {value!r}")
     return value
 
@@ -327,7 +335,7 @@ def create_app(
         exports: list[dict] = []
         for child in sorted(root.iterdir()):
             manifest = child / "manifest.jsonl"
-            if not child.is_dir() or not manifest.is_file() or not _SAFE_ID.fullmatch(child.name):
+            if not child.is_dir() or not manifest.is_file() or not _is_safe_id(child.name):
                 continue
             try:
                 n_rows = sum(1 for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip())
@@ -670,12 +678,12 @@ def create_app(
             def purge_everything() -> dict[str, int]:
                 removed = {"reports": 0, "run_dirs": 0}
                 for run_id in store.run_ids():
-                    if _SAFE_ID.fullmatch(run_id) and store.delete(run_id):
+                    if _is_safe_id(run_id) and store.delete(run_id):
                         removed["reports"] += 1
                 root = _runs_root()
                 if root.is_dir():
                     for path in sorted(root.iterdir()):
-                        if _SAFE_ID.fullmatch(path.name) and _remove_run_dir(path.name):
+                        if _is_safe_id(path.name) and _remove_run_dir(path.name):
                             removed["run_dirs"] += 1
                 return removed
 

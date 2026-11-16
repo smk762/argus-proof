@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Run, image and export ids, and `--run-prefix`, are checked by argus-cortex's `fs.safe_name` instead of a local
+  pattern (the same characters, whole string, at most 128 characters). argus-cortex is pinned `>=0.9,<0.10`
+  (was `>=0.7,<0.8`).
+
 ### Fixed
 - **Id and value checks match the whole string** (argus-cortex's `fullmatch` codemod,
   ai-code-auditor#56). With `re.match`, an anchored check like `^[A-Za-z0-9][A-Za-z0-9._-]*$`
