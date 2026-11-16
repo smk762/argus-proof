@@ -1,0 +1,15 @@
+{
+ "version": 1,
+ "tools": {
+  "ruff": "0.15.16",
+  "semgrep": "1.180.0"
+ },
+ "entries": [
+  {
+   "rule": "silent-except",
+   "path": "src/argus_proof/scoring/scorers/safety.py",
+   "text": "except Exception: # noqa: BLE001 - one flaky detector must not abort the whole run",
+   "count": 1
+  }
+ ]
+}
