@@ -106,7 +106,7 @@ _MODEL_SUFFIXES = (".safetensors", ".ckpt", ".pt")
 
 
 def _require_safe(value: str, label: str) -> str:
-    if not _SAFE_ID.match(value or ""):
+    if not _SAFE_ID.fullmatch(value or ""):
         raise HTTPException(status_code=400, detail=f"invalid {label} {value!r}")
     return value
 
@@ -327,7 +327,7 @@ def create_app(
         exports: list[dict] = []
         for child in sorted(root.iterdir()):
             manifest = child / "manifest.jsonl"
-            if not child.is_dir() or not manifest.is_file() or not _SAFE_ID.match(child.name):
+            if not child.is_dir() or not manifest.is_file() or not _SAFE_ID.fullmatch(child.name):
                 continue
             try:
                 n_rows = sum(1 for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip())
@@ -670,12 +670,12 @@ def create_app(
             def purge_everything() -> dict[str, int]:
                 removed = {"reports": 0, "run_dirs": 0}
                 for run_id in store.run_ids():
-                    if _SAFE_ID.match(run_id) and store.delete(run_id):
+                    if _SAFE_ID.fullmatch(run_id) and store.delete(run_id):
                         removed["reports"] += 1
                 root = _runs_root()
                 if root.is_dir():
                     for path in sorted(root.iterdir()):
-                        if _SAFE_ID.match(path.name) and _remove_run_dir(path.name):
+                        if _SAFE_ID.fullmatch(path.name) and _remove_run_dir(path.name):
                             removed["run_dirs"] += 1
                 return removed
 

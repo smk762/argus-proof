@@ -195,7 +195,7 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
             seen_scalars.add(value)
             return resolved
 
-        m = _LORA_RE.match(value)
+        m = _LORA_RE.fullmatch(value)
         if m:
             index = int(m.group(1)) if m.group(1) else 1
             is_weight = bool(m.group(2))
@@ -208,7 +208,7 @@ def render_workflow(template: dict, spec: RunSpec, seed: int) -> dict:
             (seen_lora_weights if is_weight else seen_lora_names).add(index)
             return lora.weight if is_weight else lora.name
 
-        m = _TEXT_ENCODER_RE.match(value)
+        m = _TEXT_ENCODER_RE.fullmatch(value)
         if m:
             index = int(m.group(1)) if m.group(1) else 1
             if index not in encoder_by_index:

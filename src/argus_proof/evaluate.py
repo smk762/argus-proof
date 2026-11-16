@@ -180,7 +180,7 @@ def discover_images(run_dir: Path, manifest: RunManifest) -> list[GeneratedImage
     for path in sorted(run_dir.iterdir()):
         if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
             continue
-        match = pattern.match(path.stem)
+        match = pattern.fullmatch(path.stem)
         if match is None:
             continue
         try:

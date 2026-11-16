@@ -170,7 +170,7 @@ def run(
     from argus_proof.grid import GridError, build_grid, read_export_prompts
     from argus_proof.models import GridConfig, SamplingParams
 
-    if not _re.match(_RUN_PREFIX_RE, prefix):
+    if not _re.fullmatch(_RUN_PREFIX_RE, prefix):
         typer.echo(f"invalid --run-prefix {prefix!r}: use letters, digits, '.', '_' or '-'", err=True)
         raise typer.Exit(2)
     if no_guidance and guidance is not None:
