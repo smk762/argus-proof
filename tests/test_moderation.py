@@ -216,6 +216,9 @@ def test_text_detector_defaults_to_the_text_guard_model_not_vision() -> None:
         ("\n\nunsafe\nS1,S10", (True, ["S1", "S10"])),
         ("unsafe\ns12, S3 ", (True, ["S12", "S3"])),
         ("unsafe", (True, [])),
+        # Model output may end in a newline; the verdict still parses.
+        ("safe\n", (False, [])),
+        ("unsafe\nS1,S10\n", (True, ["S1", "S10"])),
     ],
 )
 def test_parse_guard_output(text: str, expected: tuple) -> None:

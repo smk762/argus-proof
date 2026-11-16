@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Id and value checks match the whole string** (argus-cortex's `fullmatch` codemod,
+  ai-code-auditor#56). With `re.match`, an anchored check like `^[A-Za-z0-9][A-Za-z0-9._-]*$`
+  also accepted the value followed by a newline, because `$` matches before a final `\n`. The
+  server's run and image ids, `--run-prefix`, the `$lora`/`$text_encoder` placeholders and the
+  image-name match in `evaluate` now use `fullmatch`. The Llama Guard verdict parser and the
+  literal-model-name refusal keep `match`.
+
 ## [0.4.0] - 2026-11-16
 
 Wire schema 1.6 (from 1.4): new fields and one changed default, no breaking shape change.

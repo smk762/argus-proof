@@ -490,6 +490,12 @@ def test_get_image_rejects_traversal_ids(suite_client: TestClient) -> None:
     assert suite_client.get("/report/run-1/image/..%2F..%2Fetc%2Fpasswd").status_code in (400, 404)
 
 
+def test_ids_with_a_trailing_newline_are_refused(suite_client: TestClient) -> None:
+    # `$` matches before a final newline, so the id check must use fullmatch: "run-1\n" is not "run-1".
+    assert suite_client.get("/report/run-1%0A/image/img-1").status_code == 400
+    assert suite_client.get("/report/run-1/image/img-1%0A").status_code == 400
+
+
 def test_get_image_missing_404(suite_client: TestClient) -> None:
     assert suite_client.get("/report/run-1/image/nope").status_code == 404
 
