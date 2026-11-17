@@ -205,3 +205,13 @@ def test_a_diffusers_run_leases_in_process(models: Path, tmp_path: Path) -> None
 def test_a_diffusers_lease_failure_is_a_backend_error(models: Path, tmp_path: Path) -> None:
     with pytest.raises(BackendError, match="refused the lease"):
         _diffusers(models, Recording(raises=GpuLeaseRefused("no"))).generate(make_spec([1]), tmp_path)
+
+
+def test_a_run_split_across_comfyui_versions_records_both(models: Path, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    old = FakeTransport(make_png(), version="0.9.0")
+    new = FakeTransport(make_png(), version="0.9.9")
+    backend = comfyui(models, FakeTransport(make_png()), Recording())
+    hosts = iter([old, new, new])
+    monkeypatch.setattr(backend, "_transport_for", lambda base_url: next(hosts))
+    result = backend.generate(make_spec([1, 2, 3]), tmp_path)
+    assert result.manifest.engine_version == "0.9.0 + 0.9.9"  # not just the last host's

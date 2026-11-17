@@ -173,16 +173,33 @@ def discover_images(run_dir: Path, manifest: RunManifest) -> list[GeneratedImage
     filename; dimensions are read back from the bytes (PNG) with the manifest's
     sampling size as the fallback. Files that don't match the run's naming are
     ignored, so a stray file in the dir can't be scored into the report.
+
+    The list is in generation order (the manifest's seed order, then the image's
+    index within its seed), not filename order, where ``-10`` sorts before ``-2``:
+    positional lookups (``image_at``) depend on it. Two files with one stem but
+    different extensions would share an ``image_id``, so they raise.
     """
     run_dir = Path(run_dir)
-    pattern = re.compile(rf"^{re.escape(manifest.run_id)}-(\d+)(?:-\d+)?$")
-    images: list[GeneratedImage] = []
-    for path in sorted(run_dir.iterdir()):
+    pattern = re.compile(rf"^{re.escape(manifest.run_id)}-(\d+)(?:-(\d+))?$")
+    seed_order: dict[int, int] = {}
+    for position, seed in enumerate(manifest.seeds):
+        seed_order.setdefault(seed, position)
+    found: list[tuple[tuple[int, int, int, str], Path, re.Match[str]]] = []
+    by_stem: dict[str, Path] = {}
+    for path in run_dir.iterdir():
         if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
             continue
         match = pattern.fullmatch(path.stem)
         if match is None:
             continue
+        if path.stem in by_stem:
+            first, second = sorted((by_stem[path.stem].name, path.name))
+            raise EvaluateError(f"{run_dir} holds both {first} and {second}: one image_id, two images")
+        by_stem[path.stem] = path
+        seed, index = int(match.group(1)), int(match.group(2) or 0)
+        found.append(((seed_order.get(seed, len(seed_order)), seed, index, path.name), path, match))
+    images: list[GeneratedImage] = []
+    for _key, path, match in sorted(found, key=lambda item: item[0]):
         try:
             data = path.read_bytes()
         except OSError as exc:
@@ -222,7 +239,15 @@ def training_images(export_dir: Path) -> list[Path]:
     Every image under the export except its ``references/`` subdir, plus each
     ``manifest.jsonl`` row's ``exported_path`` (relative to the export),
     ``exported_abs_path`` and ``abs_path`` that exist here: a manifest-only
-    export points at the dataset where it lives.
+    export points at the dataset where it lives. Every key is kept on purpose:
+    the ``abs_path`` source of an exported crop is training data too (see
+    :func:`check_held_out`). A manifest row is not filtered out of
+    ``references/``: a row there means a reference *is* a training image, which
+    the held-out check must see.
+
+    Paths are resolved, so one file reached by a relative and an absolute path
+    is listed once; a manifest row that is not an image (a caption sidecar) is
+    skipped.
     """
     export_dir = Path(export_dir)
     found: set[Path] = set()
@@ -231,7 +256,7 @@ def training_images(export_dir: Path) -> list[Path]:
         if rel.parts and rel.parts[0] == REFERENCES_DIR:
             continue
         if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES:
-            found.add(path)
+            found.add(path.resolve())
     manifest = export_dir / "manifest.jsonl"
     if manifest.is_file():
         for line in manifest.read_text(encoding="utf-8").splitlines():
@@ -245,8 +270,8 @@ def training_images(export_dir: Path) -> list[Path]:
                 value = row.get(key)
                 if isinstance(value, str) and value:
                     candidate = base / value if base is not None else Path(value)
-                    if candidate.is_file():
-                        found.add(candidate)
+                    if candidate.suffix.lower() in IMAGE_SUFFIXES and candidate.is_file():
+                        found.add(candidate.resolve())
     return sorted(found)
 
 
@@ -267,7 +292,8 @@ def _phash_bits(path: Path) -> int | None:
         with Image.open(path) as im:
             im.draft("L", (256, 256))  # JPEG: decode at reduced size; pHash downsamples to 32x32 anyway
             return int(str(imagehash.phash(im.convert("L"))), 16)
-    except (OSError, UnidentifiedImageError, ValueError):
+    except (OSError, UnidentifiedImageError, ValueError, Image.DecompressionBombError):
+        # DecompressionBombError is not an OSError: an oversized file is skipped, not a crashed run.
         return None
 
 

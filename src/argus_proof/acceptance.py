@@ -51,7 +51,11 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
     agg = report.aggregate
     # The pass-rate is over near-dup groups when deduped, else over images.
     n = agg.n_groups if agg.n_groups is not None else agg.n_images
-    n_passed = min(agg.n_passed, n)  # defensive: never let successes exceed the denominator
+    # n_passed is counted per group (the same basis as n). More successes than
+    # groups means the aggregate is inconsistent, e.g. passes counted per image;
+    # clamping would hide that and inflate the Wilson bound, so it fails instead.
+    n_passed = agg.n_passed
+    consistent = n_passed <= n
 
     if thresholds.min_pass_rate is not None:
         ok = agg.pass_rate >= thresholds.min_pass_rate
@@ -65,7 +69,16 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
             )
         )
 
-    if thresholds.min_pass_rate_ci_lower is not None:
+    if thresholds.min_pass_rate_ci_lower is not None and not consistent:
+        checks.append(
+            GateCheck(
+                name="pass_rate_ci_lower",
+                passed=False,
+                threshold=thresholds.min_pass_rate_ci_lower,
+                detail=f"inconsistent report: {n_passed} passed > {n} groups; the pass count is on another basis",
+            )
+        )
+    elif thresholds.min_pass_rate_ci_lower is not None:
         lb = wilson_lower_bound(n_passed, n, thresholds.confidence)
         ok = lb >= thresholds.min_pass_rate_ci_lower
         checks.append(

@@ -20,6 +20,7 @@ the detector (``ScorerProvenance.model``: ``nudenet-640m``, ``nudenet-320n``, or
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Sequence
 from pathlib import Path
@@ -107,8 +108,11 @@ class SafetyScorer:
                 prob = detector.unsafe_probability(image_path)
             except Exception:  # noqa: BLE001 - one flaky detector must not abort the whole run
                 continue
-            if prob is not None:
+            if prob is not None and math.isfinite(prob):
+                # A NaN would make max() order-dependent and could hide another
+                # detector's unsafe reading; treat it like a failed detector.
                 unsafe.append(prob)
+
         if not unsafe:
             return None
         return clamp01(1.0 - max(unsafe))  # most-unsafe detector wins; non-finite -> rejected by orchestrator

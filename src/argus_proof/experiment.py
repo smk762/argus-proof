@@ -31,7 +31,8 @@ import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field, model_validator
+from argus_cortex.fs import PathRefused, safe_name
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from argus_proof.grid import build_grid, count_prompt_items
 from argus_proof.models import GridAxes, GridConfig, GridPlan, ProofError, SamplingParams
@@ -108,6 +109,16 @@ class ExperimentMatrix(GridAxes):
 
     # Upstream factors proof observes but does not drive (caption strategy, …).
     labels: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("run_id_prefix")
+    @classmethod
+    def _safe_prefix(cls, v: str) -> str:
+        # The prefix starts every cell's run_id, which addresses report dirs, so it must
+        # be one safe path segment like the slugged parts after it ("../x" or "a/b" never).
+        try:
+            return safe_name(v, label="run_id_prefix")
+        except PathRefused as exc:
+            raise ValueError(f"run_id_prefix {v!r} must be letters, digits, '.', '_' or '-'") from exc
 
     @model_validator(mode="after")
     def _unique_step_names(self) -> Self:
@@ -302,6 +313,8 @@ def optuna_search(
     except ImportError as exc:  # pragma: no cover - exercised via the [opt] extra
         raise ExperimentError("optuna_search requires: pip install 'argus-proof[opt]'") from exc
 
+    if n_trials < 1:
+        raise ExperimentError(f"n_trials must be >= 1, got {n_trials}")
     space = matrix.search_space()
 
     def _objective(trial: optuna.Trial) -> float:
@@ -311,6 +324,12 @@ def optuna_search(
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(direction=direction, sampler=optuna.samplers.TPESampler(seed=seed))
     study.optimize(_objective, n_trials=n_trials)
+    # A NaN objective (a pass-rate over zero scored samples) marks a trial FAILED;
+    # with none COMPLETE, best_params raises a bare ValueError.
+    if not any(t.state == optuna.trial.TrialState.COMPLETE for t in study.trials):
+        raise ExperimentError(
+            f"no Optuna trial completed out of {len(study.trials)}; every objective failed or was NaN"
+        )
     return OptunaResult(
         best_params=dict(study.best_params),
         best_value=float(study.best_value),

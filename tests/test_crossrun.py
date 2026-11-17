@@ -280,3 +280,9 @@ def test_unknown_dimension_names_the_label_escape_hatch(tmp_path: Path) -> None:
     store.append(run_stats(manifest("r1"), report("r1", n_passed=1, n_groups=1)))
     with pytest.raises(ValueError, match="label:<key>"):
         store.slice_pass_rate("caption_strategy")  # a label needs the label: prefix
+
+
+def test_alpha_unanimous_single_value_is_perfect_agreement_not_a_crash() -> None:
+    # krippendorff itself raises on a one-value domain ("everyone approved").
+    units = [{"r1": 1.0, "r2": 1.0}, {"r1": 1.0, "r2": 1.0, "r3": 1.0}]
+    assert krippendorff_alpha(units) == 1.0

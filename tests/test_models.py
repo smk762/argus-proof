@@ -243,3 +243,10 @@ def test_wire_schema_includes_all_top_level_models() -> None:
 def test_wire_schema_pins_sha256_pattern() -> None:
     props = wire_schema()["$defs"]["ModelRef"]["properties"]
     assert props["sha256"]["pattern"] == r"^[0-9a-f]{64}$"
+
+
+@pytest.mark.parametrize(
+    ("raw", "slug"), [("", None), ("   ", None), ("-", None), ("self - harm", "self_harm"), ("Self-Harm", "self_harm")]
+)
+def test_reject_category_normalises_blanks_to_none_and_collapses_separators(raw: str, slug: str | None) -> None:
+    assert RejectReason(code="unsafe", category=raw).category == slug

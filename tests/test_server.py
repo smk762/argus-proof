@@ -115,15 +115,32 @@ def test_read_only_403_keeps_cors_headers(tmp_path) -> None:  # noqa: ANN001
     origin = "http://studio.local"
     refused = app.post("/run/stream", json={}, headers={"Origin": origin})
     assert refused.status_code == 403
-    assert refused.headers["access-control-allow-origin"] == origin
+    assert refused.headers["access-control-allow-origin"] == "*"
     preflight = app.options("/run/stream", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
     assert preflight.status_code == 200
 
 
 def test_cors_header(client: TestClient) -> None:
     resp = client.get("/health", headers={"Origin": "http://localhost:3000"})
-    # allow_credentials=True makes CORSMiddleware echo the origin rather than "*"
-    assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"
+    # A wildcard never comes with credentials, so the origin isn't reflected.
+    assert resp.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-credentials" not in resp.headers
+
+
+def test_wildcard_cors_does_not_let_any_site_send_credentialed_writes(tmp_path) -> None:  # noqa: ANN001
+    app = TestClient(create_app(reports_dir=str(tmp_path), cors=True, devmode=True))
+    headers = {"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"}
+    preflight = app.options("/purge", headers=headers)
+    assert preflight.headers.get("access-control-allow-credentials") != "true"
+
+
+def test_explicit_cors_origins_echo_with_credentials(tmp_path) -> None:  # noqa: ANN001
+    app = TestClient(create_app(reports_dir=str(tmp_path), cors=True, cors_origins=["http://studio.local"]))
+    resp = app.get("/health", headers={"Origin": "http://studio.local"})
+    assert resp.headers["access-control-allow-origin"] == "http://studio.local"
+    assert resp.headers["access-control-allow-credentials"] == "true"
+    other = app.get("/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in other.headers
 
 
 def test_put_get_and_list_report(report_client: TestClient) -> None:
@@ -390,7 +407,8 @@ def test_report_manifest_missing_cases(suite_client: TestClient, suite_dirs, mon
 
     # no report at all -> 404; unsafe run_id -> 400 (never joined under the runs root)
     assert suite_client.get("/report/nope/manifest").status_code == 404
-    assert suite_client.get("/report/..%2Fetc/manifest").status_code in (400, 404)
+    for unsafe in (".hidden", "a%20b", "bad%24id"):  # match the {run_id} segment, so the handler check runs
+        assert suite_client.get(f"/report/{unsafe}/manifest").status_code == 400
 
     # a manifest belonging to another run is refused, not served under this name
     original = manifest_path.read_text(encoding="utf-8")
@@ -664,3 +682,30 @@ def test_purge_refused_in_read_only_mode(tmp_path) -> None:  # noqa: ANN001
     health = client.get("/health").json()
     # devmode is on but the button would not work, so it isn't advertised
     assert health["devmode"] is True and "purge" not in health["capabilities"]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"seeds": list(range(65))}, {"steps": 201}, {"width": 4096}, {"height": 100_000}],
+)
+def test_run_stream_refuses_an_oversized_request(suite_client: TestClient, monkeypatch, override) -> None:  # noqa: ANN001
+    _fake_backend(monkeypatch)
+    payload = {"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "prompt": "x", **override}
+    assert suite_client.post("/run/stream", json=payload).status_code == 422
+
+
+def test_an_unexpected_worker_failure_ends_the_stream_with_an_error_frame(
+    suite_client: TestClient, monkeypatch
+) -> None:  # noqa: ANN001
+    backend = _fake_backend(monkeypatch)
+
+    def oom(*a, **kw):  # noqa: ANN002, ANN003, ANN202
+        raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(backend, "generate", oom)
+    frames = _stream_frames(
+        suite_client,
+        {"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "prompt": "x", "seeds": [1]},
+    )
+    assert frames[-1]["type"] == "error"
+    assert "CUDA out of memory" in frames[-1]["message"]

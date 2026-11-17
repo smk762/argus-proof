@@ -89,7 +89,7 @@ def test_composite_renormalizes_over_present_metrics() -> None:
     cfg = GateConfig()  # equal weights on identity/clip_score/aesthetic/preference
     # only two of four present -> mean of those two, not diluted by absent ones
     m = MetricScores(identity=0.8, clip_score=0.6)
-    assert composite_score(m, cfg) == 0.7
+    assert composite_score(m, cfg) == pytest.approx(0.7)
 
 
 def test_composite_none_when_nothing_scored() -> None:
@@ -269,3 +269,16 @@ def test_score_context_defaults_to_manifest_prompt() -> None:
 
     score_run(manifest(), [img("run-1-1", 1)], scorers=[PromptCapture("aesthetic", {})])
     assert captured == ["a photo of sks"]
+
+
+def test_a_nan_metric_fails_its_hard_gate() -> None:
+    cfg = GateConfig(hard_gates={"identity": 0.5})
+    passed, reasons = gate_image(MetricScores(identity=float("nan"), clip_score=0.9), cfg)
+    assert passed is False
+    assert reasons[0].note == "identity non-finite"
+
+
+@pytest.mark.parametrize("field", ["hard_gates", "weights"])
+def test_gateconfig_rejects_an_unknown_metric(field: str) -> None:
+    with pytest.raises(ValueError, match="unknown metric"):
+        GateConfig(**{field: {"identiy": 0.5}})

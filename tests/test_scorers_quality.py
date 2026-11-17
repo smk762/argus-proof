@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from pathlib import Path
 
 import pytest
@@ -117,9 +118,13 @@ def test_factories_accept_calibration_overrides() -> None:
     assert (s.lo, s.hi) == (25.0, 30.0)
 
 
-def test_real_scorers_unavailable_without_extra() -> None:
-    # torch/pyiqa/ImageReward aren't in the CI env, so these skip cleanly.
+def test_real_scorers_unavailable_without_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Force the extras to be missing (a None entry in sys.modules makes the import
+    # fail), so this holds on a machine that has them installed too.
+    for name in ("torch", "torchmetrics", "pyiqa", "ImageReward"):
+        monkeypatch.setitem(sys.modules, name, None)
     assert clip_score_scorer().is_available() is False
+
     assert pyiqa_scorer().is_available() is False
     assert image_reward_scorer().is_available() is False
 
@@ -136,3 +141,37 @@ def test_score_run_fills_quality_metrics() -> None:
     m = report.images[0].metrics
     assert m.clip_score == 1.0
     assert m.aesthetic == pytest.approx(0.8)
+
+
+@pytest.mark.parametrize("raw", [float("nan"), float("inf"), float("-inf")])
+def test_step_normalization_passes_a_non_finite_score_through(raw: float) -> None:
+    out = linear_normalize(raw, 0.5, 0.5)  # hi <= lo: the step branch
+    assert not math.isfinite(out)
+
+
+def test_a_non_clipiqa_pyiqa_metric_needs_explicit_calibration() -> None:
+    with pytest.raises(ValueError, match="needs explicit lo/hi"):
+        pyiqa_scorer(metric_name="musiq")
+    s = pyiqa_scorer(lo=20.0, hi=80.0, metric_name="musiq")
+    assert (s.lo, s.hi) == (20.0, 80.0)
+
+
+def test_a_lower_is_better_pyiqa_metric_is_negated(monkeypatch: pytest.MonkeyPatch) -> None:
+    from argus_proof.scoring.scorers.quality import PyiqaModel
+
+    class Tensor:
+        def __init__(self, v: float) -> None:
+            self.v = v
+
+        def item(self) -> float:
+            return self.v
+
+    class Niqe:
+        lower_better = True
+
+        def __call__(self, path: str) -> Tensor:
+            return Tensor(4.0)
+
+    model = PyiqaModel("niqe")
+    model._metric = Niqe()
+    assert model.score(Path("x.png"), None) == -4.0  # type: ignore[arg-type]

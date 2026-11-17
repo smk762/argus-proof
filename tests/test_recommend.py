@@ -271,3 +271,10 @@ def test_healthy_run_with_indistinct_store_is_empty() -> None:
     store = _FakeStore({"base_checkpoint": [_slice("A", 0.5, 0.95), _slice("B", 0.45, 0.9)]})
     healthy = _report(means=MetricScores(identity=0.9, clip_score=0.9, aesthetic=0.9), diversity=0.9)
     assert recommend(healthy, store=store) == []
+
+
+def test_a_wide_lower_ranked_cell_that_overlaps_best_blocks_the_pick() -> None:
+    # cells[2] (n=3) ranks last on ci_low but its interval still reaches past best's lower bound.
+    cells = [_slice("A", 0.60, 0.70), _slice("B", 0.40, 0.55), _slice("C", 0.10, 0.95)]
+    store = _FakeStore({"base_checkpoint": cells})
+    assert not any(r.stage == "checkpoint" for r in recommend(_report(means=MetricScores(identity=0.9)), store=store))

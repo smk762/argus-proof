@@ -49,6 +49,8 @@ import threading
 import time
 from pathlib import Path
 
+import structlog
+
 try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.concurrency import run_in_threadpool
@@ -75,6 +77,15 @@ from argus_proof.models import (
 )
 from argus_proof.refinement import RefinementRequest, refined_ranking
 from argus_proof.reports import HitlRequest, ReportStore, ReportSummary, summarise_report
+
+logger = structlog.get_logger()
+
+# Ceilings on one /run/stream request: every seed is a generation of width x
+# height for `steps` iterations, and the endpoint is reachable from the demo
+# host, so an unbounded body could queue thousands of images or one OOM render.
+MAX_RUN_SEEDS = 64
+MAX_RUN_STEPS = 200
+MAX_RUN_SIDE = 2048
 
 # Where the run trigger reads curator exports from (compose mounts /data/out here).
 ENV_EXPORTS_DIR = "ARGUS_PROOF_EXPORTS_DIR"
@@ -153,14 +164,14 @@ class RunRequest(BaseModel):
     export: str | None = None
     prompt: str | None = None
     negative_prompt: str = ""
-    seeds: list[int] = Field(default_factory=lambda: [1, 2, 3], min_length=1)
-    steps: int = Field(default=25, gt=0)
+    seeds: list[int] = Field(default_factory=lambda: [1, 2, 3], min_length=1, max_length=MAX_RUN_SEEDS)
+    steps: int = Field(default=25, gt=0, le=MAX_RUN_STEPS)
     cfg: float | None = None
     sampler: str | None = None
     scheduler: str | None = None
     guidance: float | None = Field(default=None, ge=0)
-    width: int = Field(default=1024, gt=0)
-    height: int = Field(default=1024, gt=0)
+    width: int = Field(default=1024, gt=0, le=MAX_RUN_SIDE)
+    height: int = Field(default=1024, gt=0, le=MAX_RUN_SIDE)
     clip_skip: int = 1
     vae: str | None = None
     text_encoders: list[str] | None = None
@@ -237,10 +248,13 @@ def create_app(
     if cors:
         from fastapi.middleware.cors import CORSMiddleware
 
+        # Credentials only with an explicit origin list: with a wildcard Starlette
+        # reflects any Origin, so every site a user visits could drive the
+        # mutating routes (a devmode /purge included) with their credentials.
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins or ["*"],
-            allow_credentials=True,
+            allow_credentials=bool(cors_origins),
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -488,6 +502,13 @@ def create_app(
             except (EvaluateError, ProofError, ValueError) as exc:
                 if not errored:
                     emit(ProgressEvent(run_id=run_id, type="error", message=str(exc)).model_dump(exclude_none=True))
+            except Exception as exc:  # noqa: BLE001 - CUDA OOM, OSError, a dropped engine: still end with a frame
+                # Without this the stream stops with neither `complete` nor `error`,
+                # and `await worker` re-raises into the response body mid-stream.
+                logger.exception("run_stream.failed", run_id=run_id)
+                if not errored:
+                    message = f"{type(exc).__name__}: {exc}"
+                    emit(ProgressEvent(run_id=run_id, type="error", message=message).model_dump(exclude_none=True))
             finally:
                 _release_run(run_id)  # before the sentinel: a client that saw the end can purge
                 emit(None)  # sentinel: stream is over

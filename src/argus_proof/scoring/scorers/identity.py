@@ -94,8 +94,13 @@ class IdentityScorer:
         if vec is None:
             return 0.0  # no face detected -> the subject isn't present
         sims = [cosine(vec, ref) for ref in refs]
+        if any(math.isnan(s) for s in sims):
+            # A degenerate embedding: propagate NaN for both aggregates so the
+            # orchestrator rejects it. max() alone would keep or drop a NaN
+            # depending on reference order.
+            return float("nan")
         agg = max(sims) if self.aggregate == "max" else sum(sims) / len(sims)
-        return clamp01(agg)  # NaN (degenerate embedding) passes through -> rejected by the orchestrator
+        return clamp01(agg)
 
     def _reference_vectors(self, ctx: ScoreContext) -> list[list[float]]:
         """Embed the reference set once, cached by path + size + mtime.
@@ -139,10 +144,14 @@ class InsightFaceEmbedder:
 
     def embed(self, image_path: Path) -> list[float] | None:
         import numpy as np
-        from PIL import Image
+        from PIL import Image, ImageOps
 
         with Image.open(image_path) as im:
-            rgb = np.array(im.convert("RGB"))
+            # Honour the EXIF Orientation tag (phone/camera references are often
+            # stored sideways), as the curator's face preprocessing does, so the
+            # detector sees an upright face.
+            rgb = np.array(ImageOps.exif_transpose(im).convert("RGB"))
+
         # InsightFace expects a BGR, C-contiguous array; a bare ::-1 view has a
         # negative stride that cv2/onnxruntime inside insightface reject.
         bgr = np.ascontiguousarray(rgb[:, :, ::-1])

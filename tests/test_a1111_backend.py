@@ -131,3 +131,35 @@ def test_guidance_is_refused_not_dropped(models: Path, tmp_path: Path) -> None:
     with pytest.raises(BackendError, match="guidance"):
         _backend(models, transport).generate(spec, tmp_path / "out")
     assert transport.payloads == []
+
+
+@pytest.mark.parametrize("field", ["prompt", "negative_prompt"])
+@pytest.mark.parametrize("tag", ["<lora:other:1>", "< LyCo :x:0.5>", "<hypernet:h:1>"])
+def test_a_prompt_carrying_an_extra_network_tag_is_refused(models: Path, tmp_path: Path, field, tag) -> None:  # noqa: ANN001
+    spec = _spec([1]).model_copy(update={field: f"a photo {tag}"})
+    transport = FakeTransport(make_png())
+    with pytest.raises(BackendError, match="spec.loras"):
+        _backend(models, transport).generate(spec, tmp_path / "run")
+    assert transport.payloads == []
+
+
+def test_repeated_seeds_are_refused_before_generating(models: Path, tmp_path: Path) -> None:
+    transport = FakeTransport(make_png())
+    with pytest.raises(BackendError, match="distinct seeds"):
+        _backend(models, transport).generate(_spec([3, 3]), tmp_path / "run")
+    assert transport.payloads == []
+
+
+@pytest.mark.parametrize(
+    ("name", "tag"),
+    [
+        ("char/subject.v2", "char/subject.v2"),
+        ("char/subject.v2.safetensors", "char/subject.v2"),
+        ("char\\subject.PT", "char/subject"),
+        ("subject.ckpt", "subject"),
+    ],
+)
+def test_lora_tag_strips_only_a_weight_extension(name: str, tag: str) -> None:
+    from argus_proof.backends.a1111 import _lora_tag_name
+
+    assert _lora_tag_name(name) == tag

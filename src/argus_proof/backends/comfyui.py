@@ -133,22 +133,30 @@ class ComfyUIBackend:
             render_workflow(self.template_for(spec.base_checkpoint), spec, spec.seeds[0])
             try:
                 placed = self.transport
+                # The version of every ComfyUI that rendered a seed, in first-use order:
+                # the broker can move seeds between hosts, and a run split across two
+                # versions must say so rather than credit only the last host.
+                versions: list[str] = []
                 with gpu.SeedLeases(self.gpu, gpu.GENERATE, caller=spec.run_id, priority=self.priority) as leases:
                     for done, seed in enumerate(spec.seeds, start=1):
                         transport = self._transport_for(leases.current().base_url)
-                        if transport is not placed:
-                            # The broker placed the run on another ComfyUI: record that one's version.
+                        if transport is not placed or not versions:
                             placed = transport
-                            manifest = manifest.model_copy(update={"engine_version": self._version_of(transport)})
+                            version = (
+                                manifest.engine_version if transport is self.transport else self._version_of(transport)
+                            )
+                            if version not in versions:
+                                versions.append(version)
                         images.extend(self._generate_seed(spec, seed, out_dir, emit, transport))
                         emit(ProgressEvent(run_id=spec.run_id, type="progress", completed=done, total=total))
+                manifest = manifest.model_copy(update={"engine_version": " + ".join(versions)})
             except gpu.LEASE_ERRORS as exc:
                 raise BackendError(gpu.lease_failure(exc)) from exc
+            write_manifest(out_dir, manifest)
         except BackendError as exc:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
 
-        write_manifest(out_dir, manifest)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
 
