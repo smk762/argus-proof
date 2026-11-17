@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   server's run and image ids, `--run-prefix`, the `$lora`/`$text_encoder` placeholders and the
   image-name match in `evaluate` now use `fullmatch`. The Llama Guard verdict parser and the
   literal-model-name refusal keep `match`.
+- **Archiving a run again no longer loses its earlier passing images.** `archive_run` rewrote
+  `passing_images.zip` from the images still on disk, but `blank_slate` had already deleted the ones
+  zipped last time, so archiving after reviewing the pending images dropped them from both. It now
+  appends to an existing zip and skips entries it already holds.
 
 ## [0.4.0] - 2026-11-16
 

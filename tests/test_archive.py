@@ -123,6 +123,23 @@ def test_archive_run_zips_passing_records_rejects_blank_slates(tmp_path: Path) -
     assert (tmp_path / "run-1-3.png").exists()  # pending kept for review
 
 
+def test_rearchive_after_more_review_keeps_previously_zipped_images(tmp_path: Path) -> None:
+    """Archiving again once pending images are reviewed adds to the zip; it never drops the earlier passes."""
+    images = gen_images(tmp_path, [1, 2])
+    archive_run(tmp_path, images, report([image_scores(1, True), image_scores(2, None)]), manifest())
+    assert not (tmp_path / "run-1-1.png").exists()  # zipped, then blank-slated
+
+    archive_run(tmp_path, images, report([image_scores(1, True), image_scores(2, True)]), manifest())
+    with zipfile.ZipFile(tmp_path / PASSING_ZIP_NAME) as zf:
+        assert sorted(zf.namelist()) == ["run-1-1.png", "run-1-2.png"]
+        assert zf.read("run-1-1.png") == b"fake-png-bytes"
+
+    # a third pass over an unchanged run adds no duplicate entries
+    archive_run(tmp_path, images, report([image_scores(1, True), image_scores(2, True)]), manifest())
+    with zipfile.ZipFile(tmp_path / PASSING_ZIP_NAME) as zf:
+        assert sorted(zf.namelist()) == ["run-1-1.png", "run-1-2.png"]
+
+
 def test_archive_run_keeps_loose_when_not_blank_slate(tmp_path: Path) -> None:
     images = gen_images(tmp_path, [1, 2])
     rpt = report([image_scores(1, True), image_scores(2, False)])
