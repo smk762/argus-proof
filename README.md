@@ -20,6 +20,11 @@ argus-quarry -> argus-curator -> argus-lens -> argus-forge -> your trainer -> ar
 > resulting images to the argus-studio `/proof` review view. Roadmap:
 > [argus-proof epic](https://github.com/smk762/argus-studio/issues/6).
 
+**Demo:** [proof.dragonhound.dev](https://proof.dragonhound.dev) replays one recorded evaluation: a synthetic-identity
+SDXL LoRA trained for 1600 steps, every 320-step checkpoint and a no-LoRA baseline scored by proof (144 images), and
+where it peaks. It is a static page with no backend; the recording is `web/public/tape/`, built by
+`scripts/demo_tape.py <recording-dir>`, and `make pages` exports the site to `web/out/`.
+
 ## Install
 
 ```bash
@@ -497,6 +502,7 @@ guards them.
 make install   # venv + editable install with the "dev,server,cli" extras
 make test
 make lint
+make pages     # the hosted demo's static export (web/, needs Node 22)
 ```
 
 ## CI / Release

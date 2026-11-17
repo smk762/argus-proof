@@ -22,3 +22,38 @@ jobs:
     # argus-ci suite rules: lint rules that each eliminate a finding class. New violations fail;
     # existing ones are in .suite-rules-baseline.json, which may only shrink.
     uses: smk762/argus-ci/.github/workflows/suite-rules.yml@v1
+
+  # The hosted demo (proof.dragonhound.dev): lint, typecheck and tests for web/, then the static export of the
+  # committed tape with a hash CSP on every page and check-static.mjs (every tape image listed and present, no
+  # container paths, opsec over the tape and pages, size budget).
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          OPSEC_DENYLIST: ${{ secrets.OPSEC_DENYLIST }}
+
+  # The Dragonhound shared design layer (web/vendor/dh) is vendored from dragonhound.dev/brand/v1 and must not be
+  # edited here. A newer upstream version is only a warning (re-sync in its own PR).
+  dh-shared:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node web/vendor/dh/sync-shared.mjs --check . --against https://dragonhound.dev/brand/v1/manifest.json --allow-outdated

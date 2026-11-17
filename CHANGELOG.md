@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Hosted demo** for proof.dragonhound.dev (`web/`): a static replay of one recorded evaluation. A synthetic-identity
+  SDXL LoRA was trained for 1600 steps; proof scored each 320-step checkpoint and a no-LoRA baseline (8 prompts x 3
+  seeds each) and the page shows where it peaks: score chart, the image grid with per-image scores and verdicts,
+  proof's per-run reasons, the dataset and its pipeline. `scripts/demo_tape.py` builds the tape (metrics, verdicts,
+  WebP images with no metadata, no host or container paths); `make pages` exports it with a hash CSP on every page.
+
 ### Changed
 
 - Run, image and export ids, and `--run-prefix`, are checked by argus-cortex's `fs.safe_name` instead of a local

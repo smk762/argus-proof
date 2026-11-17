@@ -1,0 +1,22 @@
+{
+  "name": "dh-shared",
+  "version": "1.2.8",
+  "checksum": "09aed5656386b1f3a9669877dac07638048934b6ee28d44c3eed57103b596a75",
+  "files": {
+    "README.md": "60dfd380a6b057de0261f6b30614f2c9e5572164b964794e024f8a36959cf14f",
+    "dh-badge.css": "649f9d7d07cc7a19cc054c46a66266be0f7f19b88ba2f9817d9a085b93d8fd7e",
+    "dh-mark.svg": "0b989faaa928890504412368c01c63144fe72a5fca9ab53bbaad824333d047fd",
+    "dh-strip.css": "f70f7e9c98cfc80a5e1f6f71fe256aa221d4e6b525f3ae4a7e2c83152b8d4dd2",
+    "dh-strip.d.mts": "e85ae79c8c3da10b4152c565be6c445307db1a8d017669dd716f83ac2271deb1",
+    "dh-strip.html": "9e66425cb47de631bc4756d38cfe6ff5a6d6b86dedc2cb850ad6b1e90a030230",
+    "dh-strip.mjs": "9cfc6e46a0c5e55761b4a042101034295e75810d88185fed1e586dee97cecf13",
+    "dh-theme.js": "5342aed59388fa56e1bf0ebfdb0b7f1cea42482cf5cee24e8409daa0a2d796f7",
+    "dh-tokens.css": "3d38bec30a49999e762e77490852a4656ab2898da1f350cb7e251e0f152bad44",
+    "favicons/apple-touch-icon.png": "f4a9d02b04bb917eabe2b564f0ae333d2897e4e8cee955da58158c07b32bd5f0",
+    "favicons/favicon.ico": "4effde39282e0911fcede0d92d6ef8efe1f057916d356a6701b919053330d5e7",
+    "favicons/favicon.svg": "b0e027a138166dea548b60d3e5c5366c65a7fad35accb3ee915964d33951ac54",
+    "favicons/icon-192.png": "1c7d37d770f8630c19c7f3dd8a85167a364b90dec3d76e29f3f50dc788d97699",
+    "favicons/icon-512.png": "ea081335d0457303fd3ea4d8f744044a1cd789709706410d68b812be4c178e32",
+    "favicons/site.webmanifest": "46793b88cd1891302827f583f2b82d0270c24ea1eab472194a3282ef7e584e13"
+  }
+}
