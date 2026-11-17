@@ -85,6 +85,10 @@ source = "vcs"
 [tool.hatch.build.hooks.vcs]
 version-file = "src/argus_proof/_version.py"
 
+# The hosted demo (web/, ~20 MiB of WebP) and its tape builder are not part of the package.
+[tool.hatch.build.targets.sdist]
+exclude = ["web/", "scripts/demo_tape.py"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/argus_proof"]
 

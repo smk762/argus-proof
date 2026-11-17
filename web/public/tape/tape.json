@@ -1,0 +1,4100 @@
+{
+ "format": "argus-proof-tape",
+ "version": 1,
+ "prompts": [
+  "ohwx woman, portrait, white sweater, pose",
+  "ohwx woman, beige sweater, selfie, smile, stare, polo neck",
+  "ohwx woman, portrait, close-up, black blazer, pink lipstick, direct stare",
+  "ohwx woman, portrait, black tank top, chandelier, lamp, soft lighting",
+  "ohwx woman, portrait, red dress, pose, room, white wall",
+  "ohwx woman, sweater, fireplace, log cabin, pose",
+  "ohwx woman, stand, pose, trench coat, road, building",
+  "ohwx woman, pose, business suit, black top, office, bright lighting"
+ ],
+ "variants": [
+  {
+   "id": "baseline",
+   "label": "No LoRA",
+   "step": null,
+   "lora": null,
+   "summary": {
+    "n_images": 24,
+    "means": {
+     "identity": 0.1103,
+     "clip_score": 0.86,
+     "aesthetic": 0.6671,
+     "safety": 1.0
+    },
+    "pass_rate": 0.2083,
+    "diversity": 0.4505,
+    "passed": 5,
+    "review": 19,
+    "failed": 0,
+    "runs_passed": 0
+   },
+   "runs": [
+    {
+     "run_id": "baseline-l00-w00-p000",
+     "prompt": 0,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": null,
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.33 vs threshold 0.75 \u2014 pending review (1/3 groups passed, 2 need review)",
+       "diversity 0.38"
+      ]
+     },
+     "pass_rate": 0.3333333333333333,
+     "diversity": 0.375,
+     "n_groups": 3,
+     "n_passed": 1,
+     "n_needs_hitl": 2,
+     "images": [
+      {
+       "image_id": "baseline-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.23687594028435202,
+        "clip_score": 0.9134310404459636,
+        "aesthetic": 0.7633721232414246,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/baseline/p0-s1-512.webp",
+       "full": "eval/baseline/p0-s1-1024.webp"
+      },
+      {
+       "image_id": "baseline-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.21700522833839836,
+        "clip_score": 0.6426647186279297,
+        "aesthetic": 0.6995823979377747,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/baseline/p0-s2-512.webp",
+       "full": "eval/baseline/p0-s2-1024.webp"
+      },
+      {
+       "image_id": "baseline-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.1354441264124898,
+        "clip_score": 0.822552490234375,
+        "aesthetic": 0.7663158178329468,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/baseline/p0-s3-512.webp",
+       "full": "eval/baseline/p0-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "baseline-l00-w00-p001",
+     "prompt": 1,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": null,
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.33 vs threshold 0.75 \u2014 pending review (1/3 groups passed, 2 need review)",
+       "diversity 0.38"
+      ]
+     },
+     "pass_rate": 0.3333333333333333,
+     "diversity": 0.375,
+     "n_groups": 3,
+     "n_passed": 1,
+     "n_needs_hitl": 2,
+     "images": [
+      {
+       "image_id": "baseline-l00-w00-p001-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.23665758685674504,
+        "clip_score": 0.9920740763346354,
+        "aesthetic": 0.7266351580619812,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/baseline/p1-s1-512.webp",
+       "full": "eval/baseline/p1-s1-1024.webp"
+      },
+      {
+       "image_id": "baseline-l00-w00-p001-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.15384791281793092,
+        "clip_score": 0.9319018046061198,
+        "aesthetic": 0.6943092942237854,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/baseline/p1-s2-512.webp",
+       "full": "eval/baseline/p1-s2-1024.webp"
+      },
+      {
+       "image_id": "baseline-l00-w00-p001-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.30306997285815984,
+        "clip_score": 0.8440032958984375,
+        "aesthetic": 0.6477522850036621,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/baseline/p1-s3-512.webp",
+       "full": "eval/baseline/p1-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "baseline-l00-w00-p002",
+     "prompt": 2,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": null,
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.47"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.46875,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "baseline-l00-w00-p002-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.06385404749901553,
+        "clip_score": 0.9089955647786458,
+        "aesthetic": 0.743257462978363,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/baseline/p2-s1-512.webp",
+       "full": "eval/baseline/p2-s1-1024.webp"
+      },
+      {
+       "image_id": "baseline-l00-w00-p002-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.18754703548776072,
+        "clip_score": 0.8882303873697917,
+        "aesthetic": 0.7930546998977661,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/baseline/p2-s2-512.webp",
+       "full": "eval/baseline/p2-s2-1024.webp"
+      },
+      {
+       "image_id": "baseline-l00-w00-p002-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.06703360373974619,
+        "clip_score": 0.9969212849934895,
+        "aesthetic": 0.7610470652580261,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/baseline/p2-s3-512.webp",
+       "full": "eval/baseline/p2-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "baseline-retry-p003-l00-w00-p000",
+     "prompt": 3,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": null,
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.49"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.4895833333333333,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "baseline-retry-p003-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.07503357714976262,
+        "clip_score": 0.6488344828287761,
+        "aesthetic": 0.7316070199012756,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/baseline/p3-s1-512.webp",
+       "full": "eval/baseline/p3-s1-1024.webp"
+      },
+      {
+       "image_id": "baseline-retry-p003-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.008205570407789822,
+        "clip_score": 0.8102142333984375,
+        "aesthetic": 0.5950673818588257,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/baseline/p3-s2-512.webp",
+       "full": "eval/baseline/p3-s2-1024.webp"
+      },
+      {
+       "image_id": "baseline-retry-p003-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.10585643973669163,
+        "clip_score": 1.0,
+        "aesthetic": 0.5855061411857605,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/baseline/p3-s3-512.webp",
+       "full": "eval/baseline/p3-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "baseline-rest-p004-l00-w00-p000",
+     "prompt": 4,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": null,
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.51"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.5104166666666666,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "baseline-rest-p004-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.10025912807018918,
+        "clip_score": 0.848248036702474,
+        "aesthetic": 0.740559995174408,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/baseline/p4-s1-512.webp",
+       "full": "eval/baseline/p4-s1-1024.webp"
+      },
+      {
+       "image_id": "baseline-rest-p004-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.021409929655099483,
+        "clip_score": 0.8178731282552083,
+        "aesthetic": 0.7133843302726746,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/baseline/p4-s2-512.webp",
+       "full": "eval/baseline/p4-s2-1024.webp"
+      },
+      {
+       "image_id": "baseline-rest-p004-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.02327129017139848,
+        "clip_score": 0.8396392822265625,
+        "aesthetic": 0.762975811958313,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/baseline/p4-s3-512.webp",
+       "full": "eval/baseline/p4-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "baseline-rest-p005-l00-w00-p000",
+     "prompt": 5,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": null,
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.33 vs threshold 0.75 \u2014 pending review (1/3 groups passed, 2 need review)",
+       "diversity 0.50"
+      ]
+     },
+     "pass_rate": 0.3333333333333333,
+     "diversity": 0.5,
+     "n_groups": 3,
+     "n_passed": 1,
+     "n_needs_hitl": 2,
+     "images": [
+      {
+       "image_id": "baseline-rest-p005-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.0,
+        "clip_score": 1.0,
+        "aesthetic": 0.6409067511558533,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/baseline/p5-s1-512.webp",
+       "full": "eval/baseline/p5-s1-1024.webp"
+      },
+      {
+       "image_id": "baseline-rest-p005-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.0024027774550748303,
+        "clip_score": 1.0,
+        "aesthetic": 0.6166715621948242,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/baseline/p5-s2-512.webp",
+       "full": "eval/baseline/p5-s2-1024.webp"
+      },
+      {
+       "image_id": "baseline-rest-p005-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.12634846824393772,
+        "clip_score": 1.0,
+        "aesthetic": 0.746259331703186,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/baseline/p5-s3-512.webp",
+       "full": "eval/baseline/p5-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "baseline-rest-p006-l00-w00-p000",
+     "prompt": 6,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": null,
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.46"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.4583333333333333,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "baseline-rest-p006-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.0,
+        "clip_score": 0.9286636352539063,
+        "aesthetic": 0.38061070442199707,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/baseline/p6-s1-512.webp",
+       "full": "eval/baseline/p6-s1-1024.webp"
+      },
+      {
+       "image_id": "baseline-rest-p006-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.0,
+        "clip_score": 0.955517323811849,
+        "aesthetic": 0.44861364364624023,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/baseline/p6-s2-512.webp",
+       "full": "eval/baseline/p6-s2-1024.webp"
+      },
+      {
+       "image_id": "baseline-rest-p006-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.0681882303645295,
+        "clip_score": 0.9021878560384115,
+        "aesthetic": 0.6830300688743591,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/baseline/p6-s3-512.webp",
+       "full": "eval/baseline/p6-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "baseline-rest-p007-l00-w00-p000",
+     "prompt": 7,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": null,
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.43"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.4270833333333333,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "baseline-rest-p007-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.2666596843145787,
+        "clip_score": 0.6029964447021484,
+        "aesthetic": 0.5832893252372742,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/baseline/p7-s1-512.webp",
+       "full": "eval/baseline/p7-s1-1024.webp"
+      },
+      {
+       "image_id": "baseline-rest-p007-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.1564835931913709,
+        "clip_score": 0.6091045379638672,
+        "aesthetic": 0.6333386301994324,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/baseline/p7-s2-512.webp",
+       "full": "eval/baseline/p7-s2-1024.webp"
+      },
+      {
+       "image_id": "baseline-rest-p007-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.0916974146197374,
+        "clip_score": 0.7347677866617839,
+        "aesthetic": 0.5544383525848389,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/baseline/p7-s3-512.webp",
+       "full": "eval/baseline/p7-s3-1024.webp"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "320",
+   "label": "Step 320",
+   "step": 320,
+   "lora": {
+    "name": "proof-synth-v3-step00000320.safetensors",
+    "sha256": "189b4a43ce307cd22d19c1aa0f74b7c73a42252197afde8c99107d01cfec1210",
+    "weight": 1.0
+   },
+   "summary": {
+    "n_images": 24,
+    "means": {
+     "identity": 0.4668,
+     "clip_score": 0.8263,
+     "aesthetic": 0.7798,
+     "safety": 0.9866
+    },
+    "pass_rate": 0.875,
+    "diversity": 0.4753,
+    "passed": 21,
+    "review": 3,
+    "failed": 0,
+    "runs_passed": 7
+   },
+   "runs": [
+    {
+     "run_id": "synth-s00000320-l00-w00-p000",
+     "prompt": 0,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000320.safetensors",
+      "sha256": "189b4a43ce307cd22d19c1aa0f74b7c73a42252197afde8c99107d01cfec1210",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.45"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4479166666666667,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000320-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4583061420937957,
+        "clip_score": 0.7965549468994141,
+        "aesthetic": 0.8458870053291321,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/320/p0-s1-512.webp",
+       "full": "eval/320/p0-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5713214089001831,
+        "clip_score": 0.7400686899820964,
+        "aesthetic": 0.8470777869224548,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/320/p0-s2-512.webp",
+       "full": "eval/320/p0-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5043995325820457,
+        "clip_score": 0.8780815124511718,
+        "aesthetic": 0.8287345767021179,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/320/p0-s3-512.webp",
+       "full": "eval/320/p0-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000320-l00-w00-p001",
+     "prompt": 1,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000320.safetensors",
+      "sha256": "189b4a43ce307cd22d19c1aa0f74b7c73a42252197afde8c99107d01cfec1210",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.45"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4479166666666667,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000320-l00-w00-p001-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.43051769124776246,
+        "clip_score": 0.9319470723470052,
+        "aesthetic": 0.8783979415893555,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/320/p1-s1-512.webp",
+       "full": "eval/320/p1-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p001-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.46099825045030396,
+        "clip_score": 0.9825607299804687,
+        "aesthetic": 0.8110380172729492,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/320/p1-s2-512.webp",
+       "full": "eval/320/p1-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p001-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5009208509828385,
+        "clip_score": 1.0,
+        "aesthetic": 0.8302492499351501,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/320/p1-s3-512.webp",
+       "full": "eval/320/p1-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000320-l00-w00-p002",
+     "prompt": 2,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000320.safetensors",
+      "sha256": "189b4a43ce307cd22d19c1aa0f74b7c73a42252197afde8c99107d01cfec1210",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.47"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.46875,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000320-l00-w00-p002-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4080994328752436,
+        "clip_score": 1.0,
+        "aesthetic": 0.7601667046546936,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/320/p2-s1-512.webp",
+       "full": "eval/320/p2-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p002-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.475785534508618,
+        "clip_score": 0.9464558919270833,
+        "aesthetic": 0.7839965224266052,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/320/p2-s2-512.webp",
+       "full": "eval/320/p2-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p002-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5309091609172486,
+        "clip_score": 0.8303082784016927,
+        "aesthetic": 0.8228419423103333,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/320/p2-s3-512.webp",
+       "full": "eval/320/p2-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000320-l00-w00-p003",
+     "prompt": 3,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000320.safetensors",
+      "sha256": "189b4a43ce307cd22d19c1aa0f74b7c73a42252197afde8c99107d01cfec1210",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.50"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.5,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000320-l00-w00-p003-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.46700857885515223,
+        "clip_score": 0.5720849355061849,
+        "aesthetic": 0.7942600250244141,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/320/p3-s1-512.webp",
+       "full": "eval/320/p3-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p003-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5870506972996212,
+        "clip_score": 0.5807188669840495,
+        "aesthetic": 0.7809070944786072,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/320/p3-s2-512.webp",
+       "full": "eval/320/p3-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p003-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5345426504723921,
+        "clip_score": 0.877984619140625,
+        "aesthetic": 0.7783764004707336,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/320/p3-s3-512.webp",
+       "full": "eval/320/p3-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000320-l00-w00-p004",
+     "prompt": 4,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000320.safetensors",
+      "sha256": "189b4a43ce307cd22d19c1aa0f74b7c73a42252197afde8c99107d01cfec1210",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.49"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4895833333333333,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000320-l00-w00-p004-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.42264725987283636,
+        "clip_score": 0.7105393727620443,
+        "aesthetic": 0.8024222254753113,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/320/p4-s1-512.webp",
+       "full": "eval/320/p4-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p004-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5905904914009238,
+        "clip_score": 0.7533227284749349,
+        "aesthetic": 0.8242130279541016,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/320/p4-s2-512.webp",
+       "full": "eval/320/p4-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p004-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5558708612960149,
+        "clip_score": 0.7889858245849609,
+        "aesthetic": 0.7901825904846191,
+        "safety": 0.6784
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/320/p4-s3-512.webp",
+       "full": "eval/320/p4-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000320-l00-w00-p005",
+     "prompt": 5,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000320.safetensors",
+      "sha256": "189b4a43ce307cd22d19c1aa0f74b7c73a42252197afde8c99107d01cfec1210",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.47"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.46875,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000320-l00-w00-p005-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.5775455590797894,
+        "clip_score": 0.995782979329427,
+        "aesthetic": 0.7564531564712524,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/320/p5-s1-512.webp",
+       "full": "eval/320/p5-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p005-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.3924418844020467,
+        "clip_score": 1.0,
+        "aesthetic": 0.733859658241272,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/320/p5-s2-512.webp",
+       "full": "eval/320/p5-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p005-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.33745995895779046,
+        "clip_score": 1.0,
+        "aesthetic": 0.801927387714386,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/320/p5-s3-512.webp",
+       "full": "eval/320/p5-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000320-l00-w00-p006",
+     "prompt": 6,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000320.safetensors",
+      "sha256": "189b4a43ce307cd22d19c1aa0f74b7c73a42252197afde8c99107d01cfec1210",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.50"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.5,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "synth-s00000320-l00-w00-p006-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4924343487348222,
+        "clip_score": 0.5419652303059895,
+        "aesthetic": 0.7233006358146667,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/320/p6-s1-512.webp",
+       "full": "eval/320/p6-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p006-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.12825644817560386,
+        "clip_score": 0.8887257893880208,
+        "aesthetic": 0.5585004091262817,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/320/p6-s2-512.webp",
+       "full": "eval/320/p6-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p006-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.2753531958939923,
+        "clip_score": 0.6932446797688802,
+        "aesthetic": 0.7576252222061157,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/320/p6-s3-512.webp",
+       "full": "eval/320/p6-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000320-l00-w00-p007",
+     "prompt": 7,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000320.safetensors",
+      "sha256": "189b4a43ce307cd22d19c1aa0f74b7c73a42252197afde8c99107d01cfec1210",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.48"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4791666666666667,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000320-l00-w00-p007-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.45987980390466426,
+        "clip_score": 0.7831761678059895,
+        "aesthetic": 0.7446226477622986,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/320/p7-s1-512.webp",
+       "full": "eval/320/p7-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p007-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5532913572434104,
+        "clip_score": 0.8508768717447917,
+        "aesthetic": 0.7718507647514343,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/320/p7-s2-512.webp",
+       "full": "eval/320/p7-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000320-l00-w00-p007-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.4864198734357525,
+        "clip_score": 0.687206522623698,
+        "aesthetic": 0.68912273645401,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/320/p7-s3-512.webp",
+       "full": "eval/320/p7-s3-1024.webp"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "640",
+   "label": "Step 640",
+   "step": 640,
+   "lora": {
+    "name": "proof-synth-v3-step00000640.safetensors",
+    "sha256": "f379d13d30079ea8d722635c90d316df1712326b95489a5422f689631035a285",
+    "weight": 1.0
+   },
+   "summary": {
+    "n_images": 24,
+    "means": {
+     "identity": 0.4732,
+     "clip_score": 0.8282,
+     "aesthetic": 0.7249,
+     "safety": 1.0
+    },
+    "pass_rate": 0.8333,
+    "diversity": 0.444,
+    "passed": 20,
+    "review": 4,
+    "failed": 0,
+    "runs_passed": 5
+   },
+   "runs": [
+    {
+     "run_id": "synth-s00000640-l00-w00-p000",
+     "prompt": 0,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000640.safetensors",
+      "sha256": "f379d13d30079ea8d722635c90d316df1712326b95489a5422f689631035a285",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.46"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4583333333333333,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000640-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.5457148281348408,
+        "clip_score": 0.7896817525227865,
+        "aesthetic": 0.8028827905654907,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/640/p0-s1-512.webp",
+       "full": "eval/640/p0-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.48913491047375923,
+        "clip_score": 0.8692003885904948,
+        "aesthetic": 0.8161611557006836,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/640/p0-s2-512.webp",
+       "full": "eval/640/p0-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5687997849655618,
+        "clip_score": 0.8621325174967448,
+        "aesthetic": 0.8451263308525085,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/640/p0-s3-512.webp",
+       "full": "eval/640/p0-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000640-l00-w00-p001",
+     "prompt": 1,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000640.safetensors",
+      "sha256": "f379d13d30079ea8d722635c90d316df1712326b95489a5422f689631035a285",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.35"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.3541666666666667,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000640-l00-w00-p001-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.44510132945489267,
+        "clip_score": 0.9405644734700521,
+        "aesthetic": 0.8553420901298523,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/640/p1-s1-512.webp",
+       "full": "eval/640/p1-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p001-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.46302075241366114,
+        "clip_score": 0.8928253173828125,
+        "aesthetic": 0.7853589653968811,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/640/p1-s2-512.webp",
+       "full": "eval/640/p1-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p001-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5255710372890138,
+        "clip_score": 0.8871164957682292,
+        "aesthetic": 0.7728659510612488,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/640/p1-s3-512.webp",
+       "full": "eval/640/p1-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000640-l00-w00-p002",
+     "prompt": 2,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000640.safetensors",
+      "sha256": "f379d13d30079ea8d722635c90d316df1712326b95489a5422f689631035a285",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.45"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4479166666666667,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000640-l00-w00-p002-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4984020712331461,
+        "clip_score": 1.0,
+        "aesthetic": 0.7571841478347778,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/640/p2-s1-512.webp",
+       "full": "eval/640/p2-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p002-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.48578306237327706,
+        "clip_score": 0.9251213073730469,
+        "aesthetic": 0.8158087134361267,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/640/p2-s2-512.webp",
+       "full": "eval/640/p2-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p002-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.48845033290207956,
+        "clip_score": 0.953600819905599,
+        "aesthetic": 0.8067033886909485,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/640/p2-s3-512.webp",
+       "full": "eval/640/p2-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000640-l00-w00-p003",
+     "prompt": 3,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000640.safetensors",
+      "sha256": "f379d13d30079ea8d722635c90d316df1712326b95489a5422f689631035a285",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.46"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.4583333333333333,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "synth-s00000640-l00-w00-p003-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4715268171592019,
+        "clip_score": 0.5561209360758463,
+        "aesthetic": 0.7425040602684021,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/640/p3-s1-512.webp",
+       "full": "eval/640/p3-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p003-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5194095928499062,
+        "clip_score": 0.7101234436035156,
+        "aesthetic": 0.7081630229949951,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/640/p3-s2-512.webp",
+       "full": "eval/640/p3-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p003-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.45783347339719793,
+        "clip_score": 0.7942705790201823,
+        "aesthetic": 0.6451942324638367,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/640/p3-s3-512.webp",
+       "full": "eval/640/p3-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000640-l00-w00-p004",
+     "prompt": 4,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000640.safetensors",
+      "sha256": "f379d13d30079ea8d722635c90d316df1712326b95489a5422f689631035a285",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.49"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4895833333333333,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000640-l00-w00-p004-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4530760618981503,
+        "clip_score": 0.8495887756347656,
+        "aesthetic": 0.8035163283348083,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/640/p4-s1-512.webp",
+       "full": "eval/640/p4-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p004-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5177865023438253,
+        "clip_score": 0.8180193583170573,
+        "aesthetic": 0.767402708530426,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/640/p4-s2-512.webp",
+       "full": "eval/640/p4-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p004-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5020537276002236,
+        "clip_score": 0.688549550374349,
+        "aesthetic": 0.7918010950088501,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/640/p4-s3-512.webp",
+       "full": "eval/640/p4-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000640-l00-w00-p005",
+     "prompt": 5,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000640.safetensors",
+      "sha256": "f379d13d30079ea8d722635c90d316df1712326b95489a5422f689631035a285",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.45"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4479166666666667,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000640-l00-w00-p005-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4268509455241595,
+        "clip_score": 1.0,
+        "aesthetic": 0.4967643916606903,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/640/p5-s1-512.webp",
+       "full": "eval/640/p5-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p005-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.41946438015354226,
+        "clip_score": 1.0,
+        "aesthetic": 0.6386775374412537,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/640/p5-s2-512.webp",
+       "full": "eval/640/p5-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p005-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.43171415964004434,
+        "clip_score": 0.9924273173014323,
+        "aesthetic": 0.6081612706184387,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/640/p5-s3-512.webp",
+       "full": "eval/640/p5-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000640-l00-w00-p006",
+     "prompt": 6,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000640.safetensors",
+      "sha256": "f379d13d30079ea8d722635c90d316df1712326b95489a5422f689631035a285",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.33 vs threshold 0.75 \u2014 pending review (1/3 groups passed, 2 need review)",
+       "diversity 0.47"
+      ]
+     },
+     "pass_rate": 0.3333333333333333,
+     "diversity": 0.46875,
+     "n_groups": 3,
+     "n_passed": 1,
+     "n_needs_hitl": 2,
+     "images": [
+      {
+       "image_id": "synth-s00000640-l00-w00-p006-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.407736311521829,
+        "clip_score": 0.5815129597981771,
+        "aesthetic": 0.7086693644523621,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/640/p6-s1-512.webp",
+       "full": "eval/640/p6-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p006-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.36005711148374886,
+        "clip_score": 0.8063629150390625,
+        "aesthetic": 0.638582170009613,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/640/p6-s2-512.webp",
+       "full": "eval/640/p6-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p006-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.3419375504726919,
+        "clip_score": 0.651421864827474,
+        "aesthetic": 0.676479160785675,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/640/p6-s3-512.webp",
+       "full": "eval/640/p6-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000640-l00-w00-p007",
+     "prompt": 7,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000640.safetensors",
+      "sha256": "f379d13d30079ea8d722635c90d316df1712326b95489a5422f689631035a285",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.43"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.4270833333333333,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "synth-s00000640-l00-w00-p007-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.48825999524404895,
+        "clip_score": 0.9596633911132812,
+        "aesthetic": 0.5853104591369629,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/640/p7-s1-512.webp",
+       "full": "eval/640/p7-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p007-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5476469431144272,
+        "clip_score": 0.6839029947916667,
+        "aesthetic": 0.7400490641593933,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/640/p7-s2-512.webp",
+       "full": "eval/640/p7-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000640-l00-w00-p007-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5003831481363886,
+        "clip_score": 0.6645454406738281,
+        "aesthetic": 0.5896944999694824,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/640/p7-s3-512.webp",
+       "full": "eval/640/p7-s3-1024.webp"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "960",
+   "label": "Step 960",
+   "step": 960,
+   "lora": {
+    "name": "proof-synth-v3-step00000960.safetensors",
+    "sha256": "ae0f590dc371566fc8f141fc7873a12a69179d7cb68ef4bdb67e5bf68fefb280",
+    "weight": 1.0
+   },
+   "summary": {
+    "n_images": 24,
+    "means": {
+     "identity": 0.4567,
+     "clip_score": 0.7623,
+     "aesthetic": 0.6867,
+     "safety": 1.0
+    },
+    "pass_rate": 0.625,
+    "diversity": 0.4453,
+    "passed": 15,
+    "review": 9,
+    "failed": 0,
+    "runs_passed": 4
+   },
+   "runs": [
+    {
+     "run_id": "synth-s00000960-l00-w00-p000",
+     "prompt": 0,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000960.safetensors",
+      "sha256": "ae0f590dc371566fc8f141fc7873a12a69179d7cb68ef4bdb67e5bf68fefb280",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.51"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.5104166666666666,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "synth-s00000960-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.43464642601080705,
+        "clip_score": 0.5488124847412109,
+        "aesthetic": 0.7456690073013306,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/960/p0-s1-512.webp",
+       "full": "eval/960/p0-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.497778467713393,
+        "clip_score": 0.7278190612792969,
+        "aesthetic": 0.7478167414665222,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/960/p0-s2-512.webp",
+       "full": "eval/960/p0-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.48606833238945574,
+        "clip_score": 0.6851758321126302,
+        "aesthetic": 0.7263286709785461,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/960/p0-s3-512.webp",
+       "full": "eval/960/p0-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000960-l00-w00-p001",
+     "prompt": 1,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000960.safetensors",
+      "sha256": "ae0f590dc371566fc8f141fc7873a12a69179d7cb68ef4bdb67e5bf68fefb280",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.45"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.4479166666666667,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "synth-s00000960-l00-w00-p001-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.3460403297291266,
+        "clip_score": 0.6402706146240235,
+        "aesthetic": 0.7307572364807129,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/960/p1-s1-512.webp",
+       "full": "eval/960/p1-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p001-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.39548129005083926,
+        "clip_score": 0.7341620127360026,
+        "aesthetic": 0.6520866751670837,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/960/p1-s2-512.webp",
+       "full": "eval/960/p1-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p001-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.43940516330213736,
+        "clip_score": 0.669806162516276,
+        "aesthetic": 0.6442893147468567,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/960/p1-s3-512.webp",
+       "full": "eval/960/p1-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000960-l00-w00-p002",
+     "prompt": 2,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000960.safetensors",
+      "sha256": "ae0f590dc371566fc8f141fc7873a12a69179d7cb68ef4bdb67e5bf68fefb280",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.43"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4270833333333333,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000960-l00-w00-p002-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4674191454439239,
+        "clip_score": 0.9562919616699219,
+        "aesthetic": 0.7271905541419983,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/960/p2-s1-512.webp",
+       "full": "eval/960/p2-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p002-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.44866074076400403,
+        "clip_score": 0.9216168721516927,
+        "aesthetic": 0.749021589756012,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/960/p2-s2-512.webp",
+       "full": "eval/960/p2-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p002-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.491532362638745,
+        "clip_score": 0.9091903686523437,
+        "aesthetic": 0.7621886730194092,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/960/p2-s3-512.webp",
+       "full": "eval/960/p2-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000960-l00-w00-p003",
+     "prompt": 3,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000960.safetensors",
+      "sha256": "ae0f590dc371566fc8f141fc7873a12a69179d7cb68ef4bdb67e5bf68fefb280",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.33 vs threshold 0.75 \u2014 pending review (1/3 groups passed, 2 need review)",
+       "diversity 0.36"
+      ]
+     },
+     "pass_rate": 0.3333333333333333,
+     "diversity": 0.3645833333333333,
+     "n_groups": 3,
+     "n_passed": 1,
+     "n_needs_hitl": 2,
+     "images": [
+      {
+       "image_id": "synth-s00000960-l00-w00-p003-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.492572494261469,
+        "clip_score": 0.6335853576660156,
+        "aesthetic": 0.6028737425804138,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/960/p3-s1-512.webp",
+       "full": "eval/960/p3-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p003-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5086705114996157,
+        "clip_score": 0.8750953674316406,
+        "aesthetic": 0.7609935402870178,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/960/p3-s2-512.webp",
+       "full": "eval/960/p3-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p003-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.4831111873672358,
+        "clip_score": 0.603182856241862,
+        "aesthetic": 0.6682814955711365,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/960/p3-s3-512.webp",
+       "full": "eval/960/p3-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000960-l00-w00-p004",
+     "prompt": 4,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000960.safetensors",
+      "sha256": "ae0f590dc371566fc8f141fc7873a12a69179d7cb68ef4bdb67e5bf68fefb280",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.47"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.46875,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000960-l00-w00-p004-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.5219775503672982,
+        "clip_score": 0.7902820587158204,
+        "aesthetic": 0.783658504486084,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/960/p4-s1-512.webp",
+       "full": "eval/960/p4-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p004-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.49970847218113496,
+        "clip_score": 0.6808759053548177,
+        "aesthetic": 0.8284645080566406,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/960/p4-s2-512.webp",
+       "full": "eval/960/p4-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p004-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5654840850184126,
+        "clip_score": 0.7444025675455729,
+        "aesthetic": 0.7022510766983032,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/960/p4-s3-512.webp",
+       "full": "eval/960/p4-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000960-l00-w00-p005",
+     "prompt": 5,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000960.safetensors",
+      "sha256": "ae0f590dc371566fc8f141fc7873a12a69179d7cb68ef4bdb67e5bf68fefb280",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.42"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4166666666666667,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000960-l00-w00-p005-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.409507097207993,
+        "clip_score": 1.0,
+        "aesthetic": 0.5022080540657043,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/960/p5-s1-512.webp",
+       "full": "eval/960/p5-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p005-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.4362007058004972,
+        "clip_score": 1.0,
+        "aesthetic": 0.5992841124534607,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/960/p5-s2-512.webp",
+       "full": "eval/960/p5-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p005-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.4037701560487663,
+        "clip_score": 1.0,
+        "aesthetic": 0.5915520787239075,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/960/p5-s3-512.webp",
+       "full": "eval/960/p5-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000960-l00-w00-p006",
+     "prompt": 6,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000960.safetensors",
+      "sha256": "ae0f590dc371566fc8f141fc7873a12a69179d7cb68ef4bdb67e5bf68fefb280",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.50"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.5,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "synth-s00000960-l00-w00-p006-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.3656412018966152,
+        "clip_score": 0.5558448791503906,
+        "aesthetic": 0.7623087167739868,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/960/p6-s1-512.webp",
+       "full": "eval/960/p6-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p006-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.3208153700760682,
+        "clip_score": 0.735983149210612,
+        "aesthetic": 0.6328504681587219,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/960/p6-s2-512.webp",
+       "full": "eval/960/p6-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-l00-w00-p006-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.43503916477169535,
+        "clip_score": 0.6180530548095703,
+        "aesthetic": 0.7223238348960876,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/960/p6-s3-512.webp",
+       "full": "eval/960/p6-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00000960-retry-p007-l00-w00-p000",
+     "prompt": 7,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00000960.safetensors",
+      "sha256": "ae0f590dc371566fc8f141fc7873a12a69179d7cb68ef4bdb67e5bf68fefb280",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.43"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4270833333333333,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00000960-retry-p007-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.5040416247610613,
+        "clip_score": 0.717175547281901,
+        "aesthetic": 0.585560142993927,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/960/p7-s1-512.webp",
+       "full": "eval/960/p7-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-retry-p007-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5386345629320701,
+        "clip_score": 0.817822011311849,
+        "aesthetic": 0.6428664326667786,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/960/p7-s2-512.webp",
+       "full": "eval/960/p7-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00000960-retry-p007-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.46880236075343285,
+        "clip_score": 0.7304327646891277,
+        "aesthetic": 0.6106246113777161,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/960/p7-s3-512.webp",
+       "full": "eval/960/p7-s3-1024.webp"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "1280",
+   "label": "Step 1280",
+   "step": 1280,
+   "lora": {
+    "name": "proof-synth-v3-step00001280.safetensors",
+    "sha256": "2491b1e7bf74b5868dca37b2133d0453f9cbdf3277e00f2c29fc7d9ba1597157",
+    "weight": 1.0
+   },
+   "summary": {
+    "n_images": 24,
+    "means": {
+     "identity": 0.4543,
+     "clip_score": 0.7551,
+     "aesthetic": 0.7174,
+     "safety": 1.0
+    },
+    "pass_rate": 0.75,
+    "diversity": 0.4544,
+    "passed": 18,
+    "review": 6,
+    "failed": 0,
+    "runs_passed": 4
+   },
+   "runs": [
+    {
+     "run_id": "synth-s00001280-l00-w00-p000",
+     "prompt": 0,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001280.safetensors",
+      "sha256": "2491b1e7bf74b5868dca37b2133d0453f9cbdf3277e00f2c29fc7d9ba1597157",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.48"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.4791666666666667,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "synth-s00001280-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4352665982352007,
+        "clip_score": 0.529059092203776,
+        "aesthetic": 0.7546789646148682,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1280/p0-s1-512.webp",
+       "full": "eval/1280/p0-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.4252926858206162,
+        "clip_score": 0.6997824350992838,
+        "aesthetic": 0.7713212370872498,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1280/p0-s2-512.webp",
+       "full": "eval/1280/p0-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.4587593077566623,
+        "clip_score": 0.7161364237467448,
+        "aesthetic": 0.838810384273529,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1280/p0-s3-512.webp",
+       "full": "eval/1280/p0-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001280-l00-w00-p001",
+     "prompt": 1,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001280.safetensors",
+      "sha256": "2491b1e7bf74b5868dca37b2133d0453f9cbdf3277e00f2c29fc7d9ba1597157",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.41"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.40625,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "synth-s00001280-l00-w00-p001-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.3785375972950919,
+        "clip_score": 0.7158966064453125,
+        "aesthetic": 0.7429349422454834,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1280/p1-s1-512.webp",
+       "full": "eval/1280/p1-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p001-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.42701797478587433,
+        "clip_score": 0.7060264587402344,
+        "aesthetic": 0.7344682216644287,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1280/p1-s2-512.webp",
+       "full": "eval/1280/p1-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p001-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.4399794215608217,
+        "clip_score": 0.6208319346110026,
+        "aesthetic": 0.7148476839065552,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1280/p1-s3-512.webp",
+       "full": "eval/1280/p1-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001280-l00-w00-p002",
+     "prompt": 2,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001280.safetensors",
+      "sha256": "2491b1e7bf74b5868dca37b2133d0453f9cbdf3277e00f2c29fc7d9ba1597157",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.48"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4791666666666667,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00001280-l00-w00-p002-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.43997012960337395,
+        "clip_score": 1.0,
+        "aesthetic": 0.7551195621490479,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1280/p2-s1-512.webp",
+       "full": "eval/1280/p2-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p002-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.3771369909311613,
+        "clip_score": 0.8994425455729167,
+        "aesthetic": 0.8188480734825134,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1280/p2-s2-512.webp",
+       "full": "eval/1280/p2-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p002-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5633196363002891,
+        "clip_score": 0.9162045796712239,
+        "aesthetic": 0.8323349356651306,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1280/p2-s3-512.webp",
+       "full": "eval/1280/p2-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001280-l00-w00-p003",
+     "prompt": 3,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001280.safetensors",
+      "sha256": "2491b1e7bf74b5868dca37b2133d0453f9cbdf3277e00f2c29fc7d9ba1597157",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.47"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.46875,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "synth-s00001280-l00-w00-p003-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.48570799216696514,
+        "clip_score": 0.6003671010335286,
+        "aesthetic": 0.7251781821250916,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1280/p3-s1-512.webp",
+       "full": "eval/1280/p3-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p003-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.46755237700942964,
+        "clip_score": 0.7005686442057292,
+        "aesthetic": 0.8201004266738892,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1280/p3-s2-512.webp",
+       "full": "eval/1280/p3-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p003-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.4596724045284017,
+        "clip_score": 0.5801307678222656,
+        "aesthetic": 0.6697809100151062,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1280/p3-s3-512.webp",
+       "full": "eval/1280/p3-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001280-l00-w00-p004",
+     "prompt": 4,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001280.safetensors",
+      "sha256": "2491b1e7bf74b5868dca37b2133d0453f9cbdf3277e00f2c29fc7d9ba1597157",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.46"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4583333333333333,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00001280-l00-w00-p004-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.5617823682935617,
+        "clip_score": 0.7495857238769531,
+        "aesthetic": 0.7562455534934998,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1280/p4-s1-512.webp",
+       "full": "eval/1280/p4-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p004-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.504588252626792,
+        "clip_score": 0.7440179189046224,
+        "aesthetic": 0.8077789545059204,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1280/p4-s2-512.webp",
+       "full": "eval/1280/p4-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p004-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5359143889133203,
+        "clip_score": 0.7231622060139974,
+        "aesthetic": 0.775962769985199,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1280/p4-s3-512.webp",
+       "full": "eval/1280/p4-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001280-l00-w00-p005",
+     "prompt": 5,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001280.safetensors",
+      "sha256": "2491b1e7bf74b5868dca37b2133d0453f9cbdf3277e00f2c29fc7d9ba1597157",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.41"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.40625,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00001280-l00-w00-p005-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.44145844079457414,
+        "clip_score": 1.0,
+        "aesthetic": 0.519949197769165,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1280/p5-s1-512.webp",
+       "full": "eval/1280/p5-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p005-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.3423845040029693,
+        "clip_score": 1.0,
+        "aesthetic": 0.5475105047225952,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1280/p5-s2-512.webp",
+       "full": "eval/1280/p5-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p005-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.44987761862274817,
+        "clip_score": 1.0,
+        "aesthetic": 0.5516886711120605,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1280/p5-s3-512.webp",
+       "full": "eval/1280/p5-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001280-l00-w00-p006",
+     "prompt": 6,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001280.safetensors",
+      "sha256": "2491b1e7bf74b5868dca37b2133d0453f9cbdf3277e00f2c29fc7d9ba1597157",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.45"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.4479166666666667,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "synth-s00001280-l00-w00-p006-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.45027177492098214,
+        "clip_score": 0.45019620259602866,
+        "aesthetic": 0.7330382466316223,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1280/p6-s1-512.webp",
+       "full": "eval/1280/p6-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p006-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.36957364785641733,
+        "clip_score": 0.6469434102376302,
+        "aesthetic": 0.6291772127151489,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1280/p6-s2-512.webp",
+       "full": "eval/1280/p6-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p006-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.36213407037316037,
+        "clip_score": 0.6371332804361979,
+        "aesthetic": 0.7603041529655457,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1280/p6-s3-512.webp",
+       "full": "eval/1280/p6-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001280-l00-w00-p007",
+     "prompt": 7,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001280.safetensors",
+      "sha256": "2491b1e7bf74b5868dca37b2133d0453f9cbdf3277e00f2c29fc7d9ba1597157",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.49"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.4895833333333333,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00001280-l00-w00-p007-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4985403872914681,
+        "clip_score": 0.8886637369791667,
+        "aesthetic": 0.6143885850906372,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1280/p7-s1-512.webp",
+       "full": "eval/1280/p7-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p007-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5277112402818099,
+        "clip_score": 0.8345733642578125,
+        "aesthetic": 0.6689457893371582,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1280/p7-s2-512.webp",
+       "full": "eval/1280/p7-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001280-l00-w00-p007-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5011725971731005,
+        "clip_score": 0.7633051554361979,
+        "aesthetic": 0.6749565005302429,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1280/p7-s3-512.webp",
+       "full": "eval/1280/p7-s3-1024.webp"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "1600",
+   "label": "Step 1600",
+   "step": 1600,
+   "lora": {
+    "name": "proof-synth-v3-step00001600.safetensors",
+    "sha256": "f79b0b50918beb30132b368809400d2a16944e3ebd4cce0f96d8663a83c42df8",
+    "weight": 1.0
+   },
+   "summary": {
+    "n_images": 24,
+    "means": {
+     "identity": 0.4088,
+     "clip_score": 0.7584,
+     "aesthetic": 0.6673,
+     "safety": 1.0
+    },
+    "pass_rate": 0.5417,
+    "diversity": 0.4805,
+    "passed": 13,
+    "review": 11,
+    "failed": 0,
+    "runs_passed": 2
+   },
+   "runs": [
+    {
+     "run_id": "synth-s00001600-l00-w00-p000",
+     "prompt": 0,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001600.safetensors",
+      "sha256": "f79b0b50918beb30132b368809400d2a16944e3ebd4cce0f96d8663a83c42df8",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.46"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.4583333333333333,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "synth-s00001600-l00-w00-p000-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.37433254522575754,
+        "clip_score": 0.6537921905517579,
+        "aesthetic": 0.665458083152771,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1600/p0-s1-512.webp",
+       "full": "eval/1600/p0-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p000-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.4360898284533889,
+        "clip_score": 0.8712857564290365,
+        "aesthetic": 0.6805937886238098,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1600/p0-s2-512.webp",
+       "full": "eval/1600/p0-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p000-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.37892603827071564,
+        "clip_score": 0.7649087270100912,
+        "aesthetic": 0.7236555218696594,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1600/p0-s3-512.webp",
+       "full": "eval/1600/p0-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001600-l00-w00-p001",
+     "prompt": 1,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001600.safetensors",
+      "sha256": "f79b0b50918beb30132b368809400d2a16944e3ebd4cce0f96d8663a83c42df8",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.48"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.4791666666666667,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "synth-s00001600-l00-w00-p001-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.331821742025479,
+        "clip_score": 0.6561683654785156,
+        "aesthetic": 0.6942586302757263,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1600/p1-s1-512.webp",
+       "full": "eval/1600/p1-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p001-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.4340723623129883,
+        "clip_score": 0.6929805755615235,
+        "aesthetic": 0.6092325448989868,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1600/p1-s2-512.webp",
+       "full": "eval/1600/p1-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p001-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.45036502299278497,
+        "clip_score": 0.5193729400634766,
+        "aesthetic": 0.5817556381225586,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1600/p1-s3-512.webp",
+       "full": "eval/1600/p1-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001600-l00-w00-p002",
+     "prompt": 2,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001600.safetensors",
+      "sha256": "f79b0b50918beb30132b368809400d2a16944e3ebd4cce0f96d8663a83c42df8",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.50"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.5,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00001600-l00-w00-p002-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.4001987484821748,
+        "clip_score": 1.0,
+        "aesthetic": 0.7285953164100647,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1600/p2-s1-512.webp",
+       "full": "eval/1600/p2-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p002-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.4172211943187769,
+        "clip_score": 0.94212646484375,
+        "aesthetic": 0.7307437062263489,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1600/p2-s2-512.webp",
+       "full": "eval/1600/p2-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p002-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5075576403302811,
+        "clip_score": 0.9354039510091146,
+        "aesthetic": 0.8014752268791199,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1600/p2-s3-512.webp",
+       "full": "eval/1600/p2-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001600-l00-w00-p003",
+     "prompt": 3,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001600.safetensors",
+      "sha256": "f79b0b50918beb30132b368809400d2a16944e3ebd4cce0f96d8663a83c42df8",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.33 vs threshold 0.75 \u2014 pending review (1/3 groups passed, 2 need review)",
+       "diversity 0.49"
+      ]
+     },
+     "pass_rate": 0.3333333333333333,
+     "diversity": 0.4895833333333333,
+     "n_groups": 3,
+     "n_passed": 1,
+     "n_needs_hitl": 2,
+     "images": [
+      {
+       "image_id": "synth-s00001600-l00-w00-p003-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.340980095357376,
+        "clip_score": 0.5608842213948567,
+        "aesthetic": 0.8143509030342102,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1600/p3-s1-512.webp",
+       "full": "eval/1600/p3-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p003-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.4225220313121832,
+        "clip_score": 0.633404541015625,
+        "aesthetic": 0.7530328631401062,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1600/p3-s2-512.webp",
+       "full": "eval/1600/p3-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p003-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.29431919289045433,
+        "clip_score": 0.6826405843098958,
+        "aesthetic": 0.7434598207473755,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1600/p3-s3-512.webp",
+       "full": "eval/1600/p3-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001600-l00-w00-p004",
+     "prompt": 4,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001600.safetensors",
+      "sha256": "f79b0b50918beb30132b368809400d2a16944e3ebd4cce0f96d8663a83c42df8",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": true,
+      "pending": false,
+      "reasons": [
+       "pass_rate 1.00 vs threshold 0.75 \u2014 passed (3/3 groups passed, 0 need review)",
+       "diversity 0.47"
+      ]
+     },
+     "pass_rate": 1.0,
+     "diversity": 0.46875,
+     "n_groups": 3,
+     "n_passed": 3,
+     "n_needs_hitl": 0,
+     "images": [
+      {
+       "image_id": "synth-s00001600-l00-w00-p004-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.46140076265397034,
+        "clip_score": 0.711157480875651,
+        "aesthetic": 0.6347541213035583,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1600/p4-s1-512.webp",
+       "full": "eval/1600/p4-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p004-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.5606025855782923,
+        "clip_score": 0.7011704762776693,
+        "aesthetic": 0.7109590172767639,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1600/p4-s2-512.webp",
+       "full": "eval/1600/p4-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p004-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.5028005088332694,
+        "clip_score": 0.7948610941569011,
+        "aesthetic": 0.7407605648040771,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1600/p4-s3-512.webp",
+       "full": "eval/1600/p4-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001600-l00-w00-p005",
+     "prompt": 5,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001600.safetensors",
+      "sha256": "f79b0b50918beb30132b368809400d2a16944e3ebd4cce0f96d8663a83c42df8",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.46"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.4583333333333333,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "synth-s00001600-l00-w00-p005-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.3273335559690993,
+        "clip_score": 0.9842735290527344,
+        "aesthetic": 0.5315355658531189,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1600/p5-s1-512.webp",
+       "full": "eval/1600/p5-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p005-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.32419267692737114,
+        "clip_score": 1.0,
+        "aesthetic": 0.49983373284339905,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1600/p5-s2-512.webp",
+       "full": "eval/1600/p5-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p005-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.3932217497552188,
+        "clip_score": 0.9028462727864583,
+        "aesthetic": 0.46217089891433716,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1600/p5-s3-512.webp",
+       "full": "eval/1600/p5-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001600-l00-w00-p006",
+     "prompt": 6,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001600.safetensors",
+      "sha256": "f79b0b50918beb30132b368809400d2a16944e3ebd4cce0f96d8663a83c42df8",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.00 vs threshold 0.75 \u2014 pending review (0/3 groups passed, 3 need review)",
+       "diversity 0.51"
+      ]
+     },
+     "pass_rate": 0.0,
+     "diversity": 0.5104166666666666,
+     "n_groups": 3,
+     "n_passed": 0,
+     "n_needs_hitl": 3,
+     "images": [
+      {
+       "image_id": "synth-s00001600-l00-w00-p006-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.3534581684190992,
+        "clip_score": 0.6275779724121093,
+        "aesthetic": 0.6573370695114136,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1600/p6-s1-512.webp",
+       "full": "eval/1600/p6-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p006-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.3590301195415488,
+        "clip_score": 0.6197577158610026,
+        "aesthetic": 0.665112316608429,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1600/p6-s2-512.webp",
+       "full": "eval/1600/p6-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p006-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.3466115635211399,
+        "clip_score": 0.7736260732014973,
+        "aesthetic": 0.6683758497238159,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1600/p6-s3-512.webp",
+       "full": "eval/1600/p6-s3-1024.webp"
+      }
+     ]
+    },
+    {
+     "run_id": "synth-s00001600-l00-w00-p007",
+     "prompt": 7,
+     "seeds": [
+      1,
+      2,
+      3
+     ],
+     "lora": {
+      "name": "proof-synth-v3-step00001600.safetensors",
+      "sha256": "f79b0b50918beb30132b368809400d2a16944e3ebd4cce0f96d8663a83c42df8",
+      "weight": 1.0
+     },
+     "verdict": {
+      "passed": false,
+      "pending": true,
+      "reasons": [
+       "pass_rate 0.67 vs threshold 0.75 \u2014 pending review (2/3 groups passed, 1 need review)",
+       "diversity 0.48"
+      ]
+     },
+     "pass_rate": 0.6666666666666666,
+     "diversity": 0.4791666666666667,
+     "n_groups": 3,
+     "n_passed": 2,
+     "n_needs_hitl": 1,
+     "images": [
+      {
+       "image_id": "synth-s00001600-l00-w00-p007-1",
+       "seed": 1,
+       "metrics": {
+        "identity": 0.49635335378359086,
+        "clip_score": 0.7656049092610677,
+        "aesthetic": 0.6065374612808228,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 0,
+       "tile": "eval/1600/p7-s1-512.webp",
+       "full": "eval/1600/p7-s1-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p007-2",
+       "seed": 2,
+       "metrics": {
+        "identity": 0.41490528949650285,
+        "clip_score": 0.6409557342529297,
+        "aesthetic": 0.6756502985954285,
+        "safety": 1.0
+       },
+       "passed": null,
+       "reject_reasons": [],
+       "duplicate_group": 1,
+       "tile": "eval/1600/p7-s2-512.webp",
+       "full": "eval/1600/p7-s2-1024.webp"
+      },
+      {
+       "image_id": "synth-s00001600-l00-w00-p007-3",
+       "seed": 3,
+       "metrics": {
+        "identity": 0.48347128872421197,
+        "clip_score": 0.7674303690592448,
+        "aesthetic": 0.6364006996154785,
+        "safety": 1.0
+       },
+       "passed": true,
+       "reject_reasons": [],
+       "duplicate_group": 2,
+       "tile": "eval/1600/p7-s3-512.webp",
+       "full": "eval/1600/p7-s3-1024.webp"
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "recording": {
+  "proof_version": "0.4.0",
+  "wire_version": "1.6",
+  "engine": "comfyui 0.19.3",
+  "base_checkpoint": {
+   "name": "sd_xl_base_1.0.safetensors",
+   "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b"
+  },
+  "sampling": {
+   "sampler": "dpmpp_2m",
+   "scheduler": "karras",
+   "steps": 30,
+   "cfg": 7.0,
+   "width": 1024,
+   "height": 1024
+  },
+  "seeds": [
+   1,
+   2,
+   3
+  ],
+  "pass_threshold": 0.75,
+  "scorers": [
+   {
+    "metric": "identity",
+    "name": "identity",
+    "model": "insightface-buffalo_l"
+   },
+   {
+    "metric": "clip_score",
+    "name": "clip-score",
+    "model": "clip-score"
+   },
+   {
+    "metric": "aesthetic",
+    "name": "pyiqa-clipiqa",
+    "model": "pyiqa-clipiqa"
+   },
+   {
+    "metric": "safety",
+    "name": "safety",
+    "model": "nudenet-640m"
+   },
+   {
+    "metric": "duplicate",
+    "name": "phash-dedup",
+    "model": "phash-64bit@5"
+   },
+   {
+    "metric": "diversity",
+    "name": "phash-diversity",
+    "model": "phash-64bit"
+   },
+   {
+    "metric": "identity",
+    "name": "held-out-references",
+    "model": "sha256+phash<=6"
+   }
+  ]
+ },
+ "training": {
+  "max_train_steps": 1600,
+  "save_every_n_steps": 320,
+  "train_batch_size": 2,
+  "network_dim": 16,
+  "network_alpha": 8,
+  "learning_rate": 0.0001,
+  "text_encoder_lr": 5e-05,
+  "optimizer_type": "AdamW8bit",
+  "lr_scheduler": "constant_with_warmup",
+  "lr_warmup_steps": 80,
+  "min_snr_gamma": 5,
+  "mixed_precision": "bf16",
+  "seed": 42,
+  "base_checkpoint": "sd_xl_base_1.0.safetensors",
+  "trainer": "kohya sd-scripts (config from argus-forge)",
+  "duration_minutes": 41,
+  "gpu": "1x RTX 3090"
+ },
+ "refs": [
+  {
+   "id": "p05",
+   "tile": "refs/p05-512.webp",
+   "full": "refs/p05-1024.webp",
+   "w": 512,
+   "h": 512
+  },
+  {
+   "id": "p11r2",
+   "tile": "refs/p11r2-512.webp",
+   "full": "refs/p11r2-1024.webp",
+   "w": 512,
+   "h": 512
+  },
+  {
+   "id": "p18",
+   "tile": "refs/p18-512.webp",
+   "full": "refs/p18-1024.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p20",
+   "tile": "refs/p20-512.webp",
+   "full": "refs/p20-1024.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p29",
+   "tile": "refs/p29-512.webp",
+   "full": "refs/p29-1024.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p35",
+   "tile": "refs/p35-512.webp",
+   "full": "refs/p35-1024.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p43r1",
+   "tile": "refs/p43r1-512.webp",
+   "full": "refs/p43r1-1024.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p48r1",
+   "tile": "refs/p48r1-512.webp",
+   "full": "refs/p48r1-1024.webp",
+   "w": 398,
+   "h": 512
+  }
+ ],
+ "train": [
+  {
+   "id": "p01r1",
+   "caption": "ohwx woman, portrait, white sweater, pose",
+   "tile": "train/p01r1-512.webp",
+   "w": 512,
+   "h": 512
+  },
+  {
+   "id": "p02",
+   "caption": "ohwx woman, beige sweater, selfie, smile, stare, polo neck",
+   "tile": "train/p02-512.webp",
+   "w": 512,
+   "h": 512
+  },
+  {
+   "id": "p04r1",
+   "caption": "ohwx woman, portrait, close-up, black blazer, pink lipstick, direct stare",
+   "tile": "train/p04r1-512.webp",
+   "w": 512,
+   "h": 512
+  },
+  {
+   "id": "p07r2",
+   "caption": "ohwx woman, portrait, black tank top, chandelier, lamp, soft lighting",
+   "tile": "train/p07r2-512.webp",
+   "w": 512,
+   "h": 512
+  },
+  {
+   "id": "p09",
+   "caption": "ohwx woman, portrait, red dress, pose, room, white wall",
+   "tile": "train/p09-512.webp",
+   "w": 512,
+   "h": 512
+  },
+  {
+   "id": "p10r2",
+   "caption": "ohwx woman, sweater, fireplace, log cabin, pose",
+   "tile": "train/p10r2-512.webp",
+   "w": 512,
+   "h": 512
+  },
+  {
+   "id": "p14r1",
+   "caption": "ohwx woman, stand, pose, trench coat, road, building",
+   "tile": "train/p14r1-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p15r1",
+   "caption": "ohwx woman, pose, business suit, black top, office, bright lighting",
+   "tile": "train/p15r1-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p16r2",
+   "caption": "ohwx woman, portrait, yellow sweater, autumn tree, stand",
+   "tile": "train/p16r2-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p17",
+   "caption": "ohwx woman, portrait, crossed arms, black turtleneck, green background, soft lighting",
+   "tile": "train/p17-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p19",
+   "caption": "ohwx woman, pose, white blazer, yellow dress, business suit, chandelier, wall lamp",
+   "tile": "train/p19-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p21r4",
+   "caption": "ohwx woman, portrait, stand, denim jacket, white t-shirt, vineyard, sunset",
+   "tile": "train/p21r4-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p22r1",
+   "caption": "ohwx woman, portrait, pose, coat, scarf, snow, snowy park",
+   "tile": "train/p22r1-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p23",
+   "caption": "ohwx woman, portrait, pose, blue shirt, blouse, kitchen, natural lighting",
+   "tile": "train/p23-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p24",
+   "caption": "ohwx woman, brown jacket, dress, bookshelf, library, soft lighting",
+   "tile": "train/p24-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p25",
+   "caption": "ohwx woman, standing, holding cup, window, city skyline, beige blazer, white top",
+   "tile": "train/p25-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p26r1",
+   "caption": "ohwx woman, blue sweater, laptop, sitting, desk, living room, bookshelf",
+   "tile": "train/p26r1-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p27r1",
+   "caption": "ohwx woman, portrait, arms crossed, business suit, hallway, soft lighting",
+   "tile": "train/p27r1-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p28",
+   "caption": "ohwx woman, white sweater, open book, library, bookshelf, soft lighting",
+   "tile": "train/p28-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p31r1",
+   "caption": "ohwx woman, standing, leaning, maroon top, kitchen, warm lighting",
+   "tile": "train/p31r1-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p32r1",
+   "caption": "ohwx woman, standing, holding glass, looking camera, black dress, hallway, hotel lobby",
+   "tile": "train/p32r1-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p33",
+   "caption": "ohwx woman, pose, backpack, vest, brown tank top, hillside, mountain",
+   "tile": "train/p33-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p34",
+   "caption": "ohwx woman, sitting, holding mug, smiling, couch, living room",
+   "tile": "train/p34-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p36",
+   "caption": "ohwx woman, sitting, yoga mat, room, window, green sports bra, black leggings",
+   "tile": "train/p36-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p37r3",
+   "caption": "ohwx woman, black leather jacket, black dress, stand, road",
+   "tile": "train/p37r3-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p38r1",
+   "caption": "ohwx woman, tennis player, white dress, tennis racket, stand, pose, court",
+   "tile": "train/p38r1-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p39r3",
+   "caption": "ohwx woman, green trench coat, belt, leaning, stone wall, harbor, boats, green hill",
+   "tile": "train/p39r3-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p40r3",
+   "caption": "ohwx woman, smile, sunset, green, woman, beautiful, stand, wear",
+   "tile": "train/p40r3-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p41r3",
+   "caption": "ohwx woman, standing, cliff, ocean, black top, black leggings, wetsuit",
+   "tile": "train/p41r3-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p44",
+   "caption": "ohwx woman, portrait, sitting, white cardigan, beige sweater, blue jeans, lake, boardwalk",
+   "tile": "train/p44-512.webp",
+   "w": 398,
+   "h": 512
+  },
+  {
+   "id": "p46r2",
+   "caption": "ohwx woman, standing, tight, leotard, hardwood floor, room",
+   "tile": "train/p46r2-512.webp",
+   "w": 398,
+   "h": 512
+  }
+ ],
+ "token_probe": [
+  {
+   "prompt": 0,
+   "plain_prompt": "woman, portrait, white sweater, pose",
+   "ohwx": "probe/ohwx-p0-384.webp",
+   "plain": "probe/plain-p0-384.webp"
+  },
+  {
+   "prompt": 1,
+   "plain_prompt": "woman, beige sweater, selfie, smile, stare, polo neck",
+   "ohwx": "probe/ohwx-p1-384.webp",
+   "plain": "probe/plain-p1-384.webp"
+  },
+  {
+   "prompt": 2,
+   "plain_prompt": "woman, portrait, close-up, black blazer, pink lipstick, direct stare",
+   "ohwx": "probe/ohwx-p2-384.webp",
+   "plain": "probe/plain-p2-384.webp"
+  },
+  {
+   "prompt": 3,
+   "plain_prompt": "woman, portrait, black tank top, chandelier, lamp, soft lighting",
+   "ohwx": "probe/ohwx-p3-384.webp",
+   "plain": "probe/plain-p3-384.webp"
+  },
+  {
+   "prompt": 4,
+   "plain_prompt": "woman, portrait, red dress, pose, room, white wall",
+   "ohwx": "probe/ohwx-p4-384.webp",
+   "plain": "probe/plain-p4-384.webp"
+  },
+  {
+   "prompt": 5,
+   "plain_prompt": "woman, sweater, fireplace, log cabin, pose",
+   "ohwx": "probe/ohwx-p5-384.webp",
+   "plain": "probe/plain-p5-384.webp"
+  },
+  {
+   "prompt": 6,
+   "plain_prompt": "woman, stand, pose, trench coat, road, building",
+   "ohwx": "probe/ohwx-p6-384.webp",
+   "plain": "probe/plain-p6-384.webp"
+  },
+  {
+   "prompt": 7,
+   "plain_prompt": "woman, pose, business suit, black top, office, bright lighting",
+   "ohwx": "probe/ohwx-p7-384.webp",
+   "plain": "probe/plain-p7-384.webp"
+  }
+ ]
+}
