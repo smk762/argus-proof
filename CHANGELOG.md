@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cosine isn't calibrated yet). `[score]` now declares `transformers>=4.38`, which it already pulled.
 - `ScorerProvenance.model_file` pins the weights a scorer loaded by SHA256 (the likeness scorer's
   `model.safetensors`), the way a `RunManifest` pins the generation models. Wire `PROOF_VERSION` 1.8 (additive:
-  `MetricScores.likeness`, `likeness` in `GateConfig`'s default weights, `min_likeness_mean`, `model_file`).
+  `MetricScores.likeness`, `likeness` in `GateConfig`'s default weights at **0**, `min_likeness_mean`, `model_file`).
+  The weight is 0 because the cosine is uncalibrated (its threshold comes from the mint pilot), so existing runs'
+  composites don't change; likeness acts only through `--min-likeness`, a hard gate or an explicit weight.
 
 - **Hosted demo** for proof.dragonhound.dev (`web/`): a static replay of one recorded evaluation. A synthetic-identity
   SDXL LoRA was trained for 1600 steps; proof scored each 320-step checkpoint and a no-LoRA baseline (8 prompts x 3

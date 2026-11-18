@@ -110,8 +110,15 @@ def test_a_likeness_hard_gate_fails_as_identity_mismatch() -> None:
     ]
 
 
-def test_likeness_is_in_the_default_composite() -> None:
-    assert GateConfig().weights["likeness"] == 1.0
+def test_likeness_is_out_of_the_default_composite() -> None:
+    # Uncalibrated: it gates only through --min-likeness, a hard gate or an explicit weight.
+    assert GateConfig().weights["likeness"] == 0.0
+    emb = FakeEmbedder({"ref": [1.0, 0.0], "run-1-1": [0.0, 1.0]})  # likeness 0.0
+    [image] = score_run(
+        manifest(), [gen("run-1-1")], scorers=[LikenessScorer(embedder=emb)], context=ctx(["ref"])
+    ).images
+    assert image.metrics.likeness == 0.0
+    assert image.passed is None  # nothing weighted was scored: HITL, not an auto-fail
 
 
 # --------------------------------------------------------------------------

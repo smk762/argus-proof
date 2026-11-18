@@ -61,7 +61,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #      with, so a HITL review that sends no gate re-judges the run under the same
 #      thresholds and a retracted rating falls back to that gate's auto result.
 # 1.8: additive — the ``likeness`` metric (MetricScores, GateConfig weights,
-#      AcceptanceThresholds.min_likeness_mean): DINOv2 image-embedding similarity to
+#      AcceptanceThresholds.min_likeness_mean; weight 0 by default): DINOv2 image-embedding similarity to
 #      the held-out references, for subjects ArcFace can't see (issue #103).
 #      ScorerProvenance.model_file pins a scorer's weights by SHA256.
 PROOF_VERSION = "1.8"
@@ -575,7 +575,9 @@ class GateConfig(BaseModel):
     weights: dict[str, float] = Field(
         default_factory=lambda: {
             "identity": 1.0,
-            "likeness": 1.0,
+            # 0: uncalibrated DINOv2 cosine (its threshold comes from the mint pilot), so it
+            # acts only through min_likeness_mean, a hard gate or an explicit weight (#103).
+            "likeness": 0.0,
             "clip_score": 1.0,
             "aesthetic": 1.0,
             "preference": 1.0,
