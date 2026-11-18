@@ -10,7 +10,8 @@
 # is caught after a few leases.
 #
 # An evaluation grid is batch work and yields between seeds: one lease covers a run, and when the broker asks for the
-# GPU back proof releases it at the next seed and queues again on the same node.
+# GPU back proof releases it at the next seed and queues again on the same node. Scoring a run is one short,
+# non-preemptible `score` lease (interactive; batch when it is part of a /run/stream run).
 tenant: argus-proof
 description: Post-training LoRA evaluation. Renders a seed grid from a trained LoRA and scores it.
 repo: smk762/argus-proof
@@ -34,6 +35,23 @@ kinds:
     preemptible: true
     description: An evaluation grid rendered in-process by diffusers, one seed at a time.
 
+  # One scoring pass over a run's images with the learned scorers, in proof's own process: InsightFace (onnxruntime),
+  # DINOv2 likeness and CLIP-IQA (torch, CUDA), CLIPScore (torch, CPU). Safety is a separate NudeNet service.
+  # vram_mb is measured plus an estimate: on an RTX 3090 the torch scorers peaked at 1399 MiB over the idle device
+  # (CUDA context included; four 1024x1024 images scored one at a time). InsightFace buffalo_l on CUDA couldn't be
+  # measured there (the local -score image's onnxruntime-gpu found no CUDA 12 libraries), so 1500 MiB is budgeted
+  # for it (its five ONNX models, about 330 MB on disk, plus the CUDA EP context, cuDNN workspace and arena at
+  # det_size 640), and the sum is rounded up for headroom. The broker's learned p95 corrects it either way.
+  # model_mb 0: the scorers free their models before the lease ends, so nothing stays loaded.
+  - kind: score
+    target: in-process
+    vram_mb: 3500
+    model_mb: 0
+    priority: interactive
+    preemptible: false
+    description: One scoring pass (identity, likeness, quality) over a run's images, in proof's process.
+
 # Proof keeps no model loaded on its own server: ComfyUI holds the weights and declares them in its own manifest. The
-# diffusers pipeline lives only as long as the CLI or server process that ran it, and has no unload route.
+# diffusers pipeline lives only as long as the CLI or server process that ran it, and has no unload route. The scorers
+# load inside their `score` lease and free their models before it ends.
 residents: []

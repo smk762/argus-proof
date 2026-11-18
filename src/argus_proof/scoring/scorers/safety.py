@@ -81,6 +81,7 @@ class SafetyScorer:
     """
 
     metric = "safety"
+    uses_gpu = False  # NudeNet runs as its own service over HTTP; proof holds no model
 
     def __init__(self, detectors: Sequence[SafetyDetector] | None = None) -> None:
         self._detectors = detectors

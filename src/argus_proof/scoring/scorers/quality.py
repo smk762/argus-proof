@@ -66,8 +66,17 @@ class ModelScorer:
         self.lo = lo
         self.hi = hi
 
+    # Every shipped model (CLIPScore, CLIP-IQA, ImageReward) is torch, on the GPU when there is one.
+    uses_gpu = True
+
     def provenance(self) -> ScorerProvenance:
         return ScorerProvenance(name=self.model.name, metric=self.metric, model=self.model.name)
+
+    def unload(self) -> None:
+        """Drop the model (see :func:`~argus_proof.scoring.scorers._util.release_models`)."""
+        unload = getattr(self.model, "unload", None)
+        if callable(unload):
+            unload()
 
     def is_available(self) -> bool:
         return self.model.is_available()
@@ -95,6 +104,9 @@ class ClipScoreModel:
 
     def is_available(self) -> bool:
         return module_available("torch", "torchmetrics", "PIL", "numpy")
+
+    def unload(self) -> None:
+        self._metric = None
 
     def _load(self):  # noqa: ANN202
         if self._metric is None:
@@ -136,6 +148,9 @@ class PyiqaModel:
     def is_available(self) -> bool:
         return module_available("pyiqa")
 
+    def unload(self) -> None:
+        self._metric = None
+
     def _load(self):  # noqa: ANN202
         if self._metric is None:
             import pyiqa
@@ -160,6 +175,9 @@ class ImageRewardModel:
 
     def is_available(self) -> bool:
         return module_available("ImageReward")
+
+    def unload(self) -> None:
+        self._model = None
 
     def _load(self):  # noqa: ANN202
         if self._model is None:

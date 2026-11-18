@@ -10,13 +10,16 @@ server, and a compose deployment build the same pipeline from the same knobs.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 from pathlib import Path
 
 import structlog
+from argus_cortex.gpu import GpuCoordinator
 
+from argus_proof import gpu
 from argus_proof.backends import GenBackend, get_backend
 from argus_proof.backends.base import FAILURE_NAME, MANIFEST_NAME, ModelResolver, make_dir_resolver
 from argus_proof.backends.pnginfo import read_dimensions
@@ -421,8 +424,17 @@ def score_images(
     *,
     references: list[Path] | None = None,
     gate: GateConfig | None = None,
+    gpu_coordinator: GpuCoordinator | None = None,
+    priority: gpu.PriorityClass = gpu.SCORE_PRIORITY,
 ) -> EvalReport:
     """Score *images* with the default scorers + phash dedup/diversity.
+
+    The scoring pass holds one ``score`` GPU lease (:func:`gpu.score_lease`, from
+    *gpu_coordinator*, default the ``ARGUS_GPU_*`` environment) at *priority*
+    (``interactive``; a batch run sends ``batch``), taken only when an available
+    scorer runs on the GPU. The scorers load their models inside it and free them
+    before it ends (:func:`release_models`). A lease that isn't granted raises
+    :class:`EvaluateError`.
 
     With *references*, the run's training export (``manifest.source_manifest``'s
     directory, when it is readable here) is checked first: a reference that is a
@@ -440,18 +452,46 @@ def score_images(
                 held_out = check_held_out(references, export_dir)
     deduper, diversity = default_phash_scorers()
     ctx = ScoreContext(prompt=manifest.prompt, reference_images=list(references or []))
-    report = score_run(
-        manifest,
-        images,
-        scorers=default_scorers(),
-        deduper=deduper,
-        diversity=diversity,
-        context=ctx,
-        gate=gate,
+    scorers = default_scorers()
+    report = _score_leased(
+        scorers,
+        lambda: score_run(
+            manifest, images, scorers=scorers, deduper=deduper, diversity=diversity, context=ctx, gate=gate
+        ),
+        caller=manifest.run_id,
+        coordinator=gpu_coordinator,
+        priority=priority,
     )
     if held_out is not None:
         report.scorers.append(ScorerProvenance(name=HELD_OUT_CHECK, metric="identity", model=held_out))
     return report
+
+
+def _score_leased(
+    scorers: list,
+    work,  # noqa: ANN001 - () -> T
+    *,
+    caller: str,
+    coordinator: GpuCoordinator | None,
+    priority: gpu.PriorityClass,
+):  # noqa: ANN202
+    """Run *work* under one ``score`` lease when an available scorer uses the GPU, freeing the models before it ends."""
+    from argus_proof.scoring.scorers._util import release_models
+
+    needs_gpu = any(getattr(s, "uses_gpu", True) and s.is_available() for s in scorers)
+    lease = (
+        gpu.score_lease(coordinator or gpu.default_coordinator(), caller=caller, priority=priority)
+        if needs_gpu
+        else contextlib.nullcontext()
+    )
+    try:
+        with lease:
+            try:
+                return work()
+            finally:
+                release_models(scorers)  # inside the lease: the GPU goes back clean
+    except gpu.LEASE_ERRORS as exc:
+        raise EvaluateError(gpu.lease_failure(exc)) from exc
 
 
 def score_run_dir(

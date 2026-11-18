@@ -219,6 +219,18 @@ so. When iris can't be reached, the lease comes from `ARGUS_GPU_BROKER_FALLBACK`
 (`lease`, the host-wide `flock`, by default). The `a1111` and `remote` backends
 take no lease.
 
+Scoring leases too. `score_images` (so `argus-proof score` and `/run/stream`) holds
+one `score` lease (`in-process`, not preemptible, 3500 MiB) for the scoring pass
+whenever an available scorer runs on the GPU (InsightFace, CLIP-IQA, CLIPScore; not
+safety, which is a NudeNet service, and not phash). It is `interactive`, or `batch`
+when it is part of a `/run/stream` run. The scorers load their models inside the
+lease and free them before it ends, so proof keeps no model resident between leases
+(`residents: []`): each pass reloads its models, a few seconds' cost. A refused or
+timed-out lease fails scoring with a message that says so. The 3500 MiB is the torch
+scorers' measured peak on an RTX 3090 (1399 MiB with the CUDA context) plus an
+estimated 1500 MiB for InsightFace on CUDA, rounded up; `gpu-tenant.yaml` has the
+breakdown.
+
 | Variable | Value |
 |---|---|
 | `ARGUS_GPU_COORDINATOR` | `broker` (or `lease`, `none`) |

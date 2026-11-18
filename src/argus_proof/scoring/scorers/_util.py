@@ -6,8 +6,11 @@ perceptual-hash cache are consistent across every scorer instead of copy-pasted.
 
 from __future__ import annotations
 
+import gc
 import importlib
 import math
+import sys
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,6 +33,24 @@ def module_available(*names: str) -> bool:
         except Exception:
             return False
     return True
+
+
+def release_models(scorers: Iterable[object]) -> None:
+    """Free every model *scorers* loaded, then hand the GPU memory back.
+
+    Calls each scorer's ``unload()`` (where it has one), collects the dropped
+    objects, and empties torch's CUDA cache when torch is already imported (it
+    is never imported here). Scoring calls this before its GPU lease ends, so
+    proof keeps no model resident between leases (``gpu-tenant.yaml``).
+    """
+    for scorer in scorers:
+        unload = getattr(scorer, "unload", None)
+        if callable(unload):
+            unload()
+    gc.collect()
+    torch = sys.modules.get("torch")
+    if torch is not None and torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def percentile(sorted_values: list[float], q: float) -> float:

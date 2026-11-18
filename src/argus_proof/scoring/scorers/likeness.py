@@ -70,6 +70,15 @@ class Dinov2Embedder:
     def is_available(self) -> bool:
         return module_available("torch", "transformers", "PIL", "numpy")
 
+    def unload(self) -> None:
+        """Drop the model and processor; scoring frees them before its GPU lease ends.
+
+        A report's provenance is built inside the pass, while the model is still
+        loaded, so :meth:`model_ref` has pinned the weights by then.
+        """
+        self._processor = None
+        self._model = None
+
     def _load(self):  # noqa: ANN202 - transformers types aren't importable without the extra
         if self._model is None:
             import torch

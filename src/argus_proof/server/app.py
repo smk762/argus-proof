@@ -502,7 +502,8 @@ def create_app(
                         mark_failed(run_dir, run_id, str(exc))
                     raise
                 emit(ScoringFrame(run_id=run_id, n_images=len(result.images)).model_dump(mode="json"))
-                report = score_images(result.manifest, result.images, references=references)
+                # Scoring is part of this batch run, so its lease is batch too.
+                report = score_images(result.manifest, result.images, references=references, priority="batch")
                 store.save(report)
                 emit(CompleteFrame(run_id=run_id, report=summarise_report(report)).model_dump(mode="json"))
             except (EvaluateError, ProofError, ValueError) as exc:
