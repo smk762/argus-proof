@@ -15,7 +15,7 @@ from __future__ import annotations
 import importlib
 import sys
 
-PACKAGES = ("torch", "torchmetrics", "pyiqa", "insightface", "onnxruntime", "PIL", "imagehash")
+PACKAGES = ("torch", "torchmetrics", "transformers", "pyiqa", "insightface", "onnxruntime", "PIL", "imagehash")
 NEEDS_A_SERVICE = {"safety"}
 
 

@@ -38,6 +38,20 @@
           "default": null,
           "title": "Min Identity Mean"
         },
+        "min_likeness_mean": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Likeness Mean"
+        },
         "min_pass_rate": {
           "anyOf": [
             {
@@ -246,7 +260,7 @@
           "type": "array"
         },
         "proof_version": {
-          "default": "1.7",
+          "default": "1.8",
           "title": "Proof Version",
           "type": "string"
         },
@@ -813,7 +827,7 @@
       "type": "object"
     },
     "MetricScores": {
-      "description": "The scoring axes for one image (or their means, in the aggregate).\n\nEvery field is optional so an axis whose scorer did not run stays ``None``\ninstead of a misleading ``0.0``. Semantics: ``identity`` similarity to the\nreference (higher = closer), ``clip_score`` prompt adherence, ``aesthetic``\nan IQA/aesthetic score, ``preference`` an ImageReward/HPS-style score, and\n``safety`` a safety score.",
+      "description": "The scoring axes for one image (or their means, in the aggregate).\n\nEvery field is optional so an axis whose scorer did not run stays ``None``\ninstead of a misleading ``0.0``. Semantics: ``identity`` similarity to the\nreference face (higher = closer), ``likeness`` whole-image embedding\nsimilarity to the reference set (any subject: a masked or non-human\ncharacter, a scene), ``clip_score`` prompt adherence, ``aesthetic``\nan IQA/aesthetic score, ``preference`` an ImageReward/HPS-style score, and\n``safety`` a safety score.",
       "properties": {
         "aesthetic": {
           "anyOf": [
@@ -851,6 +865,18 @@
           "default": null,
           "title": "Identity"
         },
+        "likeness": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Likeness"
+        },
         "preference": {
           "anyOf": [
             {
@@ -878,6 +904,7 @@
       },
       "required": [
         "identity",
+        "likeness",
         "clip_score",
         "aesthetic",
         "preference",
@@ -1046,7 +1073,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.7",
+          "default": "1.8",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1289,7 +1316,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.7",
+          "default": "1.8",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1594,6 +1621,17 @@
           "default": null,
           "title": "Model"
         },
+        "model_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "name": {
           "title": "Name",
           "type": "string"
@@ -1615,7 +1653,8 @@
         "name",
         "metric",
         "version",
-        "model"
+        "model",
+        "model_file"
       ],
       "title": "ScorerProvenance",
       "type": "object"

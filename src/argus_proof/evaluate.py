@@ -41,6 +41,7 @@ ENV_A1111_URL = "A1111_BASE_URL"
 ENV_REMOTE_URL = "PROOF_REMOTE_URL"
 ENV_REMOTE_API_KEY = "PROOF_REMOTE_API_KEY"
 ENV_RUNS_DIR = "ARGUS_PROOF_RUNS_DIR"
+ENV_LIKENESS_MODEL = "PROOF_LIKENESS_MODEL"
 
 DEFAULT_BACKEND = "comfyui"
 DEFAULT_RUNS_DIR = "runs"
@@ -236,7 +237,7 @@ def reference_images(directory: Path) -> list[Path]:
     return sorted(p for p in Path(directory).rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
 
 
-# The subdir of a curator export that holds its held-out identity references.
+# The subdir of a curator export that holds its held-out identity references (for identity and likeness).
 REFERENCES_DIR = "references"
 
 
@@ -315,7 +316,8 @@ def check_held_out(references: list[Path], export_dir: Path) -> str:
     """Refuse identity *references* that are training images of the export at *export_dir*.
 
     A reference the LoRA trained on measures memorisation, not likeness, and
-    makes every identity score meaningless. Two tiers:
+    makes every identity and likeness score meaningless (both scorers use the
+    one reference set, so this one check covers both). Two tiers:
 
     * the SHA256 of the bytes, so an exact copy is caught under any name;
     * with the ``[score]`` extra, a whole-image pHash within :data:`NEAR_DUP_BITS`,
@@ -367,15 +369,25 @@ def check_held_out(references: list[Path], export_dir: Path) -> str:
 def default_scorers() -> list:
     """The standard per-image scorer set, availability-guarded.
 
-    Identity (InsightFace), prompt adherence (CLIPScore), aesthetic (CLIP-IQA)
-    and safety (NudeNet) — each reports ``is_available()`` so the orchestrator
-    skips any whose extra isn't installed, and identity additionally no-ops
-    without reference images. Construction is lazy/cheap; nothing heavy loads
-    until a scorer actually scores.
+    Identity (InsightFace), likeness (DINOv2, ``$PROOF_LIKENESS_MODEL``), prompt
+    adherence (CLIPScore), aesthetic (CLIP-IQA) and safety (NudeNet) — each
+    reports ``is_available()`` so the orchestrator skips any whose extra isn't
+    installed, and identity and likeness additionally no-op without reference
+    images. Construction is lazy/cheap; nothing heavy loads until a scorer
+    actually scores.
     """
-    from argus_proof.scoring.scorers import IdentityScorer, SafetyScorer, clip_score_scorer, pyiqa_scorer
+    from argus_proof.scoring.scorers import (
+        DEFAULT_LIKENESS_MODEL,
+        Dinov2Embedder,
+        IdentityScorer,
+        LikenessScorer,
+        SafetyScorer,
+        clip_score_scorer,
+        pyiqa_scorer,
+    )
 
-    return [IdentityScorer(), clip_score_scorer(), pyiqa_scorer(), SafetyScorer()]
+    likeness = LikenessScorer(Dinov2Embedder(os.environ.get(ENV_LIKENESS_MODEL) or DEFAULT_LIKENESS_MODEL))
+    return [IdentityScorer(), likeness, clip_score_scorer(), pyiqa_scorer(), SafetyScorer()]
 
 
 def default_phash_scorers() -> tuple:

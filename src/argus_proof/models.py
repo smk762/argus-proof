@@ -60,7 +60,11 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 # 1.7: additive — EvalReport.gate records the GateConfig the run was scored
 #      with, so a HITL review that sends no gate re-judges the run under the same
 #      thresholds and a retracted rating falls back to that gate's auto result.
-PROOF_VERSION = "1.7"
+# 1.8: additive — the ``likeness`` metric (MetricScores, GateConfig weights,
+#      AcceptanceThresholds.min_likeness_mean): DINOv2 image-embedding similarity to
+#      the held-out references, for subjects ArcFace can't see (issue #103).
+#      ScorerProvenance.model_file pins a scorer's weights by SHA256.
+PROOF_VERSION = "1.8"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -385,7 +389,9 @@ class MetricScores(BaseModel):
 
     Every field is optional so an axis whose scorer did not run stays ``None``
     instead of a misleading ``0.0``. Semantics: ``identity`` similarity to the
-    reference (higher = closer), ``clip_score`` prompt adherence, ``aesthetic``
+    reference face (higher = closer), ``likeness`` whole-image embedding
+    similarity to the reference set (any subject: a masked or non-human
+    character, a scene), ``clip_score`` prompt adherence, ``aesthetic``
     an IQA/aesthetic score, ``preference`` an ImageReward/HPS-style score, and
     ``safety`` a safety score.
     """
@@ -393,6 +399,7 @@ class MetricScores(BaseModel):
     model_config = RESPONSE_ONLY
 
     identity: float | None = None
+    likeness: float | None = None
     clip_score: float | None = None
     aesthetic: float | None = None
     preference: float | None = None
@@ -526,6 +533,9 @@ class ScorerProvenance(BaseModel):
     metric: str
     version: str | None = None
     model: str | None = None
+    # The weights file the scorer loaded, pinned by SHA256 as a RunManifest pins its
+    # models. None when the scorer has none it can pin, or never loaded it this run.
+    model_file: ModelRef | None = None
 
 
 class Verdict(BaseModel):
@@ -565,6 +575,7 @@ class GateConfig(BaseModel):
     weights: dict[str, float] = Field(
         default_factory=lambda: {
             "identity": 1.0,
+            "likeness": 1.0,
             "clip_score": 1.0,
             "aesthetic": 1.0,
             "preference": 1.0,
@@ -695,6 +706,7 @@ class AcceptanceThresholds(BaseModel):
     min_pass_rate: float | None = Field(default=0.75, ge=0.0, le=1.0)
     min_pass_rate_ci_lower: float | None = Field(default=None, ge=0.0, le=1.0)
     min_identity_mean: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_likeness_mean: float | None = Field(default=None, ge=0.0, le=1.0)
     max_unsafe_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     unsafe_safety_floor: float = Field(default=0.8, ge=0.0, le=1.0)
     confidence: float = Field(default=0.95, gt=0.0, lt=1.0)

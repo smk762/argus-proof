@@ -273,7 +273,9 @@ def run(
 def score(
     run_dir: Path = Argument(..., help="Proof run dir containing manifest.json + generated samples"),
     references: Path | None = Option(
-        None, "--references", help="Held-out reference image dir for identity scoring (must not overlap training)"
+        None,
+        "--references",
+        help="Held-out reference image dir for identity and likeness scoring (must not overlap training)",
     ),
     reports_dir: Path | None = Option(None, "--reports-dir", help="Report store (default $ARGUS_PROOF_REPORTS_DIR)"),
     save: bool = Option(True, "--save/--no-save", help="Persist the report into the report store"),
@@ -282,10 +284,10 @@ def score(
         None,
         "--require-scorers",
         help="Metrics whose scorer must be available, else exit 2 (repeatable or comma-separated, e.g. "
-        "identity,clip_score,aesthetic,safety)",
+        "identity,likeness,clip_score,aesthetic,safety)",
     ),
 ) -> None:
-    """Score a generated run into an EvalReport: identity, quality, diversity, safety.
+    """Score a generated run into an EvalReport: identity, likeness, quality, diversity, safety.
 
     A default scorer that can't run here (its extra isn't installed, or its service
     isn't configured) leaves its metric empty; that is warned about on stderr, and
@@ -389,7 +391,10 @@ def gate(
     report_json: Path = Argument(..., help="Scored EvalReport JSON to gate"),
     min_pass_rate: float = Option(0.75, help="Minimum aggregate pass-rate"),
     min_pass_rate_ci_lower: float | None = Option(None, help="Minimum Wilson lower bound on the pass-rate"),
-    min_identity: float | None = Option(None, help="Minimum mean identity score"),
+    min_identity: float | None = Option(None, help="Minimum mean identity score (ArcFace, human faces)"),
+    min_likeness: float | None = Option(
+        None, help="Minimum mean likeness score (DINOv2 vs the references: masked or non-human subjects, scenes)"
+    ),
     max_unsafe_rate: float | None = Option(None, help="Maximum fraction of images flagged unsafe"),
     confidence: float = Option(0.95, help="Confidence level for the CI lower bound"),
 ) -> None:
@@ -404,6 +409,7 @@ def gate(
             min_pass_rate=min_pass_rate,
             min_pass_rate_ci_lower=min_pass_rate_ci_lower,
             min_identity_mean=min_identity,
+            min_likeness_mean=min_likeness,
             max_unsafe_rate=max_unsafe_rate,
             confidence=confidence,
         )

@@ -88,15 +88,19 @@ class IdentityScorer:
     def is_available(self) -> bool:
         return self.embedder.is_available()
 
+    def applies(self, ctx: ScoreContext) -> bool:
+        """Whether this scorer measures anything for *ctx*'s run: ArcFace only for ``identity`` runs."""
+        return ctx.profile.target_category == "identity"
+
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None:
-        if ctx.profile.target_category != "identity":
-            return None  # identity scoring only applies to identity runs
+        if not self.applies(ctx):
+            return None
         refs = self._reference_vectors(ctx)
         if not refs:
             return None  # no held-out references -> identity can't be measured
         vec = self.embedder.embed(image_path)
         if vec is None:
-            return 0.0  # no face detected -> the subject isn't present
+            return 0.0  # nothing to embed (no face detected) -> the subject isn't present
         sims = [cosine(vec, ref) for ref in refs]
         if any(math.isnan(s) for s in sims):
             # A degenerate embedding: propagate NaN for both aggregates so the

@@ -46,6 +46,22 @@ def test_gate_rejects_and_exits_one(tmp_path: Path) -> None:
     assert "REJECTED" in result.output
 
 
+def test_gate_min_likeness(tmp_path: Path) -> None:
+    path = tmp_path / "eval_report.json"
+    report = EvalReport(
+        run_id="run-1",
+        aggregate=AggregateScores(
+            n_images=4, n_groups=4, n_passed=4, pass_rate=1.0, means=MetricScores(identity=0.0, likeness=0.62)
+        ),
+        verdict=Verdict(passed=True),
+    )
+    path.write_text(report.model_dump_json(), encoding="utf-8")
+    ok = runner.invoke(app, ["gate", str(path), "--min-likeness", "0.6"])
+    assert ok.exit_code == 0 and "[PASS] likeness_mean: likeness mean 0.620 >= 0.600" in ok.output
+    low = runner.invoke(app, ["gate", str(path), "--min-likeness", "0.7"])
+    assert low.exit_code == 1 and "[FAIL] likeness_mean" in low.output
+
+
 def test_gate_unreadable_report_exits_two(tmp_path: Path) -> None:
     result = runner.invoke(app, ["gate", str(tmp_path / "nope.json")])
     assert result.exit_code == 2

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `likeness` metric for subjects ArcFace can't see** (#103): `LikenessScorer`, DINOv2 whole-image embedding
+  cosine against the held-out reference set, for helmeted, chrome or non-human characters and for scenes. It runs on
+  every target category when there are references, is in `default_scorers()` and `GET /scorers`, and the
+  reference/training-set overlap refusal covers it. `PROOF_LIKENESS_MODEL` picks the checkpoint (default
+  `facebook/dinov2-base`). `argus-proof gate --min-likeness` (`AcceptanceThresholds.min_likeness_mean`) floors its
+  mean, like `--min-identity`; `RecommendConfig.min_likeness` routes a low one to forge (off by default, as the
+  cosine isn't calibrated yet). `[score]` now declares `transformers>=4.38`, which it already pulled.
+- `ScorerProvenance.model_file` pins the weights a scorer loaded by SHA256 (the likeness scorer's
+  `model.safetensors`), the way a `RunManifest` pins the generation models. Wire `PROOF_VERSION` 1.8 (additive:
+  `MetricScores.likeness`, `likeness` in `GateConfig`'s default weights, `min_likeness_mean`, `model_file`).
+
 - **Hosted demo** for proof.dragonhound.dev (`web/`): a static replay of one recorded evaluation. A synthetic-identity
   SDXL LoRA was trained for 1600 steps; proof scored each 320-step checkpoint and a no-LoRA baseline (8 prompts x 3
   seeds each) and the page shows where it peaks: score chart, the image grid with per-image scores and verdicts,
