@@ -15,8 +15,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proof's per-run reasons, the dataset and its pipeline. `scripts/demo_tape.py` builds the tape (metrics, verdicts,
   WebP images with no metadata, no host or container paths); `make pages` exports it with a hash CSP on every page.
 
+- **A `-score` image** (`:<version>-score`, `:latest-score`) with the `[score]` stack, CUDA torch and onnxruntime-gpu
+  (#99). The thin image scores phash only. The release smoke-tests every package-backed scorer in it before pushing.
+- `argus-proof score` warns on stderr when a default scorer can't run here, so its metric will be empty.
+  `--require-scorers identity,clip_score,…` exits 2 instead (#99).
+- `argus-proof run --fail-fast`, to keep the old stop-at-the-first-failure behaviour (#100).
+- The Dockerfile takes a `VERSION` build arg, so a context with no `.git` (a `git archive` export) builds (#99).
+- CI's `score-imports` job installs the `[score]` extra and checks every package-backed scorer is available (#98).
+
 ### Changed
 
+- **`argus-proof run` carries on past a failed run** (#100). The failed run's dir gets a `failed.json` (run_id,
+  error) in place of a manifest, and any stale `manifest.json` from an earlier run of that id is removed. The command
+  exits 1 at the end, listing each failed run. `score` on such a dir says it failed to generate. `/run/stream` writes
+  the same marker.
+- **ComfyUI retries a timed-out seed once** (#100). The stalled prompt is removed from the queue and interrupted,
+  then resubmitted. `ComfyUIBackend(seed_retries=…)` sets the count. Only timeouts (the new `BackendTimeout`, a
+  `BackendError`) retry.
+- **`[score]` needs `pyiqa>=0.1.16`; ImageReward moved to its own `[preference]` extra** (#98). pyiqa 0.1.12 with
+  timm 0.6 didn't import on numpy 2, so the aesthetic scorer silently dropped out. ImageReward pins
+  `timm==0.6.13`, which pyiqa 0.1.16 can't use, so the two extras are declared conflicting.
 - Run, image and export ids, and `--run-prefix`, are checked by argus-cortex's `fs.safe_name` instead of a local
   pattern (the same characters, whole string, at most 128 characters). argus-cortex is pinned `>=0.9,<0.10`
   (was `>=0.7,<0.8`).

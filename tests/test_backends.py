@@ -6,7 +6,7 @@ import pytest
 from pnghelpers import make_png
 
 from argus_proof.backends import ComfyUIBackend, GenBackend, GenResult, get_backend
-from argus_proof.backends.base import BackendError, make_dir_resolver
+from argus_proof.backends.base import BackendError, BackendTimeout, make_dir_resolver
 from argus_proof.backends.workflow import example_template
 from argus_proof.hashing import sha256_file
 from argus_proof.models import (
@@ -95,9 +95,13 @@ class FakeTransport:
         self.version = version
         self.ready = ready
         self.posts: list[dict] = []
+        self.cancels: list[tuple[str, dict]] = []
         self._n = 0
 
     def post_json(self, path: str, payload: dict) -> dict:
+        if path in ("/queue", "/interrupt"):
+            self.cancels.append((path, payload))
+            return {}
         assert path == "/prompt"
         self.posts.append(payload)
         self._n += 1
@@ -243,6 +247,60 @@ def test_run_that_never_finishes_times_out(models: Path, tmp_path: Path) -> None
     )
     with pytest.raises(BackendError, match="did not finish"):
         backend.generate(make_spec([1]), tmp_path / "run")
+
+
+def test_a_timed_out_seed_is_cancelled_and_retried_once(models: Path, tmp_path: Path) -> None:
+    class StallsOnce(FakeTransport):
+        """The first submission never finishes; the resubmission does (#100)."""
+
+        def get_json(self, path: str) -> dict:
+            if path == "/history/pid-1":
+                return {}
+            return super().get_json(path)
+
+    transport = StallsOnce(make_png())
+    backend = ComfyUIBackend(
+        workflow_template=example_template(),
+        resolve_model=make_dir_resolver(models),
+        transport=transport,
+        poll_interval=0,
+        timeout=0,
+    )
+    result = backend.generate(make_spec([5]), tmp_path / "run")
+
+    assert [img.image_id for img in result.images] == ["run-42-5"]
+    assert len(transport.posts) == 2  # submitted, timed out, resubmitted
+    assert transport.cancels == [("/queue", {"delete": ["pid-1"]}), ("/interrupt", {"prompt_id": "pid-1"})]
+    assert (tmp_path / "run" / "manifest.json").is_file()
+
+
+def test_a_seed_that_times_out_on_every_attempt_fails(models: Path, tmp_path: Path) -> None:
+    transport = FakeTransport(make_png(), ready=False)
+    backend = ComfyUIBackend(
+        workflow_template=example_template(),
+        resolve_model=make_dir_resolver(models),
+        transport=transport,
+        poll_interval=0,
+        timeout=0,
+        seed_retries=2,
+    )
+    with pytest.raises(BackendTimeout, match="did not finish"):
+        backend.generate(make_spec([1]), tmp_path / "run")
+    assert len(transport.posts) == 3
+    assert [path for path, _ in transport.cancels].count("/queue") == 3
+    assert not (tmp_path / "run" / "manifest.json").exists()
+
+
+def test_a_rejected_workflow_is_not_retried(models: Path, tmp_path: Path) -> None:
+    class Rejecting(FakeTransport):
+        def post_json(self, path: str, payload: dict) -> dict:
+            self.posts.append(payload)
+            return {"prompt_id": "pid-1", "node_errors": {"3": "bad sampler"}}
+
+    transport = Rejecting(make_png())
+    with pytest.raises(BackendError, match="rejected the workflow"):
+        build_backend(models, transport).generate(make_spec([1]), tmp_path / "run")
+    assert len(transport.posts) == 1
 
 
 def test_missing_model_fails_fast_before_generating_with_error_event(tmp_path: Path) -> None:

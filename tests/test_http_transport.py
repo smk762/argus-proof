@@ -46,3 +46,13 @@ def test_an_http_protocol_error_is_a_backend_error(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(http_mod._OPENER, "open", boom)
     with pytest.raises(BackendError, match="request to http://svc/x failed"):
         UrllibTransport("http://svc").get_bytes("/x")
+
+
+def test_an_empty_json_reply_is_an_empty_object_but_garbage_is_still_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # ComfyUI answers POST /queue and /interrupt with an empty 200 (#100).
+    transport = UrllibTransport("http://svc")
+    monkeypatch.setattr(transport, "_request", lambda *a, **k: b"")
+    assert transport.post_json("/interrupt", {}) == {}
+    monkeypatch.setattr(transport, "_request", lambda *a, **k: b"<html>")
+    with pytest.raises(BackendError, match="non-JSON"):
+        transport.post_json("/interrupt", {})

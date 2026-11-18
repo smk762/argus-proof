@@ -41,6 +41,7 @@ need a ``{"confirm": "purge"}`` body, refuse a run that is still generating
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import secrets
@@ -222,7 +223,7 @@ def create_app(
     ``purge`` in ``capabilities`` when the routes will actually work (devmode
     on and not read-only).
     """
-    from argus_proof.backends.base import MANIFEST_NAME
+    from argus_proof.backends.base import MANIFEST_NAME, BackendError, mark_failed
     from argus_proof.evaluate import EvaluateError, load_manifest, runs_root
 
     read_only = env_flag(ENV_READ_ONLY) if read_only is None else read_only
@@ -494,7 +495,12 @@ def create_app(
                     errored = errored or event.type == "error"
                     emit(event.model_dump(exclude_none=True))
 
-                result = backend.generate(spec, run_dir, progress=on_progress)
+                try:
+                    result = backend.generate(spec, run_dir, progress=on_progress)
+                except BackendError as exc:
+                    with contextlib.suppress(OSError):  # the error frame is what the client sees
+                        mark_failed(run_dir, run_id, str(exc))
+                    raise
                 emit(ScoringFrame(run_id=run_id, n_images=len(result.images)).model_dump(mode="json"))
                 report = score_images(result.manifest, result.images, references=references)
                 store.save(report)

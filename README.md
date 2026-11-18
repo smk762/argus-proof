@@ -33,6 +33,14 @@ uv pip install "argus-proof[cli,server]"   # + HTTP server for argus-studio
 uv pip install "argus-proof[cli,score]"    # + the full scorer stack (torch, insightface, …)
 ```
 
+`[preference]` (ImageReward) can't share an environment with `[score]`: it pins `timm==0.6.13`, which pyiqa 0.1.16+
+can't use. ImageReward isn't in the default scorer set, so install it on its own when you want the `preference` metric.
+
+Images are on GHCR. `ghcr.io/smk762/argus-proof:<version>` (and `latest`) is the thin server/CLI and scores **phash
+only**: identity, CLIP score and aesthetic come back empty. To score for real, use `:<version>-score` (`latest-score`),
+which adds the `[score]` stack, with CUDA torch and onnxruntime-gpu (they fall back to CPU without a GPU). To build
+from a context without `.git` (a `git archive` export), pass `--build-arg VERSION=<x.y.z>`.
+
 ## CLI
 
 ```bash
@@ -41,10 +49,15 @@ uv pip install "argus-proof[cli,score]"    # + the full scorer stack (torch, ins
 # .env.example — PROOF_BACKEND, COMFYUI_BASE_URL, PROOF_MODELS_DIR):
 argus-proof run subject.safetensors ./curated_export \
   --checkpoint sdxl_base.safetensors --seed 1 --seed 2 --seed 3 --out runs
+# A run that fails (ComfyUI retries a timed-out seed once first) leaves failed.json in its dir
+# instead of a manifest, and the rest of the grid still runs; the command then exits 1 listing
+# the failed run_ids. --fail-fast stops at the first failure.
 
 # Score a generated run into a stored EvalReport (identity needs --references,
-# a held-out image dir that must NOT overlap the training set):
-argus-proof score runs/proof-l00-w00-p000 --references ./holdout
+# a held-out image dir that must NOT overlap the training set). A default scorer
+# this install can't run is warned about on stderr; --require-scorers makes it exit 2:
+argus-proof score runs/proof-l00-w00-p000 --references ./holdout \
+  [--require-scorers identity,clip_score,aesthetic,safety]
 
 # Browse stored reports / print one run's digest:
 argus-proof report
@@ -244,7 +257,7 @@ skips it when the extra is absent). Shipped:
 The default scorer set used by `argus-proof run` / `score` and the server
 (`evaluate.default_scorers()`, plus phash dedup/diversity) is identity, CLIPScore,
 CLIP-IQA and safety — it does **not** include ImageReward, so the `preference`
-metric stays empty unless you pass `image_reward_scorer()` via the library API.
+metric stays empty unless you pass `image_reward_scorer()` via the library API (in a `[preference]` environment).
 `GET /scorers` reports which of the default set this install can actually run.
 
 ```python
@@ -508,7 +521,11 @@ make pages     # the hosted demo's static export (web/, needs Node 22)
 ## CI / Release
 
 - **CI** runs via the shared [`argus-ci`](https://github.com/smk762/argus-ci) reusable workflow.
-- **Release** publishes to PyPI (OIDC trusted publishing) and GHCR on `v*` tags.
+- **Release** publishes to PyPI (OIDC trusted publishing) and GHCR on `v*` tags: the thin image and the `-score`
+  variant. The `-score` job runs `scripts/check_scorers.py` inside the image before pushing it. CI has no GPU, so
+  that proves the scorers import, not that they run on CUDA.
+- CI's `score-imports` job installs the `[score]` extra (CPU torch) and runs the same check, so a pin that resolves but
+  won't import fails CI instead of quietly dropping a metric.
 - Once PyPI has the version, a **GitHub Release** is created with that version's
   `CHANGELOG.md` section as its notes. Add the section before you tag; the job fails without it.
 - Versioning is derived from git tags via `hatch-vcs` — tag `vX.Y.Z` to cut a release.

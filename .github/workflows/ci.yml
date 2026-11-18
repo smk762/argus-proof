@@ -18,6 +18,23 @@ jobs:
       test-extras: "dev,server,cli"
       post-test: "uv run --no-sync argus-proof schema --check"
 
+  score-imports:
+    # The [score] extra is too heavy for the test job, so it is resolved and
+    # imported here on its own. A pin that resolves but won't import (#98) would
+    # otherwise only make a scorer report unavailable and drop its metric from
+    # every report, with nothing failing.
+    runs-on: ubuntu-latest
+    env:
+      # No tag in a PR checkout's shallow history; the version is irrelevant here.
+      SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.11
+      # CPU torch: the import check needs no CUDA, and the CUDA wheels are GBs.
+      - run: uv pip install --torch-backend cpu ".[score]"
+      - run: uv run --no-sync python scripts/check_scorers.py
+
   suite-rules:
     # argus-ci suite rules: lint rules that each eliminate a finding class. New violations fail;
     # existing ones are in .suite-rules-baseline.json, which may only shrink.
