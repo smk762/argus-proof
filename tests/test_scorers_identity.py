@@ -166,3 +166,33 @@ def test_score_returns_normalised_value_in_range() -> None:
     score = IdentityScorer(embedder=emb).score(Path("gen.png"), identity_ctx(["ref"]))
     assert 0.0 <= score <= 1.0
     assert score == pytest.approx(cosine([2.0, 1.0], [1.0, 2.0]))
+
+
+@pytest.mark.parametrize("aggregate", ["max", "mean"])
+@pytest.mark.parametrize("refs", [["bad", "good"], ["good", "bad"]])
+def test_a_nan_similarity_is_nan_whatever_the_reference_order(aggregate: str, refs: list[str]) -> None:
+    emb = FakeEmbedder({"gen": [1.0, 0.0], "good": [1.0, 0.0], "bad": [math.nan, 0.0]})
+    scorer = IdentityScorer(embedder=emb, aggregate=aggregate)  # type: ignore[arg-type]
+    assert math.isnan(scorer.score(Path("gen.png"), identity_ctx(refs)))
+
+
+def test_insightface_embedder_honours_exif_orientation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PIL import Image
+
+    from argus_proof.scoring.scorers.identity import InsightFaceEmbedder
+
+    path = tmp_path / "sideways.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = 6  # Orientation: rotate 90 CW to display
+    Image.new("RGB", (40, 20)).save(path, exif=exif)
+    shapes: list[tuple] = []
+
+    class App:
+        def get(self, bgr):  # noqa: ANN001, ANN202
+            shapes.append(bgr.shape)
+            return []
+
+    embedder = InsightFaceEmbedder()
+    monkeypatch.setattr(embedder, "_load", lambda: App())
+    assert embedder.embed(path) is None
+    assert shapes == [(40, 20, 3)]  # upright: stored 40x20, displayed 20 wide x 40 tall

@@ -71,9 +71,10 @@ def test_no_agpl_package_is_imported_in_process() -> None:
 
 def test_the_import_scan_sees_every_form() -> None:
     tree = ast.parse(
-        "import nudenet\nfrom ultralytics.models import YOLO\nimportlib.import_module('nudenet.x')\n__import__('a')"
+        "import nudenet\nfrom ultralytics.models import YOLO\nimportlib.import_module('dyn.x')\n__import__('a')"
     )
-    assert _imported_roots(tree) == {"nudenet", "ultralytics", "a"}
+    # One distinct root per form, so losing any one form (the dynamic import above all) fails here.
+    assert _imported_roots(tree) == {"nudenet", "ultralytics", "dyn", "a"}
 
 
 def test_importing_every_module_loads_no_heavy_dependency() -> None:
@@ -89,9 +90,12 @@ def test_importing_every_module_loads_no_heavy_dependency() -> None:
 
 
 def test_no_model_weights_are_committed() -> None:
+    # -z: raw NUL-separated paths. Without it git quotes and C-escapes a name with
+    # non-ASCII or special characters ("caf\303\251.safetensors"), hiding its suffix.
     tracked = subprocess.run(
-        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30
-    ).stdout.splitlines()
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30
+    ).stdout.split("\0")
+
     assert [p for p in tracked if p.lower().endswith(WEIGHT_SUFFIXES)] == []
 
 

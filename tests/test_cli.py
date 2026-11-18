@@ -335,3 +335,56 @@ def test_inspect_run_and_export_dirs(tmp_path: Path, fake_backend) -> None:  # n
 def test_inspect_unrecognised_dir_exits_two(tmp_path: Path) -> None:
     result = runner.invoke(app, ["inspect", str(tmp_path)])
     assert result.exit_code == 2
+
+
+def test_cli_logs_go_to_stderr_so_json_stdout_stays_clean(capsys) -> None:  # noqa: ANN001
+    import structlog
+
+    from argus_proof.cli import _cli
+
+    try:
+        _cli(verbose=False)
+        structlog.get_logger().warning("backend.fallback")
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "backend.fallback" in captured.err
+    finally:
+        structlog.reset_defaults()
+
+
+def test_run_with_a_missing_export_exits_one_without_a_traceback(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app, ["run", "l.safetensors", str(tmp_path / "nope"), "-c", "c.safetensors", "--out", str(tmp_path / "r")]
+    )
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_experiment_with_a_missing_export_exits_one(tmp_path: Path) -> None:
+    matrix = tmp_path / "matrix.json"
+    _write_matrix(matrix)
+    result = runner.invoke(app, ["experiment", str(matrix), "--export", str(tmp_path / "nope")])
+    assert result.exit_code == 1
+    assert "cannot expand experiment" in result.output
+
+
+def test_explore_refuses_to_replace_an_existing_dataset(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    import argus_proof.explore as fo_explore
+
+    report = tmp_path / "r.json"
+    report.write_text(
+        EvalReport(
+            run_id="run-1",
+            aggregate=AggregateScores(n_images=0, n_passed=0, pass_rate=0.0, means=MetricScores()),
+            verdict=Verdict(passed=False),
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    built: list[bool] = []
+    monkeypatch.setattr(fo_explore, "is_available", lambda: True)
+    monkeypatch.setattr(fo_explore, "dataset_exists", lambda name: True)
+    monkeypatch.setattr(fo_explore, "to_fiftyone_dataset", lambda *a, **kw: built.append(kw["overwrite"]))
+    result = runner.invoke(app, ["explore", str(report), "--images", str(tmp_path), "--name", "triage"])
+    assert result.exit_code == 2 and "--overwrite" in result.output
+    assert built == []

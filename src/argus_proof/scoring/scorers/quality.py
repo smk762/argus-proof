@@ -15,6 +15,7 @@ is CI-tested without torch; the real adapters are lazy and behind ``[score]``.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -32,6 +33,8 @@ def linear_normalize(raw: float, lo: float, hi: float) -> float:
     :func:`clamp01` so the orchestrator's ``[0, 1]`` guard rejects it, rather
     than a NaN silently clamping to a perfect 1.0.
     """
+    if not math.isfinite(raw):
+        return raw  # every branch hands a broken score to the orchestrator's guard
     if hi <= lo:
         return 1.0 if raw >= hi else 0.0
     return clamp01((raw - lo) / (hi - lo))
@@ -114,7 +117,13 @@ class ClipScoreModel:
 
 
 class PyiqaModel:
-    """No-reference technical/aesthetic quality via ``pyiqa`` (default CLIP-IQA, ~[0,1])."""
+    """No-reference technical/aesthetic quality via ``pyiqa`` (default CLIP-IQA, ~[0,1]).
+
+    pyiqa metrics disagree on direction: NIQE, BRISQUE and PIQE are lower-is-better.
+    For those (``metric.lower_better``) the raw score is negated, so the value this
+    returns is always higher-is-better and :class:`ModelScorer`'s ``lo``/``hi``
+    calibrate on that negated scale.
+    """
 
     def __init__(self, metric_name: str = "clipiqa") -> None:
         self.metric_name = metric_name
@@ -135,7 +144,9 @@ class PyiqaModel:
         return self._metric
 
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None:
-        return float(self._load()(str(image_path)).item())
+        metric = self._load()
+        raw = float(metric(str(image_path)).item())
+        return -raw if getattr(metric, "lower_better", False) else raw
 
 
 class ImageRewardModel:
@@ -172,8 +183,19 @@ def clip_score_scorer(lo: float = 20.0, hi: float = 35.0, **kwargs: object) -> M
     return ModelScorer("clip_score", ClipScoreModel(**kwargs), lo, hi)  # type: ignore[arg-type]
 
 
-def pyiqa_scorer(lo: float = 0.0, hi: float = 1.0, metric_name: str = "clipiqa") -> ModelScorer:
-    """Aesthetic/IQA scorer (metric ``aesthetic``). CLIP-IQA is already ~[0,1]."""
+def pyiqa_scorer(lo: float | None = None, hi: float | None = None, metric_name: str = "clipiqa") -> ModelScorer:
+    """Aesthetic/IQA scorer (metric ``aesthetic``). CLIP-IQA is already ~[0,1].
+
+    Any other pyiqa metric has its own range (MUSIQ 0–100, NIMA 1–10) and may be
+    lower-is-better (negated, see :class:`PyiqaModel`), so it needs an explicit
+    ``lo``/``hi`` calibration rather than CLIP-IQA's ``[0, 1]``.
+    """
+    if lo is None or hi is None:
+        if metric_name != "clipiqa":
+            raise ValueError(
+                f"pyiqa metric {metric_name!r} needs explicit lo/hi: only clipiqa's [0, 1] range is the default"
+            )
+        lo, hi = 0.0, 1.0
     return ModelScorer("aesthetic", PyiqaModel(metric_name), lo, hi)
 
 

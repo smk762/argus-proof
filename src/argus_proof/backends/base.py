@@ -12,7 +12,7 @@ from __future__ import annotations
 import glob
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Protocol, runtime_checkable
 
 from argus_proof.hashing import sha256_cached
@@ -46,10 +46,19 @@ def make_dir_resolver(root: Path) -> ModelResolver:
     ``models/checkpoints`` and a LoRA in ``models/loras`` both resolve from one
     root. Raises :class:`FileNotFoundError` (which the backend turns into a
     :class:`BackendError`) if nothing matches.
+
+    *name* must stay under *root*: model names reach the engines from run
+    requests, so an absolute name or one with a ``..`` segment is refused as not
+    found. The check is lexical, so a model that is a symlink inside *root* (a
+    common shared-weights layout) still resolves.
     """
     root = root.expanduser()
 
     def resolve(name: str) -> Path:
+        for flavour in (PurePosixPath, PureWindowsPath):
+            parsed = flavour(name)
+            if parsed.anchor or ".." in parsed.parts:
+                raise FileNotFoundError(f"model name {name!r} escapes the model root {root}")
         direct = root / name
         if direct.is_file():
             return direct
@@ -106,9 +115,17 @@ MANIFEST_NAME = "manifest.json"
 
 def write_manifest(out_dir: Path, manifest: RunManifest) -> Path:
     """Write *manifest* as ``manifest.json`` under *out_dir* (the shared final step
-    of every backend's ``generate``)."""
+    of every backend's ``generate``).
+
+    A failed write (disk full, permissions) raises :class:`BackendError`, so a
+    backend calling this inside its error-event block reports it like any other
+    generation failure.
+    """
     path = out_dir / MANIFEST_NAME
-    path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    try:
+        path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    except (OSError, ValueError, TypeError) as exc:
+        raise BackendError(f"cannot write {path}: {exc}") from exc
     return path
 
 

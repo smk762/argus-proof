@@ -132,4 +132,5 @@ def score_run(
         aggregate=aggregate,
         scorers=provenance,
         verdict=verdict,
+        gate=config,
     )

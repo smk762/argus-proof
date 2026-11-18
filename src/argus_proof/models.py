@@ -25,6 +25,7 @@ incompatible major (see :func:`check_proof_version`) instead of misreading it.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal
 
 from argus_cortex.wire import check_version, make_versioned_base, schema_major
@@ -56,7 +57,10 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 # 1.6: AcceptanceThresholds.unsafe_safety_floor defaults to 0.8 (was 0.5), and
 #      "unsafe" is at or below it: an exposed score of at least 0.2 on NudeNet
 #      640m (issue #84). The payload shape is unchanged.
-PROOF_VERSION = "1.6"
+# 1.7: additive — EvalReport.gate records the GateConfig the run was scored
+#      with, so a HITL review that sends no gate re-judges the run under the same
+#      thresholds and a retracted rating falls back to that gate's auto result.
+PROOF_VERSION = "1.7"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -431,9 +435,12 @@ class RejectReason(BaseModel):
         # "self harm" files under the same slug as the taxonomy's "self_harm" instead of
         # a bucket that matches nothing. Still a free str (not Literal-restricted) so the
         # taxonomy can evolve without a wire-contract break (#41).
+        # A blank form field ("" / "   ") is no category, not an empty-string bucket;
+        # runs of separators collapse, so "self - harm" is "self_harm", not "self___harm".
         if v is None:
             return None
-        return "_".join(v.strip().lower().split()).replace("-", "_")
+        slug = re.sub(r"[\s_-]+", "_", v.strip().lower()).strip("_")
+        return slug or None
 
 
 class Refinement(BaseModel):
@@ -575,6 +582,16 @@ class GateConfig(BaseModel):
             raise ValueError(f"auto_fail ({self.auto_fail}) must be <= auto_pass ({self.auto_pass})")
         return self
 
+    @field_validator("weights", "hard_gates")
+    @classmethod
+    def _known_metrics(cls, v: dict[str, float]) -> dict[str, float]:
+        # A misspelt or renamed metric would never match a score, so its weight or
+        # hard gate would silently never apply.
+        unknown = sorted(set(v) - set(MetricScores.model_fields))
+        if unknown:
+            raise ValueError(f"unknown metric(s) {unknown}; expected one of {sorted(MetricScores.model_fields)}")
+        return v
+
 
 class EvalReport(_Versioned):
     """Scored evaluation of a generation run: per-image + aggregate + verdict.
@@ -591,6 +608,9 @@ class EvalReport(_Versioned):
     scorers: list[ScorerProvenance] = Field(default_factory=list)
     verdict: Verdict
     created_at: str | None = None
+    # The gate the images were judged with; None on a report from before 1.7,
+    # where the default GateConfig is the only fallback.
+    gate: GateConfig | None = None
 
 
 class ReportSummary(BaseModel):

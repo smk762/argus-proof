@@ -78,16 +78,17 @@ class RemoteBackend:
             resp = self.transport.post_json("/generate", {"spec": spec.model_dump(mode="json")})
             manifest = self._parse_manifest(resp, spec)
             images = self._collect_images(resp, spec, out_dir, emit)
+            if not images:
+                raise BackendError(f"remote service returned no images for run {spec.run_id!r}")
+            missing = sorted(set(spec.seeds) - {img.seed for img in images})
+            if missing:
+                # The manifest claims these seeds; with no image for them it would misdescribe the run.
+                raise BackendError(f"remote service returned no image for requested seed(s) {missing}")
+            write_manifest(out_dir, manifest)
         except BackendError as exc:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
 
-        if not images:
-            error = f"remote service returned no images for run {spec.run_id!r}"
-            emit(ProgressEvent(run_id=spec.run_id, type="error", message=error))
-            raise BackendError(error)
-
-        write_manifest(out_dir, manifest)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
 
@@ -134,18 +135,26 @@ class RemoteBackend:
     def _collect_images(self, resp: dict, spec: RunSpec, out_dir: Path, emit: ProgressSink) -> list[GeneratedImage]:
         produced: list[GeneratedImage] = []
         seen: set[str] = set()
+        requested = set(spec.seeds)
         for index, item in enumerate(resp.get("images") or []):
             if not isinstance(item, dict) or "seed" not in item or "content_base64" not in item:
                 raise BackendError(f"remote image {index} must be an object with 'seed' and 'content_base64'")
-            data = decode_base64_image(item["content_base64"], context=f"remote image {index}")
             seed = item["seed"]
+            # bool is an int subclass; neither it nor a float/str is a seed.
+            if type(seed) is not int or seed not in requested:
+                raise BackendError(f"remote image {index} has seed {seed!r}, which the run did not request")
+            data = decode_base64_image(item["content_base64"], context=f"remote image {index}")
             # Validate a service-supplied image_id before it becomes a filename
             # (a hostile/buggy endpoint must not dictate a write path); disambiguate
-            # a collision (e.g. two images for one seed) so neither overwrites.
-            image_id = safe_image_id(str(item.get("image_id") or f"{spec.run_id}-{seed}"))
-            if image_id in seen:
-                image_id = f"{image_id}-{index}"
+            # a collision (e.g. two images for one seed) so neither overwrites —
+            # including a collision with an earlier disambiguated id.
+            base_id = safe_image_id(str(item.get("image_id") or f"{spec.run_id}-{seed}"))
+            image_id, n = base_id, index
+            while image_id in seen:
+                image_id = f"{base_id}-{n}"
+                n += 1
             seen.add(image_id)
+
             path = out_dir / f"{image_id}.png"
             path.write_bytes(data)
             dims = read_dimensions(data) or (spec.sampling.width, spec.sampling.height)

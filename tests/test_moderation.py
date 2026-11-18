@@ -319,3 +319,40 @@ def test_a_model_that_cannot_load_aborts_the_ensemble() -> None:
 def test_adapters_take_a_device() -> None:
     assert LlamaGuardTextDetector(device="cpu").device == "cpu"
     assert LlamaGuardImageDetector().device == "auto"
+
+
+def test_an_unsafe_verdict_with_only_unknown_codes_flags_every_category() -> None:
+    # S15 isn't a Llama Guard 3 code (a future or garbled one): it must not read as safe.
+    scores = _ScriptedText("unsafe\nS15", p_unsafe=0.6).moderate_text("x")
+    assert scores == dict.fromkeys(CATEGORIES, 0.6)
+
+
+def test_the_csam_check_sees_codes_in_any_case_or_spacing(monkeypatch: pytest.MonkeyPatch) -> None:
+    import structlog
+
+    from argus_proof import moderation
+
+    monkeypatch.setattr(moderation, "parse_guard_output", lambda text: (True, [" s4 "]))
+    with structlog.testing.capture_logs() as logs:
+        assert _ScriptedText("unsafe").moderate_text("x") == {}
+    assert any(entry["event"] == "moderation.csam_code" for entry in logs)
+
+
+def test_an_empty_ensemble_raises_instead_of_reading_safe() -> None:
+    mod = PolicyModerator(image_detectors=[FakeImageDetector({}, available=False)])
+    with pytest.raises(ModerationError, match="no policy detector"):
+        mod.moderate_images([Path("a.png")])
+    assert mod.moderate_images([]) == []
+
+
+def test_a_partial_detector_failure_is_recorded_on_the_report() -> None:
+    class Boom(FakeImageDetector):
+        name = "boom"
+
+        def moderate_image(self, image_path: Path) -> CategoryScores | None:
+            raise RuntimeError("model exploded")
+
+    mod = PolicyModerator(image_detectors=[Boom({}), FakeImageDetector({"a": {"weapons": 0.7}})])
+    report = moderate_images([Path("a.png")], mod)
+    assert report.categories["weapons"].max == 0.7
+    assert len(report.detector_failures) == 1 and "boom" in report.detector_failures[0]

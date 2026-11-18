@@ -266,3 +266,40 @@ def test_the_report_says_when_no_check_could_run(tmp_path: Path) -> None:
     [check] = [p for p in report.scorers if p.name == "held-out-references"]
     assert check.model == "not checked: no training export"
     assert not any(p.name == "held-out-references" for p in score_run_dir(run_dir).scorers)  # no references
+
+
+def test_discover_images_is_in_seed_order_not_filename_order(tmp_path: Path) -> None:
+    run_dir = _generated_run(tmp_path, seeds=[10, 2, 1])
+    save_png(run_dir / "run-1-1-1.png")  # a second image for seed 1
+    images = discover_images(run_dir, load_manifest(run_dir))
+    assert [img.image_id for img in images] == ["run-1-10", "run-1-2", "run-1-1", "run-1-1-1"]
+
+
+def test_one_stem_with_two_extensions_is_refused(tmp_path: Path) -> None:
+    run_dir = _generated_run(tmp_path)
+    save_png(run_dir / "run-1-1.jpg")
+    with pytest.raises(EvaluateError, match="one image_id, two images"):
+        discover_images(run_dir, load_manifest(run_dir))
+
+
+def test_training_images_list_one_file_once_and_skip_non_image_rows(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    export = tmp_path / "export"
+    a = _photo(export / "train" / "a.png", seed=1)
+    (export / "train" / "a.txt").write_text("a caption", encoding="utf-8")
+    (export / "manifest.jsonl").write_text(
+        f'{{"exported_path": "train/a.png", "exported_abs_path": "{a.resolve()}"}}\n'
+        '{"exported_path": "train/a.txt"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    assert training_images(Path("export")) == [a.resolve()]  # relative export dir, absolute manifest path
+
+
+def test_a_decompression_bomb_is_an_unreadable_image(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    from PIL import Image
+
+    from argus_proof.evaluate import _phash_bits
+
+    path = _photo(tmp_path / "big.png", seed=1)
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)  # 320x240 is now > 2x the limit
+    assert _phash_bits(path) is None

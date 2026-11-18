@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 
 from argus_proof.backends import DiffusersBackend, GenBackend, get_backend
-from argus_proof.backends.base import make_dir_resolver
+from argus_proof.backends.base import BackendError, make_dir_resolver
 from argus_proof.hashing import sha256_file
 from argus_proof.models import LoRASpec, ProgressEvent, RunSpec, SamplingParams
 
@@ -102,3 +102,19 @@ def test_guidance_is_refused_not_dropped(models: Path, tmp_path: Path) -> None:
     with pytest.raises(BackendError, match="guidance"):
         _backend(models, renderer).generate(spec, tmp_path / "out")
     assert renderer.calls == []
+
+
+def test_a_failed_manifest_write_is_a_backend_error_with_an_error_event(
+    models: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from argus_proof.backends import base
+
+    def fail(self, *a, **kw):  # noqa: ANN001, ANN002, ANN003, ANN202
+        raise OSError("disk full")
+
+    monkeypatch.setattr(base.Path, "write_text", fail)
+    events: list = []
+    with pytest.raises(BackendError, match="disk full"):
+        _backend(models, FakeRenderer()).generate(_spec([1]), tmp_path / "run", events.append)
+    assert [e.type for e in events][-1] == "error"
+    assert "done" not in [e.type for e in events]

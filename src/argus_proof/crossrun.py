@@ -351,4 +351,12 @@ def krippendorff_alpha(units: Sequence[dict[str, float]], *, level: str = "inter
     if len(raters) < 2 or scorable == 0:
         return float("nan")
     matrix = [[unit.get(rater, np.nan) for unit in units] for rater in raters]
-    return float(krippendorff.alpha(reliability_data=matrix, level_of_measurement=level))
+    # Every rating the same value: krippendorff raises (a one-value domain has no
+    # expected disagreement), but raters who all agree are in perfect agreement.
+    domain = {value for row in matrix for value in row if not np.isnan(value)}
+    if len(domain) < 2:
+        return 1.0
+    try:
+        return float(krippendorff.alpha(reliability_data=matrix, level_of_measurement=level))
+    except ValueError:
+        return float("nan")  # any other degenerate input: alpha is undefined, not a crash

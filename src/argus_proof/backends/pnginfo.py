@@ -13,6 +13,19 @@ import zlib
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
+# Cap on one inflated zTXt/iTXt chunk. A ComfyUI workflow is tens of KB; a few
+# KB of deflate can expand to gigabytes, so anything past this is skipped.
+MAX_TEXT_BYTES = 8 * 1024 * 1024
+
+
+def _inflate(payload: bytes) -> bytes:
+    """Inflate one compressed text chunk, refusing output past :data:`MAX_TEXT_BYTES`."""
+    d = zlib.decompressobj()
+    out = d.decompress(payload, MAX_TEXT_BYTES)
+    if d.unconsumed_tail:
+        raise ValueError("compressed text chunk inflates past the size cap")
+    return out
+
 
 def read_dimensions(data: bytes) -> tuple[int, int] | None:
     """``(width, height)`` from a PNG's IHDR, or ``None`` if not a valid PNG.
@@ -57,7 +70,7 @@ def read_text_chunks(data: bytes) -> dict[str, str]:
             elif ctype == b"zTXt":
                 keyword, rest = body.split(b"\x00", 1)
                 # rest = 1-byte compression method + zlib-compressed text
-                out[keyword.decode("latin-1")] = zlib.decompress(rest[1:]).decode("latin-1")
+                out[keyword.decode("latin-1")] = _inflate(rest[1:]).decode("latin-1")
             elif ctype == b"iTXt":
                 keyword, rest = body.split(b"\x00", 1)
                 comp_flag = rest[0]
@@ -66,7 +79,8 @@ def read_text_chunks(data: bytes) -> dict[str, str]:
                 _lang, after_lang = after_method.split(b"\x00", 1)
                 _trans, text_bytes = after_lang.split(b"\x00", 1)
                 if comp_flag:
-                    text_bytes = zlib.decompress(text_bytes)
+                    text_bytes = _inflate(text_bytes)
+
                 out[keyword.decode("latin-1")] = text_bytes.decode("utf-8")
         except (ValueError, IndexError, zlib.error, UnicodeDecodeError):
             continue  # skip a malformed chunk, keep the rest

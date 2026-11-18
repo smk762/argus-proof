@@ -128,3 +128,10 @@ def test_all_checks_must_pass() -> None:
     r = report(n_passed=8, n_groups=10, pass_rate=0.8, identity=0.4)
     t = AcceptanceThresholds(min_pass_rate=0.75, min_identity_mean=0.7)  # pass_rate ok, identity fails
     assert evaluate_acceptance(r, t).passed is False
+
+
+def test_more_passes_than_groups_fails_the_ci_check_instead_of_clamping() -> None:
+    # 4 passes counted per image against 4 groups would read as 4/4 if clamped.
+    r = report(n_passed=5, n_groups=4, pass_rate=0.25)
+    c = check(evaluate_acceptance(r, AcceptanceThresholds(min_pass_rate_ci_lower=0.1)), "pass_rate_ci_lower")
+    assert not c.passed and "inconsistent report" in c.detail

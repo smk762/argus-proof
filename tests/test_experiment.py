@@ -367,3 +367,17 @@ def test_a_flux_cell_gets_its_familys_model_files() -> None:
         .plan.specs[0]
     )
     assert spec.vae == "ae.safetensors" and len(spec.text_encoders) == 2
+
+
+@pytest.mark.parametrize("prefix", ["../../x", "a/b", ".hidden", "..", "has space"])
+def test_an_unsafe_run_id_prefix_is_refused(prefix: str) -> None:
+    with pytest.raises(ValueError, match="run_id_prefix"):
+        _matrix(run_id_prefix=prefix)
+
+
+def test_optuna_search_with_no_completed_trial_is_an_experiment_error() -> None:
+    pytest.importorskip("optuna")
+    with pytest.raises(ExperimentError, match="no Optuna trial completed"):
+        optuna_search(_matrix(), lambda choice: float("nan"), n_trials=3, seed=1)
+    with pytest.raises(ExperimentError, match="n_trials must be >= 1"):
+        optuna_search(_matrix(), lambda choice: 1.0, n_trials=0)

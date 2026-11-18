@@ -269,9 +269,12 @@ def _best_across_runs(store: _Sliceable, dimension: str, stage: RecommendStage) 
     cells = [s for s in store.slice_pass_rate(dimension) if s.value is not None]
     if len(cells) < 2:
         return []
-    best, runner_up = cells[0], cells[1]  # slice_pass_rate ranks by CI lower bound, best first
-    if best.ci_low <= runner_up.ci_high:
+    best = cells[0]  # slice_pass_rate ranks by CI lower bound, best first
+    # Against every other cell's upper bound, not just the runner-up's: a small
+    # cell ranks low on ci_low yet its wide interval can still reach above best.
+    if best.ci_low <= max(c.ci_high for c in cells[1:]):
         return []  # CIs overlap — the data can't distinguish the cells
+
     return [
         Recommendation(
             stage=stage,

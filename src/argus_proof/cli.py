@@ -32,9 +32,19 @@ app = typer.Typer(
 
 @app.callback()
 def _cli(verbose: bool = Option(False, "--verbose", "-v", help="Show info/debug logs")) -> None:
-    """Keep stdout clean for --json output; ``serve`` re-enables info logs."""
+    """Keep stdout clean for --json output; ``serve`` re-enables info logs.
+
+    Logs go to stderr at every level: structlog's default factory prints to
+    stdout, where a warning would corrupt a ``--json`` payload.
+    """
     level = logging.DEBUG if verbose else logging.WARNING
-    structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(level))
+    structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(level), logger_factory=_stderr_logger)
+
+
+def _stderr_logger(*_args: object) -> structlog.PrintLogger:
+    # Resolve sys.stderr per logger rather than once at configure time, so a
+    # swapped stream (a test runner, a redirect) is honoured, never a closed one.
+    return structlog.PrintLogger(file=sys.stderr)
 
 
 def _load_model(path: Path, model_cls, label: str):  # noqa: ANN001, ANN202 - generic pydantic loader
@@ -176,7 +186,11 @@ def run(
         typer.echo("--guidance and --no-guidance are mutually exclusive", err=True)
         raise typer.Exit(2)
 
-    base_prompts = [prompt] if prompt else read_export_prompts(export)
+    try:
+        base_prompts = [prompt] if prompt else read_export_prompts(export)
+    except GridError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
     defaults = sampling_defaults(checkpoint)  # by the checkpoint's family folder
     models = model_defaults(checkpoint)
     export_manifest = export / "manifest.jsonl"
@@ -385,9 +399,9 @@ def experiment(
     from argus_proof.grid import GridError, read_export_prompts
 
     matrix = _load_model(matrix_json, ExperimentMatrix, "ExperimentMatrix")
-    prompts = read_export_prompts(export_dir)
 
     try:
+        prompts = read_export_prompts(export_dir)
         plan = expand_experiment(matrix, prompts, max_gpu_hours=max_gpu_hours)
     except (ExperimentError, GridError) as exc:
         typer.echo(f"cannot expand experiment: {exc}", err=True)
@@ -411,6 +425,9 @@ def explore(
         None, "--ingest", help="After the App closes, fold rating:/reject: tags back and write the report here"
     ),
     rater: str | None = Option(None, "--rater", help="Rater id stamped on ingested tags"),
+    overwrite: bool = Option(
+        False, "--overwrite", help="Replace an existing FiftyOne dataset of the same --name (its tags are lost)"
+    ),
 ) -> None:
     """Open a scored run in FiftyOne with metrics attached, for embedding viz + tag triage."""
     from argus_proof import explore as fo_explore
@@ -422,8 +439,14 @@ def explore(
 
     report = _load_report(report_json)
     try:
+        if name is not None and not overwrite and fo_explore.dataset_exists(name):
+            # FiftyOne datasets share one database and hold the App's triage tags:
+            # never delete one just because a name was reused.
+            typer.echo(f"a FiftyOne dataset named {name!r} already exists; pass --overwrite to replace it", err=True)
+            raise typer.Exit(2)
         paths = fo_explore.image_paths_from_dir(images)
-        dataset = fo_explore.to_fiftyone_dataset(report, paths, name=name, overwrite=True)
+        dataset = fo_explore.to_fiftyone_dataset(report, paths, name=name, overwrite=overwrite)
+
         typer.echo(f"dataset {dataset.name!r}: {len(dataset)} samples ({len(paths)} images found)")
         if umap:
             fo_explore.compute_visualization(dataset)

@@ -27,3 +27,12 @@ def test_non_png_returns_empty_and_none() -> None:
 
 def test_no_text_chunks_returns_empty() -> None:
     assert read_text_chunks(make_png()) == {}
+
+
+def test_a_ztxt_bomb_past_the_cap_is_skipped(monkeypatch) -> None:  # noqa: ANN001
+    from argus_proof.backends import pnginfo
+
+    monkeypatch.setattr(pnginfo, "MAX_TEXT_BYTES", 1024)
+    png = make_png_ztxt("prompt", "x" * 5000)  # deflates tiny, inflates past the (lowered) cap
+    assert read_text_chunks(png) == {}
+    assert read_text_chunks(make_png_ztxt("prompt", "x" * 1000))["prompt"] == "x" * 1000

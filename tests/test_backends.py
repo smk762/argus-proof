@@ -365,3 +365,20 @@ def test_a_missing_text_encoder_fails_fast(flux_models: Path, tmp_path: Path) ->
     with pytest.raises(BackendError, match="clip_l.safetensors"):
         _flux_backend(flux_models, transport).generate(_flux_spec(), tmp_path)
     assert transport.posts == []
+
+
+@pytest.mark.parametrize("name", ["/etc/passwd", "../outside.safetensors", "sub/../../outside.safetensors", "C:\\x"])
+def test_the_dir_resolver_refuses_a_name_that_escapes_the_root(tmp_path: Path, name: str) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    (tmp_path / "outside.safetensors").write_bytes(b"x")
+    with pytest.raises(FileNotFoundError, match="escapes the model root"):
+        make_dir_resolver(root)(name)
+
+
+def test_the_dir_resolver_follows_a_symlinked_model_inside_the_root(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    root.mkdir()
+    (tmp_path / "shared.safetensors").write_bytes(b"x")
+    (root / "base.safetensors").symlink_to(tmp_path / "shared.safetensors")
+    assert make_dir_resolver(root)("base.safetensors") == root / "base.safetensors"

@@ -227,6 +227,17 @@
           "default": null,
           "title": "Created At"
         },
+        "gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GateConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "images": {
           "items": {
             "$ref": "#/$defs/ImageScores"
@@ -235,7 +246,7 @@
           "type": "array"
         },
         "proof_version": {
-          "default": "1.6",
+          "default": "1.7",
           "title": "Proof Version",
           "type": "string"
         },
@@ -261,7 +272,8 @@
         "aggregate",
         "scorers",
         "verdict",
-        "created_at"
+        "created_at",
+        "gate"
       ],
       "title": "EvalReport",
       "type": "object"
@@ -1034,7 +1046,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.6",
+          "default": "1.7",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1277,7 +1289,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.6",
+          "default": "1.7",
           "title": "Proof Version",
           "type": "string"
         },
