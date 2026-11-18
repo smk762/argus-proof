@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The weight is 0 because the cosine is uncalibrated (its threshold comes from the mint pilot), so existing runs'
   composites don't change; likeness acts only through `--min-likeness`, a hard gate or an explicit weight.
 
+- **`POST /score`** (argus-mint#51): score uploaded images (multipart `images`, 1-16) against an export's held-out
+  `references/` with `likeness` and/or `identity`, an optional crop box per image (so a teaser's character is scored,
+  not its background), and the target category. Returns a `ScoreResult` (per-image `MetricScores`, means, scorer
+  provenance with pinned weights, the held-out check) and stores nothing. The held-out refusal applies (400), an
+  unavailable scorer or a refused GPU lease is 503, read-only refuses it, and it runs under one interactive `score`
+  lease. `/health` advertises `score`. Wire `PROOF_VERSION` 1.9 (additive: `ScoreRequest`, `CropBox`, `ScoredImage`,
+  `ScoreResult`).
 - **Scoring takes a GPU lease** (`score`, in-process, interactive, not preemptible, 3500 MiB, `model_mb` 0), declared
   in `gpu-tenant.yaml`. `score_images` holds it around the scoring pass when an available scorer runs on the GPU, so
   `argus-proof score` and `/run/stream` (which leases at `batch`, as part of a batch run) no longer use the GPU

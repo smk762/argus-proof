@@ -90,6 +90,7 @@ GET  /exports                           curator export dirs available to evaluat
 GET  /models                            checkpoints + LoRAs under $PROOF_MODELS_DIR
 GET  /scorers                           scorers a run applies + whether each is installed
 POST /run/stream                        generate + score + store one run (NDJSON RunStreamFrame lines)
+POST /score                             score uploaded images vs an export's references (ScoreResult; stores nothing)
 GET  /reports                           stored report digests (run browser)
 GET  /report/{run_id}                   full EvalReport            PUT to store one
 GET  /report/{run_id}/manifest          the RunManifest behind a report (410 if its run dir is gone)
@@ -108,6 +109,54 @@ studio's proof → darkroom handoff. It is `404` when there is no report and `41
 Gone` when the report was kept but the run dir was pruned. `/health` lists
 `report_manifest` in `capabilities`, so a client can tell an older proof (route
 absent) from a run with no manifest.
+
+`POST /score` scores images the caller already has against an export's held-out
+`references/`, e.g. argus-mint scoring a finished teaser against an identity (mint#51).
+It stores nothing. The body is `multipart/form-data`:
+
+- `images`: 1 to 16 files (PNG/JPEG/WebP, at most 2048 px a side and 32 MiB each), scored in upload order;
+- `request`: a JSON `ScoreRequest`:
+
+```json
+{
+  "export": "android-k7",
+  "scorers": ["likeness"],
+  "target_category": "identity",
+  "crops": [{"x": 312, "y": 40, "width": 400, "height": 900}, null]
+}
+```
+
+`scorers` is `likeness` (DINOv2, any subject) and/or `identity` (ArcFace, faces; it
+reads `null` unless `target_category` is `identity`). `crops` is optional, one entry
+per image (`null` = the whole image), in the image's own pixels after its EXIF
+orientation; scoring the character's box rather than the whole teaser keeps the
+background out of the embedding. The reply is a `ScoreResult`:
+
+```json
+{
+  "proof_version": "1.9",
+  "n_images": 2,
+  "images": [
+    {"index": 0, "filename": "t1.png", "crop": {"x": 312, "y": 40, "width": 400, "height": 900},
+     "metrics": {"identity": null, "likeness": 0.83, "clip_score": null, "aesthetic": null, "preference": null, "safety": null}}
+  ],
+  "means": {"identity": null, "likeness": 0.79, "...": null},
+  "scorers": [
+    {"name": "likeness", "metric": "likeness", "version": null, "model": "dinov2:facebook/dinov2-base",
+     "model_file": {"name": "dinov2:facebook/dinov2-base", "sha256": "d73036b5…"}},
+    {"name": "held-out-references", "metric": "identity", "version": null, "model": "sha256+phash<=6", "model_file": null}
+  ]
+}
+```
+
+There is no verdict: the caller holds the scores against its own threshold. Errors:
+`400` (references that are training images, an export with no `references/`, a crop
+outside its image, an unreadable image, a crops/images count mismatch, or more than
+16 images), `404` (no such export), `413` (an image over 32 MiB), `422` (a malformed
+`request`, an unknown scorer), `503` (a requested scorer isn't installed, the GPU
+lease was refused, or no exports dir is configured), `403` in read-only mode. It runs
+under one `interactive` `score` GPU lease and frees its models before the lease ends.
+`/health` lists `score` in `capabilities` when the host isn't read-only.
 
 The `/purge` routes are a dev tool, since reports are the evaluation record. They exist
 only with `ARGUS_PROOF_DEVMODE=1` (or `serve --devmode`), need a `{"confirm": "purge"}`

@@ -7,6 +7,7 @@ Routes:
     GET  /models                          -> {checkpoints: [...], loras: [...]}  (engine-loadable names)
     GET  /scorers                         -> {scorers: [{metric, name, available}]}  (installed-scorer probe)
     POST /run/stream                      -> NDJSON: generate a seed-set, score it, store the report
+    POST /score                           -> ScoreResult (multipart images scored vs an export's references; not stored)
     GET  /reports                         -> {reports: [ReportSummary, ...]}  (run browser)
     GET  /report/{run_id}                 -> EvalReport
     PUT  /report/{run_id}                 -> EvalReport   (store/overwrite a scored report)
@@ -46,6 +47,7 @@ import json
 import os
 import secrets
 import shutil
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -53,7 +55,7 @@ from pathlib import Path
 import structlog
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
     from fastapi.concurrency import run_in_threadpool
     from fastapi.responses import FileResponse, StreamingResponse
     from starlette.background import BackgroundTask
@@ -66,6 +68,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from argus_proof import __version__
 from argus_proof.models import (
+    MAX_SCORE_IMAGES,
     CompleteFrame,
     EvalReport,
     LoRASpec,
@@ -74,6 +77,8 @@ from argus_proof.models import (
     RunManifest,
     RunSpec,
     SamplingParams,
+    ScoreRequest,
+    ScoreResult,
     ScoringFrame,
 )
 from argus_proof.refinement import RefinementRequest, refined_ranking
@@ -87,6 +92,8 @@ logger = structlog.get_logger()
 MAX_RUN_SEEDS = 64
 MAX_RUN_STEPS = 200
 MAX_RUN_SIDE = 2048
+# Ceiling on one uploaded image for POST /score (bytes); sides are held to MAX_RUN_SIDE.
+MAX_SCORE_BYTES = 32 * 1024 * 1024
 
 # Where the run trigger reads curator exports from (compose mounts /data/out here).
 ENV_EXPORTS_DIR = "ARGUS_PROOF_EXPORTS_DIR"
@@ -137,6 +144,8 @@ def _require_safe(value: str, label: str) -> str:
 CAPABILITIES = ("report_manifest",)
 # Advertised on top of CAPABILITIES only when devmode registers /purge.
 DEVMODE_CAPABILITIES = ("purge",)
+# Advertised on top of CAPABILITIES only when the host isn't read-only (which refuses POST /score).
+WRITE_CAPABILITIES = ("score",)
 
 # The message a refused write carries in read-only mode.
 _READ_ONLY_REFUSAL = "argus-proof is in read-only (replay) mode; writes and live evaluation are disabled"
@@ -338,7 +347,9 @@ def create_app(
             "version": __version__,
             "read_only": read_only,
             "devmode": devmode,
-            "capabilities": list(CAPABILITIES) + (list(DEVMODE_CAPABILITIES) if devmode and not read_only else []),
+            "capabilities": list(CAPABILITIES)
+            + ([] if read_only else list(WRITE_CAPABILITIES))
+            + (list(DEVMODE_CAPABILITIES) if devmode and not read_only else []),
         }
 
     @app.get("/exports")
@@ -542,6 +553,75 @@ def create_app(
         return StreamingResponse(
             stream(), media_type="application/x-ndjson", background=BackgroundTask(release_if_unstarted)
         )
+
+    @app.post("/score")
+    async def score(
+        images: list[UploadFile] = File(..., description="the images to score, in order"),
+        request_json: str = Form(..., alias="request", description="a ScoreRequest, as JSON"),
+    ) -> ScoreResult:
+        """Score caller-supplied images against an export's held-out references; store nothing.
+
+        For a client that already has its images (argus-mint scoring a finished
+        teaser against an identity's references, mint#51). The export's
+        ``references/`` must not overlap its training images (400 naming the
+        overlap), a requested scorer that can't run here is a 503, and so is a
+        refused GPU lease. Read-only mode refuses it (403) like every write.
+        """
+        from argus_proof.evaluate import (
+            EvaluateError,
+            GpuUnavailable,
+            ScorerUnavailable,
+            prepare_scoring_image,
+            score_files,
+        )
+
+        try:
+            req = ScoreRequest.model_validate_json(request_json)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"invalid request: {exc}") from exc
+        if not 1 <= len(images) <= MAX_SCORE_IMAGES:
+            raise HTTPException(status_code=400, detail=f"send 1 to {MAX_SCORE_IMAGES} images, not {len(images)}")
+        if req.crops is not None and len(req.crops) != len(images):
+            raise HTTPException(
+                status_code=400, detail=f"crops has {len(req.crops)} entries for {len(images)} images; one per image"
+            )
+        export_dir = _resolve_export(req.export)
+        payloads: list[bytes] = []
+        for upload in images:
+            data = await upload.read(MAX_SCORE_BYTES + 1)
+            if len(data) > MAX_SCORE_BYTES:
+                raise HTTPException(status_code=413, detail=f"an image is over {MAX_SCORE_BYTES} bytes")
+            payloads.append(data)
+        filenames = [(u.filename or None) and u.filename[:255] for u in images]
+        crops = req.crops or [None] * len(images)
+        caller = f"score-{secrets.token_hex(4)}"
+
+        def work() -> ScoreResult:
+            with tempfile.TemporaryDirectory(prefix="proof-score-") as tmp:
+                paths: list[Path] = []
+                for i, (data, crop) in enumerate(zip(payloads, crops, strict=True)):
+                    path = Path(tmp) / f"{i}.png"  # never the client's filename
+                    try:
+                        prepare_scoring_image(data, crop, path, max_side=MAX_RUN_SIDE)
+                    except EvaluateError as exc:
+                        raise EvaluateError(f"image {i}: {exc}") from exc
+                    paths.append(path)
+                return score_files(
+                    paths,
+                    export_dir=export_dir,
+                    scorers=list(req.scorers),
+                    target_category=req.target_category,
+                    filenames=filenames,
+                    crops=req.crops,
+                    caller=caller,
+                )
+
+        try:
+            return await run_in_threadpool(work)
+        except (ScorerUnavailable, GpuUnavailable) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except EvaluateError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/reports")
     async def list_reports() -> dict[str, list[ReportSummary]]:

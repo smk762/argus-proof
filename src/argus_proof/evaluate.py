@@ -25,7 +25,17 @@ from argus_proof.backends.base import FAILURE_NAME, MANIFEST_NAME, ModelResolver
 from argus_proof.backends.pnginfo import read_dimensions
 from argus_proof.backends.workflow import example_template, load_template, packaged_templates
 from argus_proof.hashing import sha256_cached
-from argus_proof.models import EvalReport, GateConfig, GeneratedImage, ProofError, RunManifest, ScorerProvenance
+from argus_proof.models import (
+    CropBox,
+    EvalReport,
+    GateConfig,
+    GeneratedImage,
+    ProofError,
+    RunManifest,
+    ScoredImage,
+    ScoreResult,
+    ScorerProvenance,
+)
 from argus_proof.scoring import ScoreContext, score_run
 
 logger = structlog.get_logger()
@@ -33,6 +43,14 @@ logger = structlog.get_logger()
 
 class EvaluateError(ProofError):
     """The pipeline could not be assembled, or a run dir is not a proof run."""
+
+
+class GpuUnavailable(EvaluateError):
+    """The scoring pass's GPU lease was refused or timed out, or the broker failed."""
+
+
+class ScorerUnavailable(EvaluateError):
+    """A requested scorer can't run here (its extra isn't installed)."""
 
 
 # Environment knobs (kept in lock-step with .env.example).
@@ -380,17 +398,31 @@ def default_scorers() -> list:
     actually scores.
     """
     from argus_proof.scoring.scorers import (
-        DEFAULT_LIKENESS_MODEL,
-        Dinov2Embedder,
         IdentityScorer,
-        LikenessScorer,
         SafetyScorer,
         clip_score_scorer,
         pyiqa_scorer,
     )
 
-    likeness = LikenessScorer(Dinov2Embedder(os.environ.get(ENV_LIKENESS_MODEL) or DEFAULT_LIKENESS_MODEL))
-    return [IdentityScorer(), likeness, clip_score_scorer(), pyiqa_scorer(), SafetyScorer()]
+    return [IdentityScorer(), likeness_scorer(), clip_score_scorer(), pyiqa_scorer(), SafetyScorer()]
+
+
+def likeness_scorer():  # noqa: ANN201 - LikenessScorer, imported lazily
+    """The likeness scorer on ``$PROOF_LIKENESS_MODEL`` (default DINOv2-base)."""
+    from argus_proof.scoring.scorers import DEFAULT_LIKENESS_MODEL, Dinov2Embedder, LikenessScorer
+
+    return LikenessScorer(Dinov2Embedder(os.environ.get(ENV_LIKENESS_MODEL) or DEFAULT_LIKENESS_MODEL))
+
+
+def reference_scorers(names: list[str]) -> list:
+    """The reference-set scorers *names* asks for (``identity``, ``likeness``), in that order."""
+    from argus_proof.scoring.scorers import IdentityScorer
+
+    factories = {"identity": IdentityScorer, "likeness": likeness_scorer}
+    unknown = [n for n in names if n not in factories]
+    if unknown:
+        raise EvaluateError(f"unknown reference scorer(s) {unknown}; expected some of {sorted(factories)}")
+    return [factories[n]() for n in names]
 
 
 def default_phash_scorers() -> tuple:
@@ -491,7 +523,102 @@ def _score_leased(
             finally:
                 release_models(scorers)  # inside the lease: the GPU goes back clean
     except gpu.LEASE_ERRORS as exc:
-        raise EvaluateError(gpu.lease_failure(exc)) from exc
+        raise GpuUnavailable(gpu.lease_failure(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# scoring images a caller already has (POST /score)
+# ---------------------------------------------------------------------------
+
+
+def prepare_scoring_image(data: bytes, crop: CropBox | None, dest: Path, *, max_side: int) -> tuple[int, int]:
+    """Decode an uploaded image, crop it, and write it to *dest* as PNG (no metadata).
+
+    The crop is in the image's own pixels after its EXIF orientation is applied.
+    Raises :class:`EvaluateError` for bytes that aren't an image, an image with a
+    side over *max_side*, or a crop that isn't inside it. Returns the scored size.
+    """
+    import io
+
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            if max(im.size) > max_side:
+                raise EvaluateError(f"image is {im.width}x{im.height}; at most {max_side} px a side")
+            upright = ImageOps.exif_transpose(im).convert("RGB")
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise EvaluateError(f"not a readable image: {exc}") from exc
+    if crop is not None:
+        if crop.x + crop.width > upright.width or crop.y + crop.height > upright.height:
+            raise EvaluateError(
+                f"crop {crop.x},{crop.y} {crop.width}x{crop.height} is outside the {upright.width}x{upright.height} image"
+            )
+        upright = upright.crop((crop.x, crop.y, crop.x + crop.width, crop.y + crop.height))
+    upright.save(dest, "PNG")
+    return upright.width, upright.height
+
+
+def score_files(
+    images: list[Path],
+    *,
+    export_dir: Path,
+    scorers: list[str],
+    target_category: str = "identity",
+    filenames: list[str | None] | None = None,
+    crops: list[CropBox | None] | None = None,
+    caller: str = "score",
+    gpu_coordinator: GpuCoordinator | None = None,
+    priority: gpu.PriorityClass = gpu.SCORE_PRIORITY,
+    built: list | None = None,
+) -> ScoreResult:
+    """Score *images* (already cropped) against the references of the export at *export_dir*.
+
+    The references are ``<export_dir>/references/``; the held-out check runs first
+    (:func:`check_held_out`, raising :class:`EvaluateError` on an overlap), then
+    each requested scorer must be available (:class:`ScorerUnavailable`), then the
+    pass runs under one ``score`` GPU lease (:class:`GpuUnavailable` if refused)
+    with the models freed before it ends. Nothing is stored. *built* injects the
+    scorer objects (tests); *filenames* and *crops* are echoed per image.
+    """
+    from argus_cortex.taxonomy import TargetProfile
+
+    from argus_proof.scoring.orchestrator import score_metrics
+    from argus_proof.scoring.summary import metric_means
+
+    references = reference_images(Path(export_dir) / REFERENCES_DIR)
+    if not references:
+        raise EvaluateError(f"export {Path(export_dir).name!r} has no {REFERENCES_DIR}/ images to score against")
+    held_out = check_held_out(references, Path(export_dir))
+    live = built if built is not None else reference_scorers(scorers)
+    missing = [s.metric for s in live if not s.is_available()]
+    if missing:
+        raise ScorerUnavailable(f"scorer(s) not available here: {', '.join(missing)} (install argus-proof[score])")
+    ctx = ScoreContext(
+        prompt="",
+        profile=TargetProfile(target_category=target_category),  # type: ignore[arg-type]
+        reference_images=references,
+    )
+    gens = [
+        GeneratedImage(image_id=f"image-{i}", run_id=caller, seed=i, path=str(p), width=0, height=0)
+        for i, p in enumerate(images)
+    ]
+
+    def work() -> tuple[list, list[ScorerProvenance]]:
+        rows = score_metrics(gens, live, ctx)
+        return rows, [s.provenance() for s in live]  # while loaded: provenance pins the weights
+
+    rows, provenance = _score_leased(live, work, caller=caller, coordinator=gpu_coordinator, priority=priority)
+    names = filenames or [None] * len(images)
+    boxes = crops or [None] * len(images)
+    return ScoreResult(
+        images=[
+            ScoredImage(index=i, filename=names[i], crop=boxes[i], metrics=row.metrics) for i, row in enumerate(rows)
+        ],
+        means=metric_means(rows),
+        n_images=len(rows),
+        scorers=[*provenance, ScorerProvenance(name=HELD_OUT_CHECK, metric="identity", model=held_out)],
+    )
 
 
 def score_run_dir(

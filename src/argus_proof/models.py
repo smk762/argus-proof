@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
+from argus_cortex.taxonomy import TargetCategory
 from argus_cortex.wire import check_version, make_versioned_base, schema_major
 from argus_cortex.wire import render_schema as _core_render_schema
 from argus_cortex.wire import wire_schema as _core_wire_schema
@@ -64,7 +65,11 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #      AcceptanceThresholds.min_likeness_mean; weight 0 by default): DINOv2 image-embedding similarity to
 #      the held-out references, for subjects ArcFace can't see (issue #103).
 #      ScorerProvenance.model_file pins a scorer's weights by SHA256.
-PROOF_VERSION = "1.8"
+# 1.9: additive — POST /score: ScoreRequest (with CropBox) in, ScoreResult
+#      (ScoredImage rows, MetricScores means, ScorerProvenance) out. Scores
+#      caller-supplied images against an export's held-out references (#103,
+#      argus-mint#51).
+PROOF_VERSION = "1.9"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -686,6 +691,83 @@ class RunStreamFrame(RootModel):
 
 
 # ---------------------------------------------------------------------------
+# POST /score — caller-supplied images scored against an export's references
+# ---------------------------------------------------------------------------
+
+# Ceiling on one POST /score request (images per request), shared by the server and the request model.
+MAX_SCORE_IMAGES = 16
+
+ReferenceScorerName = Literal["identity", "likeness"]
+
+
+class CropBox(BaseModel):
+    """A box in an uploaded image's own pixels (after its EXIF orientation is applied).
+
+    Only this region is scored, e.g. a teaser's character rather than its
+    background. It must lie inside the image.
+    """
+
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
+class ScoreRequest(BaseModel):
+    """The JSON ``request`` part of a ``POST /score`` multipart body.
+
+    ``export`` names a curator export under the exports root: its
+    ``references/`` are the held-out set the images are scored against, and its
+    training images are what those references must not overlap. ``scorers``
+    picks the reference scorers to run: ``likeness`` (DINOv2, any subject) and/or
+    ``identity`` (ArcFace, human faces; it only measures ``identity`` runs, so it
+    reads ``None`` for any other ``target_category``). ``crops``, when given, has
+    one entry per uploaded image in upload order (``null`` scores the whole image).
+    """
+
+    export: str
+    scorers: list[ReferenceScorerName] = Field(min_length=1, max_length=2)
+    target_category: TargetCategory = "identity"
+    crops: list[CropBox | None] | None = Field(default=None, max_length=MAX_SCORE_IMAGES)
+
+    @field_validator("scorers")
+    @classmethod
+    def _unique(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError(f"scorers repeats a name: {v}")
+        return v
+
+
+class ScoredImage(BaseModel):
+    """One uploaded image's scores. ``index`` is its position in the upload;
+    ``filename`` echoes the client's name for it (never used as a path)."""
+
+    model_config = RESPONSE_ONLY
+
+    index: int
+    filename: str | None = None
+    crop: CropBox | None = None
+    metrics: MetricScores
+
+
+class ScoreResult(_Versioned):
+    """What ``POST /score`` returns. Nothing is stored.
+
+    ``means`` averages each metric over the images that have it (``None`` when
+    none do). ``scorers`` records each scorer that ran, with its model and pinned
+    weights (``model_file``), plus a ``held-out-references`` row saying which
+    overlap check ran.
+    """
+
+    model_config = RESPONSE_ONLY
+
+    images: list[ScoredImage]
+    means: MetricScores
+    n_images: int
+    scorers: list[ScorerProvenance] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Acceptance gate — the CI-consumable pass/fail verdict against thresholds
 # ---------------------------------------------------------------------------
 
@@ -804,6 +886,10 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
     ScoringFrame,
     CompleteFrame,
     RunStreamFrame,
+    CropBox,
+    ScoreRequest,
+    ScoredImage,
+    ScoreResult,
     AcceptanceThresholds,
     GateCheck,
     GateResult,
