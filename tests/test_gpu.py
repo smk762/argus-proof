@@ -15,7 +15,7 @@ from test_diffusers_backend import FakeRenderer
 
 from argus_proof import gpu
 from argus_proof.backends import ComfyUIBackend, DiffusersBackend
-from argus_proof.backends.base import BackendError, make_dir_resolver
+from argus_proof.backends.base import BackendError, BackendTimeout, make_dir_resolver
 from argus_proof.backends.workflow import example_template
 from argus_proof.models import ProgressEvent
 
@@ -166,7 +166,9 @@ def test_a_failed_seed_is_reported_to_the_broker_as_failed(models: Path, tmp_pat
     coordinator = Recording()
     with pytest.raises(BackendError):
         comfyui(models, FakeTransport(make_png(), ready=False), coordinator).generate(make_spec([1]), tmp_path)
-    assert coordinator.exits == [BackendError]
+    # A timeout, after its retry: still a BackendError, and reported as a failure (#100).
+    assert coordinator.exits == [BackendTimeout]
+    assert issubclass(BackendTimeout, BackendError)
 
 
 @pytest.mark.parametrize(

@@ -37,9 +37,11 @@ dependencies = [
 server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7", "argus-cortex[server]>=0.9,<0.10"]
 cli = ["typer>=0.12", "rich>=13.0"]
 # Concrete scorers (implement argus_proof.scoring protocols): dedup/diversity
-# (phash) + identity (InsightFace ArcFace) + quality (CLIPScore/pyiqa/ImageReward).
+# (phash) + identity (InsightFace ArcFace) + quality (CLIPScore/pyiqa).
 # CI's dev extra pulls only the light deps; the heavy ones (insightface, torch…)
-# stay opt-in — their scorers report is_available()=False without them.
+# stay opt-in — their scorers report is_available()=False without them, and CI's
+# score-imports job checks the resolved set actually imports.
+# pyiqa 0.1.16 is the first that imports on numpy 2 with a current timm (#98).
 score = [
     "pillow>=10.0",
     "imagehash>=4.3",
@@ -47,9 +49,12 @@ score = [
     "onnxruntime>=1.16",
     "torch>=2.0",
     "torchmetrics>=1.0",
-    "pyiqa>=0.1.10",
-    "image-reward>=1.5",
+    "pyiqa>=0.1.16",
 ]
+# ImageReward (the `preference` metric). Not in default_scorers(), and it pins
+# timm==0.6.13, which pyiqa>=0.1.16 can't share, so it can't be installed next to
+# [score]: use it in its own environment via image_reward_scorer().
+preference = ["image-reward>=1.5", "pillow>=10.0"]
 # Cross-run stats store (pass-rate CIs use the dependency-free argus_proof.stats;
 # the parquet store needs polars, inter-rater reliability the krippendorff pkg).
 # Lightweight — pulled into dev so CI tests it.
@@ -78,6 +83,10 @@ argus-proof = "argus_proof.cli:app"
 
 [project.urls]
 Repository = "https://github.com/smk762/argus-proof"
+
+[tool.uv]
+# image-reward pins timm==0.6.13; pyiqa>=0.1.16 needs timm>=0.8 (#98).
+conflicts = [[{ extra = "score" }, { extra = "preference" }]]
 
 [tool.hatch.version]
 source = "vcs"

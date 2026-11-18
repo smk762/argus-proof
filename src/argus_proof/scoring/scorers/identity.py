@@ -17,8 +17,12 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
+import structlog
+
 from argus_proof.models import ScorerProvenance
 from argus_proof.scoring.scorers._util import clamp01, module_available
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from argus_proof.scoring.base import ScoreContext
@@ -135,7 +139,18 @@ class InsightFaceEmbedder:
 
     def _load(self):  # noqa: ANN202 - insightface types aren't importable without the extra
         if self._app is None:
+            import onnxruntime
             from insightface.app import FaceAnalysis
+
+            # onnxruntime-gpu (the -score image) finds CUDA/cuDNN in the nvidia-*
+            # packages torch installed only once told to look; CPU builds lack it.
+            # A failure here just leaves InsightFace on its CPU fallback.
+            preload = getattr(onnxruntime, "preload_dlls", None)
+            if preload is not None:
+                try:
+                    preload()
+                except Exception as exc:  # noqa: BLE001 - a missing GPU lib must not stop scoring
+                    logger.warning("identity.ort_preload_failed", error=str(exc))
 
             app = FaceAnalysis(name=self.model_name)
             app.prepare(ctx_id=0, det_size=self.det_size)

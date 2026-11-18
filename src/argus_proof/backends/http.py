@@ -107,6 +107,10 @@ class UrllibTransport:
         return self._open(req)
 
     def _loads(self, raw: bytes) -> dict:
+        # Some endpoints answer a POST with an empty 200 (ComfyUI's /queue and
+        # /interrupt); that's an empty object, not a malformed reply.
+        if not raw.strip():
+            return {}
         try:
             return json.loads(raw)
         except (json.JSONDecodeError, ValueError) as exc:

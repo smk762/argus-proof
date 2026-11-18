@@ -388,3 +388,109 @@ def test_explore_refuses_to_replace_an_existing_dataset(tmp_path: Path, monkeypa
     result = runner.invoke(app, ["explore", str(report), "--images", str(tmp_path), "--name", "triage"])
     assert result.exit_code == 2 and "--overwrite" in result.output
     assert built == []
+
+
+# --------------------------------------------------------------------------
+# One failed run doesn't abort the grid (#100)
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def flaky_backend(monkeypatch):  # noqa: ANN201
+    """A FakeBackend whose first weight (w00) fails after writing one image."""
+    from fakebackend import FakeBackend, save_png
+
+    import argus_proof.evaluate as evaluate
+    from argus_proof.backends import BackendTimeout
+
+    class Flaky(FakeBackend):
+        def generate(self, spec, out_dir, progress=None):  # noqa: ANN001, ANN201
+            if "-w00-" in spec.run_id:
+                self.generated.append(spec)
+                save_png(out_dir / f"{spec.run_id}-1.png")
+                raise BackendTimeout("ComfyUI run for seed 2 did not finish within 600.0s")
+            return super().generate(spec, out_dir, progress)
+
+    backend = Flaky()
+    monkeypatch.setattr(evaluate, "backend_from_env", lambda *a, **k: backend)
+    return backend
+
+
+def _run_sweep(tmp_path: Path, *extra: str):  # noqa: ANN202
+    export = _export_with_prompt(tmp_path)
+    out = tmp_path / "runs"
+    args = ["run", "subject.safetensors", str(export), "-c", "sdxl.safetensors", "-o", str(out)]
+    return out, runner.invoke(app, [*args, "-w", "0", "-w", "1", "-s", "1", "-s", "2", *extra])
+
+
+def test_a_failed_run_is_recorded_and_the_grid_carries_on(tmp_path: Path, flaky_backend) -> None:  # noqa: ANN001
+    out, result = _run_sweep(tmp_path)
+
+    assert result.exit_code == 1
+    assert len(flaky_backend.generated) == 2  # the second weight still ran
+    failed_dir, ok_dir = sorted(p for p in out.iterdir() if p.is_dir())
+    assert not (failed_dir / "manifest.json").exists()
+    record = json.loads((failed_dir / "failed.json").read_text())
+    assert record["run_id"] == failed_dir.name
+    assert "did not finish" in record["error"]
+    assert (ok_dir / "manifest.json").is_file()
+    assert "1 of 2 run(s) failed" in result.output
+    assert f"score with: argus-proof score {ok_dir}" in result.output
+
+    scored = runner.invoke(app, ["score", str(failed_dir), "--no-save"])
+    assert scored.exit_code == 1
+    assert "failed to generate" in scored.output
+
+
+def test_fail_fast_stops_at_the_first_failed_run(tmp_path: Path, flaky_backend) -> None:  # noqa: ANN001
+    _, result = _run_sweep(tmp_path, "--fail-fast")
+
+    assert result.exit_code == 1
+    assert len(flaky_backend.generated) == 1
+    assert "1 not attempted (--fail-fast)" in result.output
+
+
+def test_a_rerun_that_fails_drops_the_stale_manifest(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
+    from argus_proof.backends.base import clear_failed, mark_failed
+
+    _, run_dir = _run_grid(tmp_path)
+    mark_failed(run_dir, run_dir.name, "boom")
+    assert not (run_dir / "manifest.json").exists()
+    clear_failed(run_dir)
+    assert not (run_dir / "failed.json").exists()
+
+
+# --------------------------------------------------------------------------
+# score says when a default scorer can't run (#99)
+# --------------------------------------------------------------------------
+
+
+def test_score_warns_about_unavailable_scorers(tmp_path: Path, fake_backend, monkeypatch) -> None:  # noqa: ANN001
+    import argus_proof.evaluate as evaluate
+
+    monkeypatch.setattr(evaluate, "unavailable_metrics", lambda: ["identity", "aesthetic"])
+    _, run_dir = _run_grid(tmp_path)
+
+    result = runner.invoke(app, ["score", str(run_dir), "--no-save"])
+    assert result.exit_code == 0, result.output
+    assert "warning: no scorer available for identity, aesthetic" in result.output
+
+
+def test_require_scorers_refuses_a_run_missing_one(tmp_path: Path, fake_backend, monkeypatch) -> None:  # noqa: ANN001
+    import argus_proof.evaluate as evaluate
+
+    monkeypatch.setattr(evaluate, "unavailable_metrics", lambda: ["aesthetic"])
+    _, run_dir = _run_grid(tmp_path)
+
+    refused = runner.invoke(app, ["score", str(run_dir), "--no-save", "--require-scorers", "identity,aesthetic"])
+    assert refused.exit_code == 2
+    assert "required scorer(s) unavailable: aesthetic" in refused.output
+
+    allowed = runner.invoke(app, ["score", str(run_dir), "--no-save", "--require-scorers", "duplicate"])
+    assert allowed.exit_code == 0, allowed.output
+
+
+def test_require_scorers_rejects_an_unknown_metric(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["score", str(tmp_path), "--require-scorers", "vibes"])
+    assert result.exit_code == 2
+    assert "unknown metric(s) for --require-scorers: vibes" in result.output

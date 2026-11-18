@@ -32,6 +32,15 @@ class BackendError(ProofError):
     """A generation failure: engine unreachable, bad workflow, missing model."""
 
 
+class BackendTimeout(BackendError):
+    """An engine job that never finished within its deadline.
+
+    Distinct from other failures because it is usually transient (a stalled
+    ComfyUI queue): the same prompt and seed often finish in seconds on a retry,
+    whereas a rejected workflow or a missing model fails the same way every time.
+    """
+
+
 # Resolve a model filename (as a RunSpec names it) to a local file, so the
 # backend can hash it into the manifest. Raises if the file can't be found.
 ModelResolver = Callable[[str], Path]
@@ -127,6 +136,34 @@ def write_manifest(out_dir: Path, manifest: RunManifest) -> Path:
     except (OSError, ValueError, TypeError) as exc:
         raise BackendError(f"cannot write {path}: {exc}") from exc
     return path
+
+
+# Left in a run dir whose generation failed, in place of a manifest (#100), so a
+# dir with images but no manifest says why instead of looking merely incomplete.
+FAILURE_NAME = "failed.json"
+
+
+def mark_failed(out_dir: Path, run_id: str, error: str) -> Path:
+    """Record that *run_id*'s generation into *out_dir* failed with *error*.
+
+    Writes ``failed.json`` and removes any ``manifest.json`` there: a backend writes
+    its manifest only on success, so one present now is from an earlier run of the
+    same ``run_id`` and no longer describes the images on disk.
+    """
+    import json
+    from datetime import UTC, datetime
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / MANIFEST_NAME).unlink(missing_ok=True)
+    path = out_dir / FAILURE_NAME
+    record = {"run_id": run_id, "error": error, "failed_at": datetime.now(UTC).isoformat()}
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    return path
+
+
+def clear_failed(out_dir: Path) -> None:
+    """Drop a stale ``failed.json`` once a run of the same ``run_id`` has succeeded."""
+    (out_dir / FAILURE_NAME).unlink(missing_ok=True)
 
 
 def safe_image_id(image_id: str) -> str:

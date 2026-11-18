@@ -22,6 +22,7 @@ from argus_cortex.gpu import GpuCoordinator
 from argus_proof import gpu
 from argus_proof.backends.base import (
     BackendError,
+    BackendTimeout,
     GenResult,
     ModelResolver,
     ProgressSink,
@@ -75,6 +76,7 @@ class ComfyUIBackend:
         family_templates: dict[str, dict] | None = None,
         gpu_coordinator: GpuCoordinator | None = None,
         priority: gpu.PriorityClass = gpu.DEFAULT_PRIORITY,
+        seed_retries: int = 1,
     ) -> None:
         # request_timeout is per HTTP call, distinct from the overall per-seed
         # `timeout`: ComfyUI's event loop can stall for minutes while a
@@ -91,6 +93,13 @@ class ComfyUIBackend:
         self.client_id = client_id
         self.poll_interval = poll_interval
         self.timeout = timeout
+        # A seed whose job outlives `timeout` is cancelled and resubmitted this many
+        # times before the run fails (#100): ComfyUI stalls are transient, and the
+        # same prompt + seed usually finishes in seconds on a second submission.
+        # Only timeouts retry; a rejected workflow or missing image fails at once.
+        if seed_retries < 0:
+            raise ValueError(f"seed_retries must be >= 0, got {seed_retries}")
+        self.seed_retries = seed_retries
         self._engine_version = engine_version
 
     def template_for(self, checkpoint: str) -> dict:
@@ -176,16 +185,24 @@ class ComfyUIBackend:
     ) -> list[GeneratedImage]:
         transport = transport or self.transport
         graph = render_workflow(self.template_for(spec.base_checkpoint), spec, seed)
-        resp = transport.post_json("/prompt", {"prompt": graph, "client_id": self.client_id})
+        for attempt in range(self.seed_retries + 1):
+            resp = transport.post_json("/prompt", {"prompt": graph, "client_id": self.client_id})
 
-        node_errors = resp.get("node_errors")
-        if node_errors:
-            raise BackendError(f"ComfyUI rejected the workflow for seed {seed}: {node_errors}")
-        prompt_id = resp.get("prompt_id")
-        if not prompt_id:
-            raise BackendError(f"ComfyUI returned no prompt_id for seed {seed}: {resp}")
+            node_errors = resp.get("node_errors")
+            if node_errors:
+                raise BackendError(f"ComfyUI rejected the workflow for seed {seed}: {node_errors}")
+            prompt_id = resp.get("prompt_id")
+            if not prompt_id:
+                raise BackendError(f"ComfyUI returned no prompt_id for seed {seed}: {resp}")
 
-        entry = self._await_history(prompt_id, seed, transport)
+            try:
+                entry = self._await_history(prompt_id, seed, transport)
+                break
+            except BackendTimeout as exc:
+                self._cancel(prompt_id, transport)
+                if attempt >= self.seed_retries:
+                    raise
+                logger.warning("comfyui.seed_retry", run_id=spec.run_id, seed=seed, attempt=attempt + 1, error=str(exc))
         produced = self._collect_images(spec, seed, entry, out_dir, transport)
         if not produced:
             raise BackendError(f"ComfyUI produced no images for seed {seed} (prompt_id {prompt_id})")
@@ -206,7 +223,7 @@ class ComfyUIBackend:
                 history = transport.get_json(f"/history/{urllib.parse.quote(str(prompt_id))}")
             except BackendError as exc:
                 if time.monotonic() >= deadline:
-                    raise BackendError(
+                    raise BackendTimeout(
                         f"ComfyUI run for seed {seed} did not finish within {self.timeout}s: {exc}"
                     ) from exc
                 logger.debug("comfyui.poll_retry", prompt_id=prompt_id, error=str(exc))
@@ -223,8 +240,23 @@ class ComfyUIBackend:
                 if status.get("completed") is True or status.get("status_str") == "success" or entry.get("outputs"):
                     return entry
             if time.monotonic() >= deadline:
-                raise BackendError(f"ComfyUI run for seed {seed} did not finish within {self.timeout}s")
+                raise BackendTimeout(f"ComfyUI run for seed {seed} did not finish within {self.timeout}s")
             time.sleep(self.poll_interval)
+
+    def _cancel(self, prompt_id: str, transport: Transport) -> None:
+        """Best-effort removal of a timed-out job, so a resubmission doesn't queue behind it.
+
+        Drops it from the pending queue and interrupts it if it is the running job.
+        The interrupt names the prompt: a ComfyUI that honours ``prompt_id`` stops
+        only this job; an older one interrupts whatever is running, which on a
+        leased GPU is this run's own work. A failure here is logged, not raised:
+        the timeout is the error worth reporting.
+        """
+        for path, payload in (("/queue", {"delete": [prompt_id]}), ("/interrupt", {"prompt_id": prompt_id})):
+            try:
+                transport.post_json(path, payload)
+            except BackendError as exc:
+                logger.warning("comfyui.cancel_failed", prompt_id=prompt_id, path=path, error=str(exc))
 
     def _collect_images(
         self, spec: RunSpec, seed: int, entry: dict, out_dir: Path, transport: Transport

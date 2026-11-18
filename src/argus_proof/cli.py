@@ -167,11 +167,20 @@ def run(
     ),
     backend: str | None = Option(None, "--backend", help="Override $PROOF_BACKEND (comfyui/diffusers/a1111/remote)"),
     prefix: str = Option("proof", "--run-prefix", help="run_id prefix for the generated runs"),
+    fail_fast: bool = Option(
+        False, "--fail-fast", help="Stop at the first failed run instead of generating the rest of the grid"
+    ),
 ) -> None:
-    """Generate a sample grid from a trained LoRA via the configured backend."""
+    """Generate a sample grid from a trained LoRA via the configured backend.
+
+    A run that fails (after the backend's own retries) leaves a ``failed.json`` in
+    its run dir and the grid carries on; the command exits 1 at the end, naming
+    every failed run. ``--fail-fast`` stops at the first failure instead.
+    """
     from argus_cortex.fs import PathRefused, safe_name
 
     from argus_proof.backends import BackendError
+    from argus_proof.backends.base import clear_failed, mark_failed
     from argus_proof.backends.workflow import model_defaults, sampling_defaults
     from argus_proof.evaluate import EvaluateError, backend_from_env, runs_root
     from argus_proof.grid import GridError, build_grid, read_export_prompts
@@ -228,6 +237,8 @@ def run(
     typer.echo(f"grid: {est.n_runs} run(s), {est.n_images} image(s), est. {est.est_gpu_hours:.2f} GPU-hours")
 
     out_root = runs_root(out)
+    done: list[str] = []
+    failed: list[tuple[str, str]] = []
     for spec in plan.specs:
         run_dir = out_root / spec.run_id
         typer.echo(f"[{spec.run_id}] generating {len(spec.seeds)} image(s) -> {run_dir}")
@@ -235,9 +246,27 @@ def run(
             result = engine.generate(spec, run_dir, progress=_echo_progress)
         except BackendError as exc:
             typer.echo(f"[{spec.run_id}] failed: {exc}", err=True)
-            raise typer.Exit(1) from exc
+            try:
+                mark_failed(run_dir, spec.run_id, str(exc))
+            except OSError as write_exc:
+                typer.echo(f"[{spec.run_id}] cannot record the failure in {run_dir}: {write_exc}", err=True)
+            failed.append((spec.run_id, str(exc)))
+            if fail_fast:
+                break
+            continue
+        clear_failed(run_dir)
+        done.append(spec.run_id)
         typer.echo(f"[{spec.run_id}] done: {len(result.images)} image(s)")
-    typer.echo(f"score with: argus-proof score {out_root / plan.specs[0].run_id}")
+
+    if done:
+        typer.echo(f"score with: argus-proof score {out_root / done[0]}")
+    if failed:
+        skipped = len(plan.specs) - len(done) - len(failed)
+        tail = f", {skipped} not attempted (--fail-fast)" if skipped else ""
+        typer.echo(f"{len(failed)} of {len(plan.specs)} run(s) failed{tail}:", err=True)
+        for run_id, error in failed:
+            typer.echo(f"  {run_id}: {error}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -249,11 +278,52 @@ def score(
     reports_dir: Path | None = Option(None, "--reports-dir", help="Report store (default $ARGUS_PROOF_REPORTS_DIR)"),
     save: bool = Option(True, "--save/--no-save", help="Persist the report into the report store"),
     json_out: bool = Option(False, "--json", help="Print the full EvalReport JSON to stdout"),
+    require_scorers: list[str] | None = Option(
+        None,
+        "--require-scorers",
+        help="Metrics whose scorer must be available, else exit 2 (repeatable or comma-separated, e.g. "
+        "identity,clip_score,aesthetic,safety)",
+    ),
 ) -> None:
-    """Score a generated run into an EvalReport: identity, quality, diversity, safety."""
-    from argus_proof.evaluate import EvaluateError, reference_images, score_run_dir
+    """Score a generated run into an EvalReport: identity, quality, diversity, safety.
+
+    A default scorer that can't run here (its extra isn't installed, or its service
+    isn't configured) leaves its metric empty; that is warned about on stderr, and
+    ``--require-scorers`` turns it into a refusal.
+    """
+    from argus_proof.evaluate import (
+        EvaluateError,
+        all_reporting_scorers,
+        reference_images,
+        score_run_dir,
+        unavailable_metrics,
+    )
     from argus_proof.models import ProofError
     from argus_proof.reports import ReportStore
+
+    required = [m.strip() for item in require_scorers or [] for m in item.split(",") if m.strip()]
+    known = [sc.provenance().metric for sc in all_reporting_scorers()]
+    unknown = [m for m in required if m not in known]
+    if unknown:
+        typer.echo(
+            f"unknown metric(s) for --require-scorers: {', '.join(unknown)} (known: {', '.join(known)})", err=True
+        )
+        raise typer.Exit(2)
+    missing = unavailable_metrics()
+    missing_required = [m for m in required if m in missing]
+    if missing_required:
+        typer.echo(
+            f"required scorer(s) unavailable: {', '.join(missing_required)} — install argus-proof[score] "
+            "(and set PROOF_NUDENET_URL for safety), or use the -score image",
+            err=True,
+        )
+        raise typer.Exit(2)
+    if missing:
+        typer.echo(
+            f"warning: no scorer available for {', '.join(missing)}; those metrics will be empty and their "
+            "groups left for review (install argus-proof[score], or use the -score image)",
+            err=True,
+        )
 
     try:
         refs = reference_images(references) if references else []

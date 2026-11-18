@@ -18,7 +18,7 @@ from pathlib import Path
 import structlog
 
 from argus_proof.backends import GenBackend, get_backend
-from argus_proof.backends.base import MANIFEST_NAME, ModelResolver, make_dir_resolver
+from argus_proof.backends.base import FAILURE_NAME, MANIFEST_NAME, ModelResolver, make_dir_resolver
 from argus_proof.backends.pnginfo import read_dimensions
 from argus_proof.backends.workflow import example_template, load_template, packaged_templates
 from argus_proof.hashing import sha256_cached
@@ -156,6 +156,13 @@ def load_manifest(run_dir: Path) -> RunManifest:
     """The :class:`RunManifest` a backend wrote into *run_dir*, or :class:`EvaluateError`."""
     path = Path(run_dir) / MANIFEST_NAME
     if not path.is_file():
+        failure = Path(run_dir) / FAILURE_NAME
+        if failure.is_file():
+            try:
+                error = json.loads(failure.read_text(encoding="utf-8")).get("error", "unknown error")
+            except (OSError, ValueError, AttributeError):
+                error = "unreadable failure record"
+            raise EvaluateError(f"{run_dir} failed to generate, so there is nothing to score: {error}")
         raise EvaluateError(
             f"{run_dir} has no {MANIFEST_NAME} — not a proof run dir (generate one with `argus-proof run`)"
         )
@@ -384,6 +391,16 @@ def all_reporting_scorers() -> list:
     flat — so a capability probe like the server's ``/scorers`` reports exactly
     what :func:`score_images` will run, with no separate list to drift."""
     return [*default_scorers(), *default_phash_scorers()]
+
+
+def unavailable_metrics() -> list[str]:
+    """The metrics a default run would leave empty because their scorer can't run here.
+
+    Probing imports each scorer's extra (no weights load). A run scored without them
+    still produces a report, but with those axes ``None`` and every group pending
+    review, which reads like a real verdict unless someone says so (#99).
+    """
+    return [s.provenance().metric for s in all_reporting_scorers() if not s.is_available()]
 
 
 def score_images(
