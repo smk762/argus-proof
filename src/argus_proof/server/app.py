@@ -348,7 +348,8 @@ def create_app(
         if root is None or not root.is_dir():
             return {"exports": []}
         exports: list[dict] = []
-        for child in sorted(root.iterdir()):  # nosemgrep: handler-scans-all - exports are few and the answer is the whole list; counting rows re-reads each manifest, so cache it if exports grow
+        # nosemgrep: handler-scans-all - exports are few and the answer is the whole list; counting rows re-reads each manifest, so cache it if exports grow
+        for child in sorted(root.iterdir()):
             manifest = child / "manifest.jsonl"
             if not child.is_dir() or not manifest.is_file() or not _is_safe_id(child.name):
                 continue
@@ -380,7 +381,8 @@ def create_app(
                     continue
                 result[key].update(
                     str(p.relative_to(base))
-                    for p in base.rglob("*")  # nosemgrep: handler-scans-all - operator-managed model dirs, small; the answer is the whole listing
+                    # nosemgrep: handler-scans-all - operator-managed model dirs, small; the answer is the whole listing
+                    for p in base.rglob("*")
                     if p.is_file() and p.suffix.lower() in _MODEL_SUFFIXES
                 )
         return {key: sorted(names) for key, names in result.items()}
@@ -709,7 +711,8 @@ def create_app(
                         removed["reports"] += 1
                 root = _runs_root()
                 if root.is_dir():
-                    for path in sorted(root.iterdir()):  # nosemgrep: handler-scans-all - purge-all: visiting every run dir is the operation
+                    # nosemgrep: handler-scans-all - purge-all: visiting every run dir is the operation
+                    for path in sorted(root.iterdir()):
                         if _is_safe_id(path.name) and _remove_run_dir(path.name):
                             removed["run_dirs"] += 1
                 return removed
