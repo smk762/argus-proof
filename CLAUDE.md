@@ -46,6 +46,7 @@ Each row names what enforces it. An **UNENFORCED** row is a known gap: when one 
 | A concurrent report write drops an update (per-run `flock`; a no-op off POSIX, so not multi-host) | `test_reports::test_concurrent_reviews_do_not_lose_updates` |
 | An optional heavy dependency (torch, diffusers, insightface, fiftyone, polars, …) imported at module load | `test_must_never::test_importing_every_module_loads_no_heavy_dependency` |
 | Model weights (Llama Guard, NudeNet, checkpoints) committed, or fetched into the image | `test_must_never::test_no_model_weights_are_committed`, `test_must_never::test_the_image_fetches_no_model_weights` |
+| GPU scoring without a `score` lease, or a scorer model still loaded when the lease ends | `test_gpu::test_scoring_holds_one_interactive_score_lease_and_frees_the_models_inside_it`, `test_gpu::test_a_failed_scoring_pass_frees_the_models_and_reports_the_lease_failed`, `test_gpu::test_run_stream_scores_under_a_batch_lease` |
 | A failed run reported to the GPU broker as `ok`, or a yielded run re-queued on another node | `test_gpu::test_a_failed_seed_is_reported_to_the_broker_as_failed`, `test_gpu::test_a_yield_releases_and_requeues_on_the_same_node` |
 
 ## Facts the code doesn't show
@@ -53,7 +54,7 @@ Each row names what enforces it. An **UNENFORCED** row is a known gap: when one 
 - `models.py` is the API contract. `argus-proof schema` writes the schema file itself: don't redirect its stdout into the file, because that appends a status line.
 - Backends sit behind `GenBackend` and the `_BACKENDS` registry, so swapping one is a config change (`PROOF_BACKEND`). Optional adapters, scorers, moderation and explore are `is_available()`-guarded.
 - The quality scorers' `[0,1]` `lo`/`hi` bounds are placeholders, not calibrated. The safety cutoff is set for NudeNet 640m: an exposed score of at least 0.2 is unsafe (`safety.UNSAFE_SAFETY_FLOOR` = 0.8, inclusive via `is_unsafe`). It is conservative on purpose (#84).
-- GPU work leases through argus-cortex's coordinator (`gpu.py`, `gpu-tenant.yaml`; `ARGUS_GPU_*`), with one `batch` lease per run.
+- GPU work leases through argus-cortex's coordinator (`gpu.py`, `gpu-tenant.yaml`; `ARGUS_GPU_*`), with one `batch` lease per run for generation, and one `score` lease (interactive; `batch` inside `/run/stream`) around each scoring pass. The scorers free their models before that lease ends: proof keeps nothing resident (`residents: []`).
 - Reuse argus-cortex for shared code (taxonomy, wire-schema tooling, the write guard, env flags, the NudeNet client, GPU leases) instead of re-implementing it.
 - The server listens on **:8104** (peers: lens :8100, curator :8101, quarry :8102, forge :8103) and backs argus-studio's `/proof` view.
 - The version comes from git tags (`hatch-vcs`; `_version.py` is generated). The repo uses structlog, Pydantic v2, `asyncio_mode = auto`, ruff 0.15.16 at line length 120, and `make install|test|lint|format`. It was scaffolded from `argus-pkg-template`; `copier update` pulls tooling changes.

@@ -70,6 +70,7 @@ class IdentityScorer:
     """
 
     metric = "identity"
+    uses_gpu = True  # InsightFace runs on onnxruntime-gpu in the -score image
 
     def __init__(self, embedder: Embedder | None = None, aggregate: Literal["max", "mean"] = "max") -> None:
         self._embedder = embedder
@@ -81,6 +82,12 @@ class IdentityScorer:
         if self._embedder is None:
             self._embedder = InsightFaceEmbedder()
         return self._embedder
+
+    def unload(self) -> None:
+        """Drop the embedder's model (see :func:`~argus_proof.scoring.scorers._util.release_models`)."""
+        unload = getattr(self._embedder, "unload", None)
+        if callable(unload):
+            unload()
 
     def provenance(self) -> ScorerProvenance:
         return ScorerProvenance(name="identity", metric="identity", model=self.embedder.name)
@@ -136,6 +143,9 @@ class InsightFaceEmbedder:
 
     def is_available(self) -> bool:
         return module_available("insightface", "PIL", "numpy")
+
+    def unload(self) -> None:
+        self._app = None
 
     def _load(self):  # noqa: ANN202 - insightface types aren't importable without the extra
         if self._app is None:

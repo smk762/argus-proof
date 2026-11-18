@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scoring takes a GPU lease** (`score`, in-process, interactive, not preemptible, 3500 MiB, `model_mb` 0), declared
+  in `gpu-tenant.yaml`. `score_images` holds it around the scoring pass when an available scorer runs on the GPU, so
+  `argus-proof score` and `/run/stream` (which leases at `batch`, as part of a batch run) no longer use the GPU
+  unannounced. The scorers free their models (`unload()`, `release_models`) before the lease ends, so proof still
+  keeps nothing resident; each pass reloads them. The figure is the torch scorers' measured peak on an RTX 3090 plus
+  an estimate for InsightFace on CUDA (see `gpu-tenant.yaml`). A refused lease is an `EvaluateError`.
+
 - **Hosted demo** for proof.dragonhound.dev (`web/`): a static replay of one recorded evaluation. A synthetic-identity
   SDXL LoRA was trained for 1600 steps; proof scored each 320-step checkpoint and a no-LoRA baseline (8 prompts x 3
   seeds each) and the page shows where it peaks: score chart, the image grid with per-image scores and verdicts,
