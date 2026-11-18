@@ -55,6 +55,7 @@ def test_only_models_no_client_authors_list_their_defaults_as_required() -> None
         HitlRequest,
         RefinementRequest,
         RunRequest,
+        models.ScoreRequest,
     )
     sent = _reachable(
         models.EvalReport,
@@ -65,6 +66,7 @@ def test_only_models_no_client_authors_list_their_defaults_as_required() -> None
         models.RejectArchive,
         models.GridPlan,
         models.GridEstimate,
+        models.ScoreResult,
     )
     # A RootModel (the frame union) has no fields of its own to require.
     ours = {m for m in sent - received if m.__module__ == models.__name__ and not issubclass(m, RootModel)}
@@ -197,6 +199,8 @@ SCHEMA_DIGESTS = {
     "1.5": "9c349411243316294ca466bb8a267918e882b681193f369fd90983eaeb5aed2a",
     "1.6": "305e949056d00055426bf6bcc007cdaac6ff502861ae645038cedcde65b191fb",
     "1.7": "76cd564e21a838fe0d02327a78224d5d4f6dbe7e473035bf38b319801dc00a94",
+    "1.8": "0a6043b7b1b2514d47f202cb36e38255ff8426ff21223fdb4d24b53036deb659",
+    "1.9": "9dfbf632a0ec24c01ffd68831d88a8d49da2db9d7c1647c4ac4bc888050f238e",
 }
 
 

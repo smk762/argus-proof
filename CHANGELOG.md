@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `likeness` metric for subjects ArcFace can't see** (#103): `LikenessScorer`, DINOv2 whole-image embedding
+  cosine against the held-out reference set, for helmeted, chrome or non-human characters and for scenes. It runs on
+  every target category when there are references, is in `default_scorers()` and `GET /scorers`, and the
+  reference/training-set overlap refusal covers it. `PROOF_LIKENESS_MODEL` picks the checkpoint (default
+  `facebook/dinov2-base`). `argus-proof gate --min-likeness` (`AcceptanceThresholds.min_likeness_mean`) floors its
+  mean, like `--min-identity`; `RecommendConfig.min_likeness` routes a low one to forge (off by default, as the
+  cosine isn't calibrated yet). `[score]` now declares `transformers>=4.38`, which it already pulled.
+- `ScorerProvenance.model_file` pins the weights a scorer loaded by SHA256 (the likeness scorer's
+  `model.safetensors`), the way a `RunManifest` pins the generation models. Wire `PROOF_VERSION` 1.8 (additive:
+  `MetricScores.likeness`, `likeness` in `GateConfig`'s default weights at **0**, `min_likeness_mean`, `model_file`).
+  The weight is 0 because the cosine is uncalibrated (its threshold comes from the mint pilot), so existing runs'
+  composites don't change; likeness acts only through `--min-likeness`, a hard gate or an explicit weight.
+
+- **`POST /score`** (argus-mint#51): score uploaded images (multipart `images`, 1-16) against an export's held-out
+  `references/` with `likeness` and/or `identity`, an optional crop box per image (so a teaser's character is scored,
+  not its background), and the target category. Returns a `ScoreResult` (per-image `MetricScores`, means, scorer
+  provenance with pinned weights, the held-out check) and stores nothing. The held-out refusal applies (400), an
+  unavailable scorer or a refused GPU lease is 503, read-only refuses it, and it runs under one interactive `score`
+  lease. `/health` advertises `score`. Wire `PROOF_VERSION` 1.9 (additive: `ScoreRequest`, `CropBox`, `ScoredImage`,
+  `ScoreResult`).
+- **Scoring takes a GPU lease** (`score`, in-process, interactive, not preemptible, 3500 MiB, `model_mb` 0), declared
+  in `gpu-tenant.yaml`. `score_images` holds it around the scoring pass when an available scorer runs on the GPU, so
+  `argus-proof score` and `/run/stream` (which leases at `batch`, as part of a batch run) no longer use the GPU
+  unannounced. The scorers free their models (`unload()`, `release_models`) before the lease ends, so proof still
+  keeps nothing resident; each pass reloads them. The figure is the torch scorers' measured peak on an RTX 3090 plus
+  an estimate for InsightFace on CUDA (see `gpu-tenant.yaml`). A refused lease is an `EvaluateError`.
+
 - **Hosted demo** for proof.dragonhound.dev (`web/`): a static replay of one recorded evaluation. A synthetic-identity
   SDXL LoRA was trained for 1600 steps; proof scored each 320-step checkpoint and a no-LoRA baseline (8 prompts x 3
   seeds each) and the page shows where it peaks: score chart, the image grid with per-image scores and verdicts,

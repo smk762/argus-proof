@@ -10,19 +10,32 @@ server, and a compose deployment build the same pipeline from the same knobs.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 from pathlib import Path
 
 import structlog
+from argus_cortex.gpu import GpuCoordinator
 
+from argus_proof import gpu
 from argus_proof.backends import GenBackend, get_backend
 from argus_proof.backends.base import FAILURE_NAME, MANIFEST_NAME, ModelResolver, make_dir_resolver
 from argus_proof.backends.pnginfo import read_dimensions
 from argus_proof.backends.workflow import example_template, load_template, packaged_templates
 from argus_proof.hashing import sha256_cached
-from argus_proof.models import EvalReport, GateConfig, GeneratedImage, ProofError, RunManifest, ScorerProvenance
+from argus_proof.models import (
+    CropBox,
+    EvalReport,
+    GateConfig,
+    GeneratedImage,
+    ProofError,
+    RunManifest,
+    ScoredImage,
+    ScoreResult,
+    ScorerProvenance,
+)
 from argus_proof.scoring import ScoreContext, score_run
 
 logger = structlog.get_logger()
@@ -30,6 +43,14 @@ logger = structlog.get_logger()
 
 class EvaluateError(ProofError):
     """The pipeline could not be assembled, or a run dir is not a proof run."""
+
+
+class GpuUnavailable(EvaluateError):
+    """The scoring pass's GPU lease was refused or timed out, or the broker failed."""
+
+
+class ScorerUnavailable(EvaluateError):
+    """A requested scorer can't run here (its extra isn't installed)."""
 
 
 # Environment knobs (kept in lock-step with .env.example).
@@ -41,6 +62,7 @@ ENV_A1111_URL = "A1111_BASE_URL"
 ENV_REMOTE_URL = "PROOF_REMOTE_URL"
 ENV_REMOTE_API_KEY = "PROOF_REMOTE_API_KEY"
 ENV_RUNS_DIR = "ARGUS_PROOF_RUNS_DIR"
+ENV_LIKENESS_MODEL = "PROOF_LIKENESS_MODEL"
 
 DEFAULT_BACKEND = "comfyui"
 DEFAULT_RUNS_DIR = "runs"
@@ -236,7 +258,7 @@ def reference_images(directory: Path) -> list[Path]:
     return sorted(p for p in Path(directory).rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES)
 
 
-# The subdir of a curator export that holds its held-out identity references.
+# The subdir of a curator export that holds its held-out identity references (for identity and likeness).
 REFERENCES_DIR = "references"
 
 
@@ -315,7 +337,8 @@ def check_held_out(references: list[Path], export_dir: Path) -> str:
     """Refuse identity *references* that are training images of the export at *export_dir*.
 
     A reference the LoRA trained on measures memorisation, not likeness, and
-    makes every identity score meaningless. Two tiers:
+    makes every identity and likeness score meaningless (both scorers use the
+    one reference set, so this one check covers both). Two tiers:
 
     * the SHA256 of the bytes, so an exact copy is caught under any name;
     * with the ``[score]`` extra, a whole-image pHash within :data:`NEAR_DUP_BITS`,
@@ -367,15 +390,39 @@ def check_held_out(references: list[Path], export_dir: Path) -> str:
 def default_scorers() -> list:
     """The standard per-image scorer set, availability-guarded.
 
-    Identity (InsightFace), prompt adherence (CLIPScore), aesthetic (CLIP-IQA)
-    and safety (NudeNet) — each reports ``is_available()`` so the orchestrator
-    skips any whose extra isn't installed, and identity additionally no-ops
-    without reference images. Construction is lazy/cheap; nothing heavy loads
-    until a scorer actually scores.
+    Identity (InsightFace), likeness (DINOv2, ``$PROOF_LIKENESS_MODEL``), prompt
+    adherence (CLIPScore), aesthetic (CLIP-IQA) and safety (NudeNet) — each
+    reports ``is_available()`` so the orchestrator skips any whose extra isn't
+    installed, and identity and likeness additionally no-op without reference
+    images. Construction is lazy/cheap; nothing heavy loads until a scorer
+    actually scores.
     """
-    from argus_proof.scoring.scorers import IdentityScorer, SafetyScorer, clip_score_scorer, pyiqa_scorer
+    from argus_proof.scoring.scorers import (
+        IdentityScorer,
+        SafetyScorer,
+        clip_score_scorer,
+        pyiqa_scorer,
+    )
 
-    return [IdentityScorer(), clip_score_scorer(), pyiqa_scorer(), SafetyScorer()]
+    return [IdentityScorer(), likeness_scorer(), clip_score_scorer(), pyiqa_scorer(), SafetyScorer()]
+
+
+def likeness_scorer():  # noqa: ANN201 - LikenessScorer, imported lazily
+    """The likeness scorer on ``$PROOF_LIKENESS_MODEL`` (default DINOv2-base)."""
+    from argus_proof.scoring.scorers import DEFAULT_LIKENESS_MODEL, Dinov2Embedder, LikenessScorer
+
+    return LikenessScorer(Dinov2Embedder(os.environ.get(ENV_LIKENESS_MODEL) or DEFAULT_LIKENESS_MODEL))
+
+
+def reference_scorers(names: list[str]) -> list:
+    """The reference-set scorers *names* asks for (``identity``, ``likeness``), in that order."""
+    from argus_proof.scoring.scorers import IdentityScorer
+
+    factories = {"identity": IdentityScorer, "likeness": likeness_scorer}
+    unknown = [n for n in names if n not in factories]
+    if unknown:
+        raise EvaluateError(f"unknown reference scorer(s) {unknown}; expected some of {sorted(factories)}")
+    return [factories[n]() for n in names]
 
 
 def default_phash_scorers() -> tuple:
@@ -409,8 +456,17 @@ def score_images(
     *,
     references: list[Path] | None = None,
     gate: GateConfig | None = None,
+    gpu_coordinator: GpuCoordinator | None = None,
+    priority: gpu.PriorityClass = gpu.SCORE_PRIORITY,
 ) -> EvalReport:
     """Score *images* with the default scorers + phash dedup/diversity.
+
+    The scoring pass holds one ``score`` GPU lease (:func:`gpu.score_lease`, from
+    *gpu_coordinator*, default the ``ARGUS_GPU_*`` environment) at *priority*
+    (``interactive``; a batch run sends ``batch``), taken only when an available
+    scorer runs on the GPU. The scorers load their models inside it and free them
+    before it ends (:func:`release_models`). A lease that isn't granted raises
+    :class:`EvaluateError`.
 
     With *references*, the run's training export (``manifest.source_manifest``'s
     directory, when it is readable here) is checked first: a reference that is a
@@ -428,18 +484,141 @@ def score_images(
                 held_out = check_held_out(references, export_dir)
     deduper, diversity = default_phash_scorers()
     ctx = ScoreContext(prompt=manifest.prompt, reference_images=list(references or []))
-    report = score_run(
-        manifest,
-        images,
-        scorers=default_scorers(),
-        deduper=deduper,
-        diversity=diversity,
-        context=ctx,
-        gate=gate,
+    scorers = default_scorers()
+    report = _score_leased(
+        scorers,
+        lambda: score_run(
+            manifest, images, scorers=scorers, deduper=deduper, diversity=diversity, context=ctx, gate=gate
+        ),
+        caller=manifest.run_id,
+        coordinator=gpu_coordinator,
+        priority=priority,
     )
     if held_out is not None:
         report.scorers.append(ScorerProvenance(name=HELD_OUT_CHECK, metric="identity", model=held_out))
     return report
+
+
+def _score_leased(
+    scorers: list,
+    work,  # noqa: ANN001 - () -> T
+    *,
+    caller: str,
+    coordinator: GpuCoordinator | None,
+    priority: gpu.PriorityClass,
+):  # noqa: ANN202
+    """Run *work* under one ``score`` lease when an available scorer uses the GPU, freeing the models before it ends."""
+    from argus_proof.scoring.scorers._util import release_models
+
+    needs_gpu = any(getattr(s, "uses_gpu", True) and s.is_available() for s in scorers)
+    lease = (
+        gpu.score_lease(coordinator or gpu.default_coordinator(), caller=caller, priority=priority)
+        if needs_gpu
+        else contextlib.nullcontext()
+    )
+    try:
+        with lease:
+            try:
+                return work()
+            finally:
+                release_models(scorers)  # inside the lease: the GPU goes back clean
+    except gpu.LEASE_ERRORS as exc:
+        raise GpuUnavailable(gpu.lease_failure(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# scoring images a caller already has (POST /score)
+# ---------------------------------------------------------------------------
+
+
+def prepare_scoring_image(data: bytes, crop: CropBox | None, dest: Path, *, max_side: int) -> tuple[int, int]:
+    """Decode an uploaded image, crop it, and write it to *dest* as PNG (no metadata).
+
+    The crop is in the image's own pixels after its EXIF orientation is applied.
+    Raises :class:`EvaluateError` for bytes that aren't an image, an image with a
+    side over *max_side*, or a crop that isn't inside it. Returns the scored size.
+    """
+    import io
+
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            if max(im.size) > max_side:
+                raise EvaluateError(f"image is {im.width}x{im.height}; at most {max_side} px a side")
+            upright = ImageOps.exif_transpose(im).convert("RGB")
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise EvaluateError(f"not a readable image: {exc}") from exc
+    if crop is not None:
+        if crop.x + crop.width > upright.width or crop.y + crop.height > upright.height:
+            raise EvaluateError(
+                f"crop {crop.x},{crop.y} {crop.width}x{crop.height} is outside the {upright.width}x{upright.height} image"
+            )
+        upright = upright.crop((crop.x, crop.y, crop.x + crop.width, crop.y + crop.height))
+    upright.save(dest, "PNG")
+    return upright.width, upright.height
+
+
+def score_files(
+    images: list[Path],
+    *,
+    export_dir: Path,
+    scorers: list[str],
+    target_category: str = "identity",
+    filenames: list[str | None] | None = None,
+    crops: list[CropBox | None] | None = None,
+    caller: str = "score",
+    gpu_coordinator: GpuCoordinator | None = None,
+    priority: gpu.PriorityClass = gpu.SCORE_PRIORITY,
+    built: list | None = None,
+) -> ScoreResult:
+    """Score *images* (already cropped) against the references of the export at *export_dir*.
+
+    The references are ``<export_dir>/references/``; the held-out check runs first
+    (:func:`check_held_out`, raising :class:`EvaluateError` on an overlap), then
+    each requested scorer must be available (:class:`ScorerUnavailable`), then the
+    pass runs under one ``score`` GPU lease (:class:`GpuUnavailable` if refused)
+    with the models freed before it ends. Nothing is stored. *built* injects the
+    scorer objects (tests); *filenames* and *crops* are echoed per image.
+    """
+    from argus_cortex.taxonomy import TargetProfile
+
+    from argus_proof.scoring.orchestrator import score_metrics
+    from argus_proof.scoring.summary import metric_means
+
+    references = reference_images(Path(export_dir) / REFERENCES_DIR)
+    if not references:
+        raise EvaluateError(f"export {Path(export_dir).name!r} has no {REFERENCES_DIR}/ images to score against")
+    held_out = check_held_out(references, Path(export_dir))
+    live = built if built is not None else reference_scorers(scorers)
+    missing = [s.metric for s in live if not s.is_available()]
+    if missing:
+        raise ScorerUnavailable(f"scorer(s) not available here: {', '.join(missing)} (install argus-proof[score])")
+    ctx = ScoreContext(
+        prompt="",
+        profile=TargetProfile(target_category=target_category),  # type: ignore[arg-type]
+        reference_images=references,
+    )
+    gens = [
+        GeneratedImage(image_id=f"image-{i}", run_id=caller, seed=i, path=str(p), width=0, height=0)
+        for i, p in enumerate(images)
+    ]
+
+    def work() -> tuple[list, list[ScorerProvenance]]:
+        rows = score_metrics(gens, live, ctx)
+        return rows, [s.provenance() for s in live]  # while loaded: provenance pins the weights
+
+    rows, provenance = _score_leased(live, work, caller=caller, coordinator=gpu_coordinator, priority=priority)
+    names = filenames or [None] * len(images)
+    boxes = crops or [None] * len(images)
+    return ScoreResult(
+        images=[
+            ScoredImage(index=i, filename=names[i], crop=boxes[i], metrics=row.metrics) for i, row in enumerate(rows)
+        ],
+        means=metric_means(rows),
+        n_images=len(rows),
+        scorers=[*provenance, ScorerProvenance(name=HELD_OUT_CHECK, metric="identity", model=held_out)],
+    )
 
 
 def score_run_dir(

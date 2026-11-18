@@ -37,7 +37,9 @@ dependencies = [
 server = ["fastapi>=0.110", "uvicorn>=0.27", "python-multipart>=0.0.7", "argus-cortex[server]>=0.9,<0.10"]
 cli = ["typer>=0.12", "rich>=13.0"]
 # Concrete scorers (implement argus_proof.scoring protocols): dedup/diversity
-# (phash) + identity (InsightFace ArcFace) + quality (CLIPScore/pyiqa).
+# (phash) + identity (InsightFace ArcFace) + likeness (DINOv2 via transformers,
+# which CLIPScore and pyiqa already pull; declared here because likeness imports it)
+# + quality (CLIPScore/pyiqa).
 # CI's dev extra pulls only the light deps; the heavy ones (insightface, torch…)
 # stay opt-in — their scorers report is_available()=False without them, and CI's
 # score-imports job checks the resolved set actually imports.
@@ -49,6 +51,7 @@ score = [
     "onnxruntime>=1.16",
     "torch>=2.0",
     "torchmetrics>=1.0",
+    "transformers>=4.38",
     "pyiqa>=0.1.16",
 ]
 # ImageReward (the `preference` metric). Not in default_scorers(), and it pins

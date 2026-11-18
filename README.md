@@ -37,7 +37,7 @@ uv pip install "argus-proof[cli,score]"    # + the full scorer stack (torch, ins
 can't use. ImageReward isn't in the default scorer set, so install it on its own when you want the `preference` metric.
 
 Images are on GHCR. `ghcr.io/smk762/argus-proof:<version>` (and `latest`) is the thin server/CLI and scores **phash
-only**: identity, CLIP score and aesthetic come back empty. To score for real, use `:<version>-score` (`latest-score`),
+only**: identity, likeness, CLIP score and aesthetic come back empty. To score for real, use `:<version>-score` (`latest-score`),
 which adds the `[score]` stack, with CUDA torch and onnxruntime-gpu (they fall back to CPU without a GPU). To build
 from a context without `.git` (a `git archive` export), pass `--build-arg VERSION=<x.y.z>`.
 
@@ -53,11 +53,11 @@ argus-proof run subject.safetensors ./curated_export \
 # instead of a manifest, and the rest of the grid still runs; the command then exits 1 listing
 # the failed run_ids. --fail-fast stops at the first failure.
 
-# Score a generated run into a stored EvalReport (identity needs --references,
+# Score a generated run into a stored EvalReport (identity and likeness need --references,
 # a held-out image dir that must NOT overlap the training set). A default scorer
 # this install can't run is warned about on stderr; --require-scorers makes it exit 2:
 argus-proof score runs/proof-l00-w00-p000 --references ./holdout \
-  [--require-scorers identity,clip_score,aesthetic,safety]
+  [--require-scorers identity,likeness,clip_score,aesthetic,safety]
 
 # Browse stored reports / print one run's digest:
 argus-proof report
@@ -90,6 +90,7 @@ GET  /exports                           curator export dirs available to evaluat
 GET  /models                            checkpoints + LoRAs under $PROOF_MODELS_DIR
 GET  /scorers                           scorers a run applies + whether each is installed
 POST /run/stream                        generate + score + store one run (NDJSON RunStreamFrame lines)
+POST /score                             score uploaded images vs an export's references (ScoreResult; stores nothing)
 GET  /reports                           stored report digests (run browser)
 GET  /report/{run_id}                   full EvalReport            PUT to store one
 GET  /report/{run_id}/manifest          the RunManifest behind a report (410 if its run dir is gone)
@@ -108,6 +109,54 @@ studio's proof → darkroom handoff. It is `404` when there is no report and `41
 Gone` when the report was kept but the run dir was pruned. `/health` lists
 `report_manifest` in `capabilities`, so a client can tell an older proof (route
 absent) from a run with no manifest.
+
+`POST /score` scores images the caller already has against an export's held-out
+`references/`, e.g. argus-mint scoring a finished teaser against an identity (mint#51).
+It stores nothing. The body is `multipart/form-data`:
+
+- `images`: 1 to 16 files (PNG/JPEG/WebP, at most 2048 px a side and 32 MiB each), scored in upload order;
+- `request`: a JSON `ScoreRequest`:
+
+```json
+{
+  "export": "android-k7",
+  "scorers": ["likeness"],
+  "target_category": "identity",
+  "crops": [{"x": 312, "y": 40, "width": 400, "height": 900}, null]
+}
+```
+
+`scorers` is `likeness` (DINOv2, any subject) and/or `identity` (ArcFace, faces; it
+reads `null` unless `target_category` is `identity`). `crops` is optional, one entry
+per image (`null` = the whole image), in the image's own pixels after its EXIF
+orientation; scoring the character's box rather than the whole teaser keeps the
+background out of the embedding. The reply is a `ScoreResult`:
+
+```json
+{
+  "proof_version": "1.9",
+  "n_images": 2,
+  "images": [
+    {"index": 0, "filename": "t1.png", "crop": {"x": 312, "y": 40, "width": 400, "height": 900},
+     "metrics": {"identity": null, "likeness": 0.83, "clip_score": null, "aesthetic": null, "preference": null, "safety": null}}
+  ],
+  "means": {"identity": null, "likeness": 0.79, "...": null},
+  "scorers": [
+    {"name": "likeness", "metric": "likeness", "version": null, "model": "dinov2:facebook/dinov2-base",
+     "model_file": {"name": "dinov2:facebook/dinov2-base", "sha256": "d73036b5…"}},
+    {"name": "held-out-references", "metric": "identity", "version": null, "model": "sha256+phash<=6", "model_file": null}
+  ]
+}
+```
+
+There is no verdict: the caller holds the scores against its own threshold. Errors:
+`400` (references that are training images, an export with no `references/`, a crop
+outside its image, an unreadable image, a crops/images count mismatch, or more than
+16 images), `404` (no such export), `413` (an image over 32 MiB), `422` (a malformed
+`request`, an unknown scorer), `503` (a requested scorer isn't installed, the GPU
+lease was refused, or no exports dir is configured), `403` in read-only mode. It runs
+under one `interactive` `score` GPU lease and frees its models before the lease ends.
+`/health` lists `score` in `capabilities` when the host isn't read-only.
 
 The `/purge` routes are a dev tool, since reports are the evaluation record. They exist
 only with `ARGUS_PROOF_DEVMODE=1` (or `serve --devmode`), need a `{"confirm": "purge"}`
@@ -219,6 +268,18 @@ so. When iris can't be reached, the lease comes from `ARGUS_GPU_BROKER_FALLBACK`
 (`lease`, the host-wide `flock`, by default). The `a1111` and `remote` backends
 take no lease.
 
+Scoring leases too. `score_images` (so `argus-proof score` and `/run/stream`) holds
+one `score` lease (`in-process`, not preemptible, 3500 MiB) for the scoring pass
+whenever an available scorer runs on the GPU (InsightFace, CLIP-IQA, CLIPScore; not
+safety, which is a NudeNet service, and not phash). It is `interactive`, or `batch`
+when it is part of a `/run/stream` run. The scorers load their models inside the
+lease and free them before it ends, so proof keeps no model resident between leases
+(`residents: []`): each pass reloads its models, a few seconds' cost. A refused or
+timed-out lease fails scoring with a message that says so. The 3500 MiB is the torch
+scorers' measured peak on an RTX 3090 (1399 MiB with the CUDA context) plus an
+estimated 1500 MiB for InsightFace on CUDA, rounded up; `gpu-tenant.yaml` has the
+breakdown.
+
 | Variable | Value |
 |---|---|
 | `ARGUS_GPU_COORDINATOR` | `broker` (or `lease`, `none`) |
@@ -231,7 +292,7 @@ take no lease.
 
 Generated images are scored into an `EvalReport` by a pluggable framework
 (`argus_proof.scoring`). Per-image `ImageScorer`s each fill one normalised
-`[0,1]` metric (identity / clip_score / aesthetic / preference / safety); a
+`[0,1]` metric (identity / likeness / clip_score / aesthetic / preference / safety); a
 `Deduper` collapses Monte-Carlo near-duplicates so a cluster counts **once**
 toward the pass rate; a `DiversityScorer` rewards variety. A `GateConfig` routes
 each image to **auto-pass / auto-fail / needs-HITL** on a weighted composite,
@@ -251,11 +312,12 @@ skips it when the extra is absent). Shipped:
 - **dedup + diversity** — `PhashDeduper`, `PhashDiversityScorer` (perceptual hash, CPU-only)
 - **identity** — `IdentityScorer` (InsightFace ArcFace cosine vs a held-out reference set).
   References must be held out from training, and a run refuses ones that aren't: before generating (`/run/stream`) and before scoring, each reference is compared with the export's training images (its files outside `references/`, plus the manifest rows' sources). An exact copy is caught by SHA256; with the `[score]` extra, a resized or re-encoded copy is caught by a whole-image pHash within 6 bits. **A crop is not caught.** The report's `scorers` gains a `held-out-references` row saying which check ran (`sha256+phash<=6`, `sha256`, or why none could).
+- **likeness** — `LikenessScorer` (DINOv2 whole-image embedding cosine vs the same held-out reference set, #103). The identity score for subjects ArcFace can't see: helmeted, masked, chrome-skinned or non-human characters, and scenes or sets, where `identity` reads `0.0` (no face). It runs on every target category whenever there are references (`None` without), and the held-out refusal above covers it, since both scorers read the one reference set. DINOv2 rather than CLIP image embeddings: CLIP is trained to match captions, so two different chrome robots embed close together because both are "a chrome robot"; DINOv2 is self-supervised on images and keeps instance-level appearance. It loads through `transformers` in the `[score]` extra, which CLIPScore and pyiqa already bring. `PROOF_LIKENESS_MODEL` picks the checkpoint (default `facebook/dinov2-base`; a Hub id or a local `save_pretrained` dir for an offline host). Once loaded, its `model.safetensors` is pinned by SHA256 in the report's scorer provenance (`ScorerProvenance.model_file`), as a `RunManifest` pins the generation models. The raw cosine is clamped, not calibrated: unrelated images still sit around 0.1–0.4 (and simple synthetic shapes higher), so take `--min-likeness` from a real run. `likeness` has weight **0** in the default composite, because it is uncalibrated and its threshold comes from the mint pilot run: it acts only through `--min-likeness`, a `likeness` hard gate (reject code `identity_mismatch`) or an explicit `GateConfig.weights["likeness"]`.
 - **quality / adherence** — `clip_score_scorer()` (CLIPScore), `pyiqa_scorer()` (CLIP-IQA), `image_reward_scorer()` (ImageReward), each normalising its raw score to `[0,1]`
 - **safety** — `SafetyScorer` (NudeNet ensemble, `1 - unsafe`); set a `safety` hard gate to auto-fail unsafe images. `safety_tail_aggregate()` surfaces the any-hit/min/percentile tail. NudeNet runs as a **server over HTTP** (`PROOF_NUDENET_URL`, via argus-cortex's `NudeNetClient`), never in-process (it is AGPL-3.0); without a URL the scorer is skipped. Point it at the suite's shared **640m** server, argus-retina's `ghcr.io/smk762/argus-retina-nudenet` (`http://<GPU_HOST>:8130` on the LAN); the upstream `notai-tech/nudenet` image is **320n**. The two score the same image differently, so the report records which one ran (the safety scorer's `model`: `nudenet-640m`, `nudenet-320n`, or `nudenet` when the server doesn't say, as the upstream image doesn't), and the cross-run store keeps it as a sliceable `safety_detector` column. The cutoff is tuned for 640m: an exposed score of **at least 0.2** is unsafe, so `unsafe_safety_floor` defaults to 0.8 and an image at or below it counts (the acceptance gate's `max_unsafe_rate`, `recommend`, and `safety_tail_aggregate()`). That is NudeNet's reporting floor, so any exposed detection counts, as in curator and cull. It is deliberately conservative and may flag the odd false positive; raise the floor's exposed score if that becomes a problem. "Unsafe" is the suite's exposed-nudity set (exposed buttocks, breasts, genitalia, anus), the same as curator's
 
 The default scorer set used by `argus-proof run` / `score` and the server
-(`evaluate.default_scorers()`, plus phash dedup/diversity) is identity, CLIPScore,
+(`evaluate.default_scorers()`, plus phash dedup/diversity) is identity, likeness, CLIPScore,
 CLIP-IQA and safety — it does **not** include ImageReward, so the `preference`
 metric stays empty unless you pass `image_reward_scorer()` via the library API (in a `[preference]` environment).
 `GET /scorers` reports which of the default set this install can actually run.
@@ -374,8 +436,13 @@ argus-proof gate eval_report.json \
   --min-pass-rate-ci-lower 0.7 \
   --confidence 0.95 \
   --min-identity 0.6 \
+  --min-likeness 0.7 \
   --max-unsafe-rate 0.0
 ```
+
+`--min-identity` floors the mean ArcFace identity (human faces); `--min-likeness`
+floors the mean DINOv2 likeness (any subject, `AcceptanceThresholds.min_likeness_mean`).
+Use whichever measures the subject, or both.
 
 The pass-rate lower bound uses a Wilson score interval (`argus_proof.stats`, no
 scipy), so acceptance is statistically defensible at small N. A configured metric
@@ -429,7 +496,7 @@ for rec in recommend(report, config=cfg, store=cross_run_store):   # store optio
     print(rec.stage, rec.metric, rec.value, rec.action)
 ```
 
-Safety first, then: low identity/aesthetic → **forge** (training), low adherence →
+Safety first, then: low identity/likeness/aesthetic → **forge** (training), low adherence →
 **lens** + **grid**, low diversity → **grid**, borderline → **refine** (HITL). With a
 cross-run store it also surfaces the best checkpoint / LoRA weight — but only when
 the evidence separates a clear winner (non-overlapping CIs), never on a tie.

@@ -9,7 +9,7 @@ orchestrator composes.
 
 Three roles:
 
-* :class:`ImageScorer` — scores one image on one metric (identity / clip_score /
+* :class:`ImageScorer` — scores one image on one metric (identity / likeness / clip_score /
   aesthetic / preference / safety), returning a **normalised ``[0, 1]``** score
   (higher = better) so the gate can combine metrics, or ``None`` when it doesn't
   apply (an identity scorer on a non-identity run, missing references).
@@ -35,12 +35,13 @@ if TYPE_CHECKING:
     from argus_proof.models import GeneratedImage, ScorerProvenance
 
 # The metric axes a per-image scorer can fill (mirrors MetricScores fields).
-METRIC_FIELDS: tuple[str, ...] = ("identity", "clip_score", "aesthetic", "preference", "safety")
+METRIC_FIELDS: tuple[str, ...] = ("identity", "likeness", "clip_score", "aesthetic", "preference", "safety")
 
 # Which structured reject reason a failing metric maps to, so an auto-fail names
 # a cause downstream stats can group by.
 REJECT_CODE_FOR_METRIC: dict[str, RejectReasonCode] = {
     "identity": "identity_mismatch",
+    "likeness": "identity_mismatch",
     "clip_score": "prompt_mismatch",
     "aesthetic": "low_quality",
     "preference": "low_quality",
@@ -56,7 +57,8 @@ class ScoreContext:
     scoring — it must NOT overlap the training set, or you measure memorisation
     instead of likeness. ``dataset_images`` is the training distribution used for
     CLIP distribution-match. ``profile.target_category`` decides which similarity
-    scorers apply (face identity vs. perceptual similarity for wardrobe/setting).
+    scorers apply: ArcFace ``identity`` only on identity runs; ``likeness`` (DINOv2)
+    on any run with references.
     """
 
     prompt: str

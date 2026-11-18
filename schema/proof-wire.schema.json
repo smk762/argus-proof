@@ -38,6 +38,20 @@
           "default": null,
           "title": "Min Identity Mean"
         },
+        "min_likeness_mean": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min Likeness Mean"
+        },
         "min_pass_rate": {
           "anyOf": [
             {
@@ -209,6 +223,39 @@
       "title": "CompleteFrame",
       "type": "object"
     },
+    "CropBox": {
+      "description": "A box in an uploaded image's own pixels (after its EXIF orientation is applied).\n\nOnly this region is scored, e.g. a teaser's character rather than its\nbackground. It must lie inside the image.",
+      "properties": {
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "integer"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "integer"
+        },
+        "x": {
+          "minimum": 0,
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "minimum": 0,
+          "title": "Y",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "CropBox",
+      "type": "object"
+    },
     "EvalReport": {
       "description": "Scored evaluation of a generation run: per-image + aggregate + verdict.\n\nLinks to its :class:`RunManifest` by ``run_id`` rather than embedding it, so\nthe run dir stays the single source of truth for generation params.",
       "properties": {
@@ -246,7 +293,7 @@
           "type": "array"
         },
         "proof_version": {
-          "default": "1.7",
+          "default": "1.9",
           "title": "Proof Version",
           "type": "string"
         },
@@ -813,7 +860,7 @@
       "type": "object"
     },
     "MetricScores": {
-      "description": "The scoring axes for one image (or their means, in the aggregate).\n\nEvery field is optional so an axis whose scorer did not run stays ``None``\ninstead of a misleading ``0.0``. Semantics: ``identity`` similarity to the\nreference (higher = closer), ``clip_score`` prompt adherence, ``aesthetic``\nan IQA/aesthetic score, ``preference`` an ImageReward/HPS-style score, and\n``safety`` a safety score.",
+      "description": "The scoring axes for one image (or their means, in the aggregate).\n\nEvery field is optional so an axis whose scorer did not run stays ``None``\ninstead of a misleading ``0.0``. Semantics: ``identity`` similarity to the\nreference face (higher = closer), ``likeness`` whole-image embedding\nsimilarity to the reference set (any subject: a masked or non-human\ncharacter, a scene), ``clip_score`` prompt adherence, ``aesthetic``\nan IQA/aesthetic score, ``preference`` an ImageReward/HPS-style score, and\n``safety`` a safety score.",
       "properties": {
         "aesthetic": {
           "anyOf": [
@@ -851,6 +898,18 @@
           "default": null,
           "title": "Identity"
         },
+        "likeness": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Likeness"
+        },
         "preference": {
           "anyOf": [
             {
@@ -878,6 +937,7 @@
       },
       "required": [
         "identity",
+        "likeness",
         "clip_score",
         "aesthetic",
         "preference",
@@ -1046,7 +1106,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.7",
+          "default": "1.9",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1289,7 +1349,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.7",
+          "default": "1.9",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1575,6 +1635,152 @@
       "title": "SamplingParams",
       "type": "object"
     },
+    "ScoreRequest": {
+      "description": "The JSON ``request`` part of a ``POST /score`` multipart body.\n\n``export`` names a curator export under the exports root: its\n``references/`` are the held-out set the images are scored against, and its\ntraining images are what those references must not overlap. ``scorers``\npicks the reference scorers to run: ``likeness`` (DINOv2, any subject) and/or\n``identity`` (ArcFace, human faces; it only measures ``identity`` runs, so it\nreads ``None`` for any other ``target_category``). ``crops``, when given, has\none entry per uploaded image in upload order (``null`` scores the whole image).",
+      "properties": {
+        "crops": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CropBox"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Crops"
+        },
+        "export": {
+          "title": "Export",
+          "type": "string"
+        },
+        "scorers": {
+          "items": {
+            "enum": [
+              "identity",
+              "likeness"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Scorers",
+          "type": "array"
+        },
+        "target_category": {
+          "default": "identity",
+          "enum": [
+            "identity",
+            "wardrobe",
+            "pose_composition",
+            "setting",
+            "concept"
+          ],
+          "title": "Target Category",
+          "type": "string"
+        }
+      },
+      "required": [
+        "export",
+        "scorers"
+      ],
+      "title": "ScoreRequest",
+      "type": "object"
+    },
+    "ScoreResult": {
+      "description": "What ``POST /score`` returns. Nothing is stored.\n\n``means`` averages each metric over the images that have it (``None`` when\nnone do). ``scorers`` records each scorer that ran, with its model and pinned\nweights (``model_file``), plus a ``held-out-references`` row saying which\noverlap check ran.",
+      "properties": {
+        "images": {
+          "items": {
+            "$ref": "#/$defs/ScoredImage"
+          },
+          "title": "Images",
+          "type": "array"
+        },
+        "means": {
+          "$ref": "#/$defs/MetricScores"
+        },
+        "n_images": {
+          "title": "N Images",
+          "type": "integer"
+        },
+        "proof_version": {
+          "default": "1.9",
+          "title": "Proof Version",
+          "type": "string"
+        },
+        "scorers": {
+          "items": {
+            "$ref": "#/$defs/ScorerProvenance"
+          },
+          "title": "Scorers",
+          "type": "array"
+        }
+      },
+      "required": [
+        "proof_version",
+        "images",
+        "means",
+        "n_images",
+        "scorers"
+      ],
+      "title": "ScoreResult",
+      "type": "object"
+    },
+    "ScoredImage": {
+      "description": "One uploaded image's scores. ``index`` is its position in the upload;\n``filename`` echoes the client's name for it (never used as a path).",
+      "properties": {
+        "crop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CropBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Filename"
+        },
+        "index": {
+          "title": "Index",
+          "type": "integer"
+        },
+        "metrics": {
+          "$ref": "#/$defs/MetricScores"
+        }
+      },
+      "required": [
+        "index",
+        "filename",
+        "crop",
+        "metrics"
+      ],
+      "title": "ScoredImage",
+      "type": "object"
+    },
     "ScorerProvenance": {
       "description": "Where a score came from: the scorer, its version, and the model it used.\n\nRecorded for every scorer that contributed to an :class:`EvalReport` so a\nresult is auditable and reproducible \u2014 a score is only as trustworthy as the\nmodel and version that produced it.",
       "properties": {
@@ -1593,6 +1799,17 @@
           ],
           "default": null,
           "title": "Model"
+        },
+        "model_file": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "name": {
           "title": "Name",
@@ -1615,7 +1832,8 @@
         "name",
         "metric",
         "version",
-        "model"
+        "model",
+        "model_file"
       ],
       "title": "ScorerProvenance",
       "type": "object"

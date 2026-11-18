@@ -111,8 +111,10 @@ def test_out_of_range_floor_rejected() -> None:
 def test_from_acceptance_tracks_gate_floors() -> None:
     from argus_proof.models import AcceptanceThresholds
 
-    cfg = RecommendConfig.from_acceptance(AcceptanceThresholds(min_identity_mean=0.7, max_unsafe_rate=0.02))
-    assert cfg.min_identity == 0.7 and cfg.max_unsafe_rate == 0.02
+    cfg = RecommendConfig.from_acceptance(
+        AcceptanceThresholds(min_identity_mean=0.7, min_likeness_mean=0.55, max_unsafe_rate=0.02)
+    )
+    assert cfg.min_identity == 0.7 and cfg.min_likeness == 0.55 and cfg.max_unsafe_rate == 0.02
 
 
 def test_pending_routes_to_refine() -> None:
@@ -278,3 +280,10 @@ def test_a_wide_lower_ranked_cell_that_overlaps_best_blocks_the_pick() -> None:
     cells = [_slice("A", 0.60, 0.70), _slice("B", 0.40, 0.55), _slice("C", 0.10, 0.95)]
     store = _FakeStore({"base_checkpoint": cells})
     assert not any(r.stage == "checkpoint" for r in recommend(_report(means=MetricScores(identity=0.9)), store=store))
+
+
+def test_likeness_floor_is_off_by_default_and_routes_to_forge() -> None:
+    low = _report(means=MetricScores(likeness=0.2))
+    assert not any(r.metric == "likeness" for r in recommend(low))  # uncalibrated: no default floor
+    recs = recommend(low, config=RecommendConfig(min_likeness=0.5))
+    assert any(r.stage == "forge" and r.metric == "likeness" for r in recs)

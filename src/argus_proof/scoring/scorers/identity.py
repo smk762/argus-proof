@@ -70,6 +70,7 @@ class IdentityScorer:
     """
 
     metric = "identity"
+    uses_gpu = True  # InsightFace runs on onnxruntime-gpu in the -score image
 
     def __init__(self, embedder: Embedder | None = None, aggregate: Literal["max", "mean"] = "max") -> None:
         self._embedder = embedder
@@ -82,21 +83,31 @@ class IdentityScorer:
             self._embedder = InsightFaceEmbedder()
         return self._embedder
 
+    def unload(self) -> None:
+        """Drop the embedder's model (see :func:`~argus_proof.scoring.scorers._util.release_models`)."""
+        unload = getattr(self._embedder, "unload", None)
+        if callable(unload):
+            unload()
+
     def provenance(self) -> ScorerProvenance:
         return ScorerProvenance(name="identity", metric="identity", model=self.embedder.name)
 
     def is_available(self) -> bool:
         return self.embedder.is_available()
 
+    def applies(self, ctx: ScoreContext) -> bool:
+        """Whether this scorer measures anything for *ctx*'s run: ArcFace only for ``identity`` runs."""
+        return ctx.profile.target_category == "identity"
+
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None:
-        if ctx.profile.target_category != "identity":
-            return None  # identity scoring only applies to identity runs
+        if not self.applies(ctx):
+            return None
         refs = self._reference_vectors(ctx)
         if not refs:
             return None  # no held-out references -> identity can't be measured
         vec = self.embedder.embed(image_path)
         if vec is None:
-            return 0.0  # no face detected -> the subject isn't present
+            return 0.0  # nothing to embed (no face detected) -> the subject isn't present
         sims = [cosine(vec, ref) for ref in refs]
         if any(math.isnan(s) for s in sims):
             # A degenerate embedding: propagate NaN for both aggregates so the
@@ -136,6 +147,9 @@ class InsightFaceEmbedder:
 
     def is_available(self) -> bool:
         return module_available("insightface", "PIL", "numpy")
+
+    def unload(self) -> None:
+        self._app = None
 
     def _load(self):  # noqa: ANN202 - insightface types aren't importable without the extra
         if self._app is None:

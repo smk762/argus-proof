@@ -443,6 +443,8 @@ def test_scorers_reports_availability(client: TestClient) -> None:
     # scorers, whose metric comes from provenance() (a bare getattr returned null).
     assert all(s["metric"] and s["name"] for s in scorers)
     assert {"duplicate", "diversity"} <= {s["metric"] for s in scorers}
+    # identity for faces and likeness (DINOv2) for everything else are both listed
+    assert {"identity", "likeness"} <= {s["metric"] for s in scorers}
     # phash dedup/diversity ship in the dev/test env, so at least one is available
     assert any(s["available"] for s in scorers)
 

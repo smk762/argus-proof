@@ -3,12 +3,14 @@
 Each scorer lazy-imports its heavy dependencies (behind the ``[score]`` extra)
 and reports ``is_available()`` so the orchestrator skips it cleanly when the
 extra isn't installed. Perceptual-hash dedup/diversity land first (lightweight,
-CPU-only); identity/quality scorers (the torch stack) follow with #4/#5.
+CPU-only); identity/quality scorers (the torch stack) follow with #4/#5, and
+likeness (DINOv2, for subjects without a human face) with #103.
 """
 
 from __future__ import annotations
 
 from argus_proof.scoring.scorers.identity import Embedder, IdentityScorer, InsightFaceEmbedder
+from argus_proof.scoring.scorers.likeness import DEFAULT_LIKENESS_MODEL, Dinov2Embedder, LikenessScorer
 from argus_proof.scoring.scorers.phash import PhashDeduper, PhashDiversityScorer
 from argus_proof.scoring.scorers.quality import (
     ModelScorer,
@@ -25,9 +27,12 @@ from argus_proof.scoring.scorers.safety import (
 )
 
 __all__ = [
+    "DEFAULT_LIKENESS_MODEL",
+    "Dinov2Embedder",
     "Embedder",
     "IdentityScorer",
     "InsightFaceEmbedder",
+    "LikenessScorer",
     "ModelScorer",
     "NudeNetDetector",
     "PhashDeduper",
