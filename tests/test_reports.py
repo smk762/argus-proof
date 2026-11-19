@@ -205,6 +205,17 @@ def test_a_review_without_a_gate_keeps_the_runs_own_gate() -> None:
     assert cleared.images[0].passed is None  # strict gate -> HITL; the default gate would auto-pass it
 
 
+def test_a_review_with_its_own_gate_does_not_replace_the_reports_gate() -> None:
+    original = GateConfig()
+    report = _report(rows=[_row("a", 1, passed=True), _row("b", 2, passed=True)], gate=original).model_copy(
+        update={"gate": original}
+    )
+    strict = GateConfig(auto_pass=0.95)
+    updated = apply_hitl(report, HitlRequest(updates=[HitlImageUpdate(image_id="a")], gate=strict))
+    assert updated.gate == original  # "b" was never judged under the strict gate
+    assert updated.images[0].passed is None  # but the batch itself used it
+
+
 def test_save_takes_the_run_lock(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     from contextlib import contextmanager
 
