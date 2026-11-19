@@ -69,6 +69,10 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #      (ScoredImage rows, MetricScores means, ScorerProvenance) out. Scores
 #      caller-supplied images against an export's held-out references (#103,
 #      argus-mint#51).
+# Since 1.7, GateConfig rejects ``weights`` / ``hard_gates`` keys that aren't a
+# MetricScores field. Such a key never matched a score, so its weight or gate
+# silently never applied; a payload that used one now fails validation instead.
+# Treated as a bug fix, not a wire break, so no major bump.
 PROOF_VERSION = "1.9"
 
 # Majors of the proof contract this build understands. Refuse anything else up

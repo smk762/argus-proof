@@ -117,6 +117,10 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
     aggregate and verdict are then recomputed over the updated rows, so the run's
     pass-rate and pending/passed status reflect the review. Untouched images (not
     in the batch) are carried through unchanged.
+
+    A ``request.gate`` applies to this batch only and is not saved as the report's
+    gate: the untouched images were judged under the report's own gate, so
+    recording the request's would claim a gate most rows were never judged with.
     """
     gate = request.gate or report.gate or GateConfig()
     by_id = {u.image_id: u for u in request.updates}
@@ -144,7 +148,10 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
     aggregate, verdict = summarise(
         rows, gate=gate, diversity=report.aggregate.diversity, n_images=report.aggregate.n_images
     )
-    return report.model_copy(update={"images": rows, "aggregate": aggregate, "verdict": verdict, "gate": gate})
+    # A batch's own gate is not persisted (see above); without one, ``gate`` is the
+    # report's gate, or the default a pre-1.7 report was scored with.
+    stored_gate = report.gate if request.gate is not None else gate
+    return report.model_copy(update={"images": rows, "aggregate": aggregate, "verdict": verdict, "gate": stored_gate})
 
 
 class ReportStore:
