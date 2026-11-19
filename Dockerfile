@@ -37,6 +37,8 @@ ARG ORT_GPU=0
 # pyiqa (in [score]) depends on opencv-python, the GUI build, whose cv2 needs
 # libxcb/libGL that slim lacks. The install below swaps it for the same version of
 # opencv-python-headless (same cv2 module, no X11), so `import pyiqa` works here.
+# Another [score] dependency already installs the headless build, and both packages
+# own cv2/, so uninstalling opencv-python deletes it: the reinstall puts it back.
 # The release tag without its "v". Empty: read the version from .git.
 ARG VERSION=""
 
@@ -55,7 +57,8 @@ RUN python -m pip install --no-cache-dir \
     && cv=$(uv pip show --system opencv-python 2>/dev/null | sed -n 's/^Version: //p') \
     && if [ -n "$cv" ]; then \
         uv pip uninstall --system opencv-python \
-        && uv pip install --system --no-cache "opencv-python-headless==$cv"; \
+        && uv pip install --system --no-cache --reinstall-package opencv-python-headless \
+            "opencv-python-headless==$cv"; \
     fi
 
 EXPOSE 8104

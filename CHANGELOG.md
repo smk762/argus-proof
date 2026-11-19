@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-19
+
+### Fixed
+
+- **The `-score` image has `cv2` again**: 0.5.1's swap uninstalled `opencv-python`, which also deleted the `cv2/`
+  directory that `opencv-python-headless` (already installed by another `[score]` dependency) shares, so `import
+  pyiqa` failed with `No module named 'cv2'` and the image again wasn't published. The headless build is now
+  reinstalled after the swap.
+
 ## [0.5.1] - 2026-11-19
 
 ### Fixed
@@ -300,7 +309,8 @@ First release: the MVP evaluation pipeline for trained LoRAs.
   `/run/stream`, report/HITL/refine endpoints, and model and export listings.
 - Container image `ghcr.io/smk762/argus-proof`.
 
-[Unreleased]: https://github.com/smk762/argus-proof/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/smk762/argus-proof/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/smk762/argus-proof/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/smk762/argus-proof/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/smk762/argus-proof/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/smk762/argus-proof/compare/v0.3.0...v0.4.0
