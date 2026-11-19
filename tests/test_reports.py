@@ -184,3 +184,61 @@ def test_hitl_untouched_image_carried_through() -> None:
     report = _report(rows=[_row("a", 1, passed=None), _row("b", 2, passed=None)])
     updated = apply_hitl(report, HitlRequest(updates=[HitlImageUpdate(image_id="a", hitl_rating=5)]))
     assert next(r for r in updated.images if r.image_id == "b").passed is None
+
+
+def test_retracting_a_reject_reverts_to_the_gates_auto_result() -> None:
+    report = _report(rows=[_row("a", 1, passed=True)])  # identity 0.9 auto-passes
+    rejected = apply_hitl(
+        report, HitlRequest(updates=[HitlImageUpdate(image_id="a", reject_reasons=[RejectReason(code="artifact")])])
+    )
+    assert rejected.images[0].passed is False
+    cleared = apply_hitl(rejected, HitlRequest(updates=[HitlImageUpdate(image_id="a")]))
+    assert cleared.images[0].passed is True  # the gate's verdict, not the withdrawn human one
+
+
+def test_a_review_without_a_gate_keeps_the_runs_own_gate() -> None:
+    strict = GateConfig(auto_pass=0.95)  # identity 0.9 is only borderline under this gate
+    report = _report(rows=[_row("a", 1, passed=None)], gate=strict).model_copy(update={"gate": strict})
+    rated = apply_hitl(report, HitlRequest(updates=[HitlImageUpdate(image_id="a", hitl_rating=5)]))
+    cleared = apply_hitl(rated, HitlRequest(updates=[HitlImageUpdate(image_id="a")]))
+    assert cleared.gate == strict
+    assert cleared.images[0].passed is None  # strict gate -> HITL; the default gate would auto-pass it
+
+
+def test_a_review_with_its_own_gate_does_not_replace_the_reports_gate() -> None:
+    original = GateConfig()
+    report = _report(rows=[_row("a", 1, passed=True), _row("b", 2, passed=True)], gate=original).model_copy(
+        update={"gate": original}
+    )
+    strict = GateConfig(auto_pass=0.95)
+    updated = apply_hitl(report, HitlRequest(updates=[HitlImageUpdate(image_id="a")], gate=strict))
+    assert updated.gate == original  # "b" was never judged under the strict gate
+    assert updated.images[0].passed is None  # but the batch itself used it
+
+
+def test_save_takes_the_run_lock(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    from contextlib import contextmanager
+
+    store = ReportStore(tmp_path)
+    held: list[str] = []
+    real = store._update_lock
+
+    @contextmanager
+    def recording(run_id: str):  # noqa: ANN202
+        with real(run_id):
+            held.append(run_id)
+            yield
+
+    monkeypatch.setattr(store, "_update_lock", recording)
+    store.save(_report("run-1"))
+    assert held == ["run-1"]
+    store.review("run-1", HitlRequest())  # review saves under its own lock without re-taking it
+    assert held == ["run-1", "run-1"]
+
+
+def test_unknown_run_ids_create_no_lock_files(tmp_path) -> None:
+    store = ReportStore(tmp_path)
+    assert store.delete("never-stored") is False
+    with pytest.raises(FileNotFoundError):
+        store.review("never-stored", HitlRequest())
+    assert not list(tmp_path.glob(".*.lock"))

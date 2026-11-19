@@ -138,6 +138,9 @@ class DiffusersBackend:
                     )
                     emit(ProgressEvent(run_id=spec.run_id, type="image", seed=seed, image_id=image_id))
                     emit(ProgressEvent(run_id=spec.run_id, type="progress", completed=done, total=total))
+            # Inside the block: a failed manifest write is a generation failure too
+            # (error event + BackendError), not a raw OSError past the stream.
+            write_manifest(out_dir, manifest)
         except BackendError as exc:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
@@ -150,7 +153,6 @@ class DiffusersBackend:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=error))
             raise BackendError(error) from exc
 
-        write_manifest(out_dir, manifest)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
 

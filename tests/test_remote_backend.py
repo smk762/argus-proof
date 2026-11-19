@@ -154,3 +154,46 @@ def test_text_encoders_must_match_the_spec(tmp_path: Path) -> None:
     ok["text_encoders"] = [{"name": "t5.safetensors", "sha256": "b" * 64}]
     result = RemoteBackend("http://svc", transport=FakeTransport(manifest=ok)).generate(spec, tmp_path / "ok")
     assert result.manifest.text_encoders[0].sha256 == "b" * 64
+
+
+def _png_b64() -> str:
+    return base64.b64encode(make_png()).decode()
+
+
+@pytest.mark.parametrize("seed", [2, "1", 1.0, True])
+def test_an_image_for_an_unrequested_or_non_int_seed_is_refused(tmp_path: Path, seed) -> None:  # noqa: ANN001
+    events = []
+    transport = FakeTransport(images=[{"seed": seed, "content_base64": _png_b64()}])
+    with pytest.raises(BackendError, match="did not request"):
+        RemoteBackend("http://svc", transport=transport).generate(_spec([1]), tmp_path / "run", events.append)
+    assert events[-1].type == "error"
+
+
+def test_a_requested_seed_without_an_image_is_refused(tmp_path: Path) -> None:
+    manifest = _manifest_json()
+    manifest["seeds"] = [1, 2]
+    transport = FakeTransport(manifest=manifest, images=[{"seed": 1, "content_base64": _png_b64()}])
+    with pytest.raises(BackendError, match=r"no image for requested seed\(s\) \[2\]"):
+        RemoteBackend("http://svc", transport=transport).generate(_spec([1, 2]), tmp_path / "run")
+    assert not (tmp_path / "run" / "manifest.json").exists()
+
+
+def test_disambiguated_image_ids_never_collide(tmp_path: Path) -> None:
+    images = [{"seed": 1, "image_id": i, "content_base64": _png_b64()} for i in ("a", "a-2", "a")]
+    result = RemoteBackend("http://svc", transport=FakeTransport(images=images)).generate(_spec([1]), tmp_path / "r")
+    ids = [img.image_id for img in result.images]
+    assert len(set(ids)) == 3
+    assert len({img.path for img in result.images}) == 3
+
+
+def test_a_failed_manifest_write_emits_an_error_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from argus_proof.backends import base
+
+    def fail(self, *a, **kw):  # noqa: ANN001, ANN002, ANN003, ANN202
+        raise OSError("disk full")
+
+    monkeypatch.setattr(base.Path, "write_text", fail)
+    events = []
+    with pytest.raises(BackendError, match="disk full"):
+        RemoteBackend("http://svc", transport=FakeTransport()).generate(_spec([1]), tmp_path / "run", events.append)
+    assert events[-1].type == "error"

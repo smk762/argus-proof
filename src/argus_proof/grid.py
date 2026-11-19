@@ -16,6 +16,7 @@ natural generation prompt), falling back to the training ``.txt`` sidecar.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
@@ -53,15 +54,19 @@ VARIANT_PREFERENCE: tuple[str, ...] = ("zeroshot", "training")
 def read_export_prompts(export_dir: Path) -> list[str]:
     """Base prompts for *export_dir*: zeroshot captions if present, else ``.txt``.
 
-    Prefers a lens captions JSON (whose entries carry ``caption_variants``);
+    Prefers lens captions JSON (every such file, merged; entries carry ``caption_variants``);
     falls back to the ``.txt`` sidecars (the training caption) inside the
     export, then to the sidecars next to the dataset images the export's
     ``manifest.jsonl`` references by ``abs_path`` — lens writes training
     captions beside the *source* images, so a manifest-only export still
     yields prompts when the dataset volume is mounted at the recorded path.
-    Returns a de-duplicated, order-stable list.
+    Returns a de-duplicated, order-stable list. Raises :class:`GridError` if
+    *export_dir* is not a directory (a mistyped path, not an empty export).
     """
+    if not Path(export_dir).is_dir():
+        raise GridError(f"export dir {export_dir} does not exist or is not a directory")
     prompts = _prompts_from_captions_json(export_dir)
+
     if prompts:
         logger.debug("grid.prompts", source="captions_json", count=len(prompts))
         return prompts
@@ -75,14 +80,15 @@ def read_export_prompts(export_dir: Path) -> list[str]:
 
 
 def _prompts_from_captions_json(export_dir: Path) -> list[str]:
+    # Every caption file, not the first that parses: lens captions can be one
+    # JSON sidecar per image, and stopping at the first would grid one image's
+    # prompt. An aggregate file alongside its sidecars dedups to the same set.
+    picked: list[str] = []
     for path in sorted(export_dir.rglob("*.json")) + sorted(export_dir.rglob("*.jsonl")):
         if _is_hidden(path, export_dir):
             continue
-        entries = _load_lens_entries(path)
-        picked = [p for e in entries if (p := _pick_variant(e))]
-        if picked:
-            return _dedup(picked)
-    return []
+        picked.extend(p for e in _load_lens_entries(path) if (p := _pick_variant(e)))
+    return _dedup(picked)
 
 
 def _load_lens_entries(path: Path) -> list[dict]:
@@ -103,14 +109,14 @@ def _load_lens_entries(path: Path) -> list[dict]:
                 continue
             try:
                 obj = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):  # RecursionError: pathologically nested JSON
                 continue  # skip a malformed line, keep the rest of the file's captions
             if isinstance(obj, dict):
                 entries.append(obj)
     else:
         try:
             data = json.loads(text)
-        except ValueError:
+        except (ValueError, RecursionError):  # RecursionError: pathologically nested JSON
             return []
         if not isinstance(data, list):
             return []
@@ -163,16 +169,16 @@ def _prompts_from_manifest_rows(export_dir: Path) -> list[str]:
             continue
         try:
             row = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         abs_path = row.get("abs_path") if isinstance(row, dict) else None
         if not isinstance(abs_path, str) or not abs_path:
             continue
-        sidecar = Path(abs_path).with_suffix(".txt")
         try:
-            text = sidecar.read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError):
-            continue  # image not captioned (or volume not mounted) -> skip the row
+            # with_suffix raises ValueError for a path with no name ("/", "..").
+            text = Path(abs_path).with_suffix(".txt").read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue  # image not captioned, volume not mounted, or a malformed row -> skip it
         if text:
             prompts.append(text)
     return _dedup(prompts)
@@ -215,11 +221,25 @@ def _token_combos(config: GridConfig) -> list[str]:
     if not axes:
         return []
     keys = sorted(axes)  # sorted so combo strings are ordered deterministically
-    combos = [", ".join(values) for values in product(*(axes[k] for k in keys))]
-    if config.max_token_combos is not None and len(combos) > config.max_token_combos:
-        sampled = Random(config.combo_seed).sample(combos, config.max_token_combos)
-        combos = sorted(sampled)
-    return combos
+    levels = [axes[k] for k in keys]
+    total = math.prod(len(v) for v in levels)
+    cap = config.max_token_combos
+    if cap is None or total <= cap:
+        return [", ".join(values) for values in product(*levels)]
+    # Sample positions in the cartesian product and decode only those, so a cap
+    # bounds the work too (8 axes x 10 values is 10^8 combos). Random.sample picks
+    # the same positions from range(total) as from the materialised list, so the
+    # sample for a given combo_seed is unchanged.
+    return sorted(", ".join(_combo_at(index, levels)) for index in Random(config.combo_seed).sample(range(total), cap))
+
+
+def _combo_at(index: int, levels: list[list[str]]) -> list[str]:
+    """The *index*-th tuple of ``product(*levels)`` (the last axis varies fastest)."""
+    values: list[str] = []
+    for options in reversed(levels):
+        index, digit = divmod(index, len(options))
+        values.append(options[digit])
+    return values[::-1]
 
 
 def _expand_prompts(base_prompts: list[str], config: GridConfig) -> list[_PromptItem]:

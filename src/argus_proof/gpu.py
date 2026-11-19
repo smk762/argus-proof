@@ -1,12 +1,17 @@
 """GPU leases from the suite's broker (argus-iris), through argus-cortex's coordinator.
 
-A proof run is a grid of seeds, so its GPU work is ``batch`` and preemptible at every seed boundary:
+A proof run is a grid of seeds, so its generation work is ``batch`` and preemptible at every seed boundary:
 
 * the ``comfyui`` backend holds a lease on ``comfyui`` (kind ``generate``) and sends the work to the ComfyUI the grant
   names (``base_url``; ``None`` means proof's own ``COMFYUI_BASE_URL``);
 * the ``diffusers`` backend renders in this process, so it leases ``in-process`` (kind ``generate-local``).
 
-One lease covers a run. Between seeds :class:`SeedLeases` checks ``should_yield()``; when the broker wants the GPU
+Scoring is the third kind: ``score`` (``in-process``) covers one scoring pass over a run's images with the learned
+scorers (InsightFace, CLIP-IQA, CLIPScore), and is not preemptible (a pass is short and has no seed boundary). It
+leases at ``interactive`` priority unless the caller is part of a batch run (``/run/stream`` sends ``batch``). The
+scorers load their models inside the lease and free them before it ends, so proof keeps nothing resident.
+
+One generation lease covers a run. Between seeds :class:`SeedLeases` checks ``should_yield()``; when the broker wants the GPU
 back it releases the lease and queues for a new one, **pinned to the node the run started on**: the manifest hashed
 the model files once, so the rest of the run must not move to a ComfyUI that may hold different ones.
 
@@ -48,10 +53,29 @@ class Footprint:
 
 GENERATE = Footprint("generate", TARGET_COMFYUI, vram_mb=9000, model_mb=6500)  # an SDXL checkpoint in ComfyUI
 GENERATE_LOCAL = Footprint("generate-local", IN_PROCESS, vram_mb=10000, model_mb=7000)  # diffusers SDXL, fp16
+# One scoring pass: measured on an RTX 3090 (see gpu-tenant.yaml for the breakdown). model_mb 0: the scorers free
+# their models before the lease ends, so nothing stays loaded.
+SCORE = Footprint("score", IN_PROCESS, vram_mb=3500, model_mb=0, preemptible=False)
+SCORE_PRIORITY: PriorityClass = "interactive"
 
 
 def default_coordinator() -> GpuCoordinator:
     return coordinator_from_env()
+
+
+def score_lease(
+    coordinator: GpuCoordinator, *, caller: str, priority: PriorityClass = SCORE_PRIORITY
+) -> contextlib.AbstractContextManager[GpuLease]:
+    """The lease one scoring pass runs under (:data:`SCORE`, not preemptible)."""
+    return coordinator.lease(
+        caller=caller,
+        min_vram_mb=SCORE.vram_mb,
+        model_mb=SCORE.model_mb,
+        kind=SCORE.kind,
+        target=SCORE.target,
+        priority=priority,
+        preemptible=SCORE.preemptible,
+    )
 
 
 def lease_failure(exc: Exception) -> str:

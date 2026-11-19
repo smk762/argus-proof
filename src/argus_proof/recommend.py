@@ -63,6 +63,8 @@ class RecommendConfig(BaseModel):
     """
 
     min_identity: float | None = Field(default=0.6, ge=0.0, le=1.0)
+    # Off by default: DINOv2 cosine has no calibrated floor yet (unrelated images sit around 0.1-0.4).
+    min_likeness: float | None = Field(default=None, ge=0.0, le=1.0)
     min_clip_score: float | None = Field(default=0.5, ge=0.0, le=1.0)
     min_aesthetic: float | None = Field(default=0.5, ge=0.0, le=1.0)
     min_preference: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -75,13 +77,14 @@ class RecommendConfig(BaseModel):
         """A config whose shared floors track the CI gate's *thresholds*.
 
         Keeps the recommender and :func:`~argus_proof.acceptance.evaluate_acceptance`
-        from disagreeing about the same report: the identity floor, unsafe ceiling,
+        from disagreeing about the same report: the identity and likeness floors, unsafe ceiling,
         and safety floor are taken from *thresholds*. The recommend-only floors
         (clip_score / aesthetic / preference / diversity) keep their defaults
         unless supplied in *overrides*.
         """
         fields: dict[str, float | None] = {
             "min_identity": thresholds.min_identity_mean,
+            "min_likeness": thresholds.min_likeness_mean,
             "max_unsafe_rate": thresholds.max_unsafe_rate,
             "unsafe_safety_floor": thresholds.unsafe_safety_floor,
         }
@@ -115,6 +118,19 @@ _METRIC_RULES: tuple[_MetricRule, ...] = (
                 "forge",
                 "identity didn't transfer",
                 "add/curate more identity-representative training images, or adjust training steps/rank",
+            ),
+        ),
+    ),
+    _MetricRule(
+        "likeness",
+        "min_likeness",
+        lambda r: r.aggregate.means.likeness,
+        (
+            (
+                "forge",
+                "likeness didn't transfer",
+                "the subject or set doesn't match its references: curate more representative training images, "
+                "or adjust training steps/rank",
             ),
         ),
     ),
@@ -269,9 +285,12 @@ def _best_across_runs(store: _Sliceable, dimension: str, stage: RecommendStage) 
     cells = [s for s in store.slice_pass_rate(dimension) if s.value is not None]
     if len(cells) < 2:
         return []
-    best, runner_up = cells[0], cells[1]  # slice_pass_rate ranks by CI lower bound, best first
-    if best.ci_low <= runner_up.ci_high:
+    best = cells[0]  # slice_pass_rate ranks by CI lower bound, best first
+    # Against every other cell's upper bound, not just the runner-up's: a small
+    # cell ranks low on ci_low yet its wide interval can still reach above best.
+    if best.ci_low <= max(c.ci_high for c in cells[1:]):
         return []  # CIs overlap — the data can't distinguish the cells
+
     return [
         Recommendation(
             stage=stage,

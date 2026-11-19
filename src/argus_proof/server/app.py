@@ -7,6 +7,7 @@ Routes:
     GET  /models                          -> {checkpoints: [...], loras: [...]}  (engine-loadable names)
     GET  /scorers                         -> {scorers: [{metric, name, available}]}  (installed-scorer probe)
     POST /run/stream                      -> NDJSON: generate a seed-set, score it, store the report
+    POST /score                           -> ScoreResult (multipart images scored vs an export's references; not stored)
     GET  /reports                         -> {reports: [ReportSummary, ...]}  (run browser)
     GET  /report/{run_id}                 -> EvalReport
     PUT  /report/{run_id}                 -> EvalReport   (store/overwrite a scored report)
@@ -41,28 +42,33 @@ need a ``{"confirm": "purge"}`` body, refuse a run that is still generating
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
-import re
 import secrets
 import shutil
+import tempfile
 import threading
 import time
 from pathlib import Path
 
+import structlog
+
 try:
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
     from fastapi.concurrency import run_in_threadpool
     from fastapi.responses import FileResponse, StreamingResponse
     from starlette.background import BackgroundTask
 except ImportError as exc:  # pragma: no cover
     raise ImportError("Server requires: pip install argus-proof[server]") from exc
 
+from argus_cortex.fs import PathRefused, safe_name
 from argus_cortex.server import WriteGuard, constant_refuse, env_flag
 from pydantic import BaseModel, Field, model_validator
 
 from argus_proof import __version__
 from argus_proof.models import (
+    MAX_SCORE_IMAGES,
     CompleteFrame,
     EvalReport,
     LoRASpec,
@@ -71,10 +77,23 @@ from argus_proof.models import (
     RunManifest,
     RunSpec,
     SamplingParams,
+    ScoreRequest,
+    ScoreResult,
     ScoringFrame,
 )
 from argus_proof.refinement import RefinementRequest, refined_ranking
 from argus_proof.reports import HitlRequest, ReportStore, ReportSummary, summarise_report
+
+logger = structlog.get_logger()
+
+# Ceilings on one /run/stream request: every seed is a generation of width x
+# height for `steps` iterations, and the endpoint is reachable from the demo
+# host, so an unbounded body could queue thousands of images or one OOM render.
+MAX_RUN_SEEDS = 64
+MAX_RUN_STEPS = 200
+MAX_RUN_SIDE = 2048
+# Ceiling on one uploaded image for POST /score (bytes); sides are held to MAX_RUN_SIDE.
+MAX_SCORE_BYTES = 32 * 1024 * 1024
 
 # Where the run trigger reads curator exports from (compose mounts /data/out here).
 ENV_EXPORTS_DIR = "ARGUS_PROOF_EXPORTS_DIR"
@@ -93,12 +112,20 @@ _PURGE_CONFIRM = {"confirm": "purge"}
 
 # Claimed in the active-run set while ``POST /purge`` runs, so no run starts
 # mid-purge without holding the lock (and blocking the event loop) throughout.
-# Not a valid run id (fails _SAFE_ID), so it can't collide with one.
+# Not a valid run id (fails _is_safe_id), so it can't collide with one.
 _PURGING_ALL = "*purge-all*"
 
-# run_id / image_id / export names become path segments under a fixed root —
-# allow only a strict filename charset so traversal is impossible by construction.
-_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# run_id / image_id / export names become path segments under a fixed root: argus-cortex's
+# safe_name allows one segment (starts alphanumeric, then letters, digits, '.', '_' or '-'),
+# matched against the whole string, so traversal is impossible by construction.
+def _is_safe_id(value: str) -> bool:
+    try:
+        safe_name(value)
+    except PathRefused:
+        return False
+    return True
+
 
 _IMAGE_MEDIA = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 
@@ -106,7 +133,7 @@ _MODEL_SUFFIXES = (".safetensors", ".ckpt", ".pt")
 
 
 def _require_safe(value: str, label: str) -> str:
-    if not _SAFE_ID.match(value or ""):
+    if not _is_safe_id(value or ""):
         raise HTTPException(status_code=400, detail=f"invalid {label} {value!r}")
     return value
 
@@ -117,6 +144,8 @@ def _require_safe(value: str, label: str) -> str:
 CAPABILITIES = ("report_manifest",)
 # Advertised on top of CAPABILITIES only when devmode registers /purge.
 DEVMODE_CAPABILITIES = ("purge",)
+# Advertised on top of CAPABILITIES only when the host isn't read-only (which refuses POST /score).
+WRITE_CAPABILITIES = ("score",)
 
 # The message a refused write carries in read-only mode.
 _READ_ONLY_REFUSAL = "argus-proof is in read-only (replay) mode; writes and live evaluation are disabled"
@@ -145,14 +174,14 @@ class RunRequest(BaseModel):
     export: str | None = None
     prompt: str | None = None
     negative_prompt: str = ""
-    seeds: list[int] = Field(default_factory=lambda: [1, 2, 3], min_length=1)
-    steps: int = Field(default=25, gt=0)
+    seeds: list[int] = Field(default_factory=lambda: [1, 2, 3], min_length=1, max_length=MAX_RUN_SEEDS)
+    steps: int = Field(default=25, gt=0, le=MAX_RUN_STEPS)
     cfg: float | None = None
     sampler: str | None = None
     scheduler: str | None = None
     guidance: float | None = Field(default=None, ge=0)
-    width: int = Field(default=1024, gt=0)
-    height: int = Field(default=1024, gt=0)
+    width: int = Field(default=1024, gt=0, le=MAX_RUN_SIDE)
+    height: int = Field(default=1024, gt=0, le=MAX_RUN_SIDE)
     clip_skip: int = 1
     vae: str | None = None
     text_encoders: list[str] | None = None
@@ -203,7 +232,7 @@ def create_app(
     ``purge`` in ``capabilities`` when the routes will actually work (devmode
     on and not read-only).
     """
-    from argus_proof.backends.base import MANIFEST_NAME
+    from argus_proof.backends.base import MANIFEST_NAME, BackendError, clear_failed, mark_failed
     from argus_proof.evaluate import EvaluateError, load_manifest, runs_root
 
     read_only = env_flag(ENV_READ_ONLY) if read_only is None else read_only
@@ -229,10 +258,13 @@ def create_app(
     if cors:
         from fastapi.middleware.cors import CORSMiddleware
 
+        # Credentials only with an explicit origin list: with a wildcard Starlette
+        # reflects any Origin, so every site a user visits could drive the
+        # mutating routes (a devmode /purge included) with their credentials.
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins or ["*"],
-            allow_credentials=True,
+            allow_credentials=bool(cors_origins),
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -315,7 +347,9 @@ def create_app(
             "version": __version__,
             "read_only": read_only,
             "devmode": devmode,
-            "capabilities": list(CAPABILITIES) + (list(DEVMODE_CAPABILITIES) if devmode and not read_only else []),
+            "capabilities": list(CAPABILITIES)
+            + ([] if read_only else list(WRITE_CAPABILITIES))
+            + (list(DEVMODE_CAPABILITIES) if devmode and not read_only else []),
         }
 
     @app.get("/exports")
@@ -325,9 +359,10 @@ def create_app(
         if root is None or not root.is_dir():
             return {"exports": []}
         exports: list[dict] = []
+        # nosemgrep: handler-scans-all - exports are few and the answer is the whole list; counting rows re-reads each manifest, so cache it if exports grow
         for child in sorted(root.iterdir()):
             manifest = child / "manifest.jsonl"
-            if not child.is_dir() or not manifest.is_file() or not _SAFE_ID.match(child.name):
+            if not child.is_dir() or not manifest.is_file() or not _is_safe_id(child.name):
                 continue
             try:
                 n_rows = sum(1 for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip())
@@ -357,6 +392,7 @@ def create_app(
                     continue
                 result[key].update(
                     str(p.relative_to(base))
+                    # nosemgrep: handler-scans-all - operator-managed model dirs, small; the answer is the whole listing
                     for p in base.rglob("*")
                     if p.is_file() and p.suffix.lower() in _MODEL_SUFFIXES
                 )
@@ -472,14 +508,29 @@ def create_app(
                     errored = errored or event.type == "error"
                     emit(event.model_dump(exclude_none=True))
 
-                result = backend.generate(spec, run_dir, progress=on_progress)
+                try:
+                    result = backend.generate(spec, run_dir, progress=on_progress)
+                except BackendError as exc:
+                    with contextlib.suppress(OSError):  # the error frame is what the client sees
+                        mark_failed(run_dir, run_id, str(exc))
+                    raise
+                with contextlib.suppress(OSError):  # a stale marker from an earlier failed run of this run_id
+                    clear_failed(run_dir)
                 emit(ScoringFrame(run_id=run_id, n_images=len(result.images)).model_dump(mode="json"))
-                report = score_images(result.manifest, result.images, references=references)
+                # Scoring is part of this batch run, so its lease is batch too.
+                report = score_images(result.manifest, result.images, references=references, priority="batch")
                 store.save(report)
                 emit(CompleteFrame(run_id=run_id, report=summarise_report(report)).model_dump(mode="json"))
             except (EvaluateError, ProofError, ValueError) as exc:
                 if not errored:
                     emit(ProgressEvent(run_id=run_id, type="error", message=str(exc)).model_dump(exclude_none=True))
+            except Exception as exc:  # noqa: BLE001 - CUDA OOM, OSError, a dropped engine: still end with a frame
+                # Without this the stream stops with neither `complete` nor `error`,
+                # and `await worker` re-raises into the response body mid-stream.
+                logger.exception("run_stream.failed", run_id=run_id)
+                if not errored:
+                    message = f"{type(exc).__name__}: {exc}"
+                    emit(ProgressEvent(run_id=run_id, type="error", message=message).model_dump(exclude_none=True))
             finally:
                 _release_run(run_id)  # before the sentinel: a client that saw the end can purge
                 emit(None)  # sentinel: stream is over
@@ -506,6 +557,79 @@ def create_app(
         return StreamingResponse(
             stream(), media_type="application/x-ndjson", background=BackgroundTask(release_if_unstarted)
         )
+
+    @app.post("/score")
+    async def score(
+        images: list[UploadFile] = File(..., description="the images to score, in order"),
+        request_json: str = Form(..., alias="request", description="a ScoreRequest, as JSON"),
+    ) -> ScoreResult:
+        """Score caller-supplied images against an export's held-out references; store nothing.
+
+        For a client that already has its images (argus-mint scoring a finished
+        teaser against an identity's references, mint#51). The export's
+        ``references/`` must not overlap its training images (400 naming the
+        overlap), a requested scorer that can't run here is a 503, and so is a
+        refused GPU lease. Read-only mode refuses it (403) like every write.
+        """
+        from argus_proof.evaluate import (
+            EvaluateError,
+            GpuUnavailable,
+            ScorerUnavailable,
+            prepare_scoring_image,
+            score_files,
+        )
+
+        try:
+            req = ScoreRequest.model_validate_json(request_json)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"invalid request: {exc}") from exc
+        if not 1 <= len(images) <= MAX_SCORE_IMAGES:
+            raise HTTPException(status_code=400, detail=f"send 1 to {MAX_SCORE_IMAGES} images, not {len(images)}")
+        if req.crops is not None and len(req.crops) != len(images):
+            raise HTTPException(
+                status_code=400, detail=f"crops has {len(req.crops)} entries for {len(images)} images; one per image"
+            )
+        export_dir = _resolve_export(req.export)
+        payloads: list[bytes] = []
+        for upload in images:
+            data = await upload.read(MAX_SCORE_BYTES + 1)
+            if len(data) > MAX_SCORE_BYTES:
+                raise HTTPException(status_code=413, detail=f"an image is over {MAX_SCORE_BYTES} bytes")
+            payloads.append(data)
+        filenames = [(u.filename or None) and u.filename[:255] for u in images]
+        crops = req.crops or [None] * len(images)
+        caller = f"score-{secrets.token_hex(4)}"
+
+        def work() -> ScoreResult:
+            with tempfile.TemporaryDirectory(prefix="proof-score-") as tmp:
+                paths: list[Path] = []
+                for i, (data, crop) in enumerate(zip(payloads, crops, strict=True)):
+                    path = Path(tmp) / f"{i}.png"  # never the client's filename
+                    try:
+                        prepare_scoring_image(data, crop, path, max_side=MAX_RUN_SIDE)
+                    except EvaluateError as exc:
+                        raise EvaluateError(f"image {i}: {exc}") from exc
+                    paths.append(path)
+                return score_files(
+                    paths,
+                    export_dir=export_dir,
+                    scorers=list(req.scorers),
+                    target_category=req.target_category,
+                    filenames=filenames,
+                    crops=req.crops,
+                    caller=caller,
+                )
+
+        try:
+            return await run_in_threadpool(work)
+        except (ScorerUnavailable, GpuUnavailable) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except EvaluateError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            # A scorer broke its [0, 1] contract (a NaN embedding): say so, not a bare 500.
+            logger.exception("score.failed", export=req.export)
+            raise HTTPException(status_code=500, detail=f"scoring failed: {exc}") from exc
 
     @app.get("/reports")
     async def list_reports() -> dict[str, list[ReportSummary]]:
@@ -670,12 +794,13 @@ def create_app(
             def purge_everything() -> dict[str, int]:
                 removed = {"reports": 0, "run_dirs": 0}
                 for run_id in store.run_ids():
-                    if _SAFE_ID.match(run_id) and store.delete(run_id):
+                    if _is_safe_id(run_id) and store.delete(run_id):
                         removed["reports"] += 1
                 root = _runs_root()
                 if root.is_dir():
+                    # nosemgrep: handler-scans-all - purge-all: visiting every run dir is the operation
                     for path in sorted(root.iterdir()):
-                        if _SAFE_ID.match(path.name) and _remove_run_dir(path.name):
+                        if _is_safe_id(path.name) and _remove_run_dir(path.name):
                             removed["run_dirs"] += 1
                 return removed
 

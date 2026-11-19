@@ -221,3 +221,43 @@ def test_plan_from_export_end_to_end(tmp_path: Path) -> None:
     plan = plan_from_export(tmp_path, make_config())
     assert plan.estimate.n_runs == 4  # 2 checkpoints x 2 weights x 1 prompt
     assert all(s.prompt == "a photo of sks person" for s in plan.specs)
+
+
+def test_per_image_caption_sidecars_are_all_read(tmp_path: Path) -> None:
+    for i in range(3):
+        write_captions_json(tmp_path, [{"caption_variants": {"zeroshot": f"photo {i}"}}], name=f"img{i}.json")
+    (tmp_path / "captions.jsonl").write_text(json.dumps({"final_caption": "photo 9"}) + "\n", encoding="utf-8")
+    assert read_export_prompts(tmp_path) == ["photo 0", "photo 1", "photo 2", "photo 9"]
+
+
+def test_deeply_nested_json_is_skipped_not_a_crash(tmp_path: Path) -> None:
+    deep = "[" * 100_000 + "]" * 100_000
+    (tmp_path / "deep.json").write_text(deep, encoding="utf-8")
+    (tmp_path / "deep.jsonl").write_text(deep + "\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("fallback caption", encoding="utf-8")
+    assert read_export_prompts(tmp_path) == ["fallback caption"]
+
+
+def test_a_manifest_row_with_no_file_name_is_skipped(tmp_path: Path) -> None:
+    (tmp_path / "manifest.jsonl").write_text('{"abs_path": "/"}\n{"abs_path": ".."}\n', encoding="utf-8")
+    assert read_export_prompts(tmp_path) == []
+
+
+def test_capped_token_combos_match_sampling_the_full_product() -> None:
+    from itertools import product
+    from random import Random
+
+    from argus_proof.grid import _token_combos
+
+    axes = {"a": ["a1", "a2", "a3"], "b": ["b1", "b2"], "c": ["c1", "c2", "c3", "c4"]}
+    config = make_config(token_axes=axes, max_token_combos=5, combo_seed=11)
+    full = [", ".join(v) for v in product(*(axes[k] for k in sorted(axes)))]
+    assert _token_combos(config) == sorted(Random(11).sample(full, 5))  # same sample as before the change
+
+
+def test_a_huge_capped_token_grid_does_not_materialise_the_product() -> None:
+    from argus_proof.grid import _token_combos
+
+    axes = {f"k{i}": [f"v{i}-{j}" for j in range(10)] for i in range(9)}  # 10^9 combos
+    combos = _token_combos(make_config(token_axes=axes, max_token_combos=4))
+    assert len(combos) == 4 and all(c.count(", ") == 8 for c in combos)

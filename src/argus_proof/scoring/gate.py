@@ -9,6 +9,8 @@ its fate so humans only rate the middle band. Pure functions over
 
 from __future__ import annotations
 
+import math
+
 from argus_proof.models import GateConfig, MetricScores, RejectReason
 from argus_proof.scoring.base import REJECT_CODE_FOR_METRIC
 
@@ -37,9 +39,15 @@ def _hard_gate_failures(metrics: MetricScores, config: GateConfig) -> list[Rejec
     reasons: list[RejectReason] = []
     for metric, floor in config.hard_gates.items():
         value = getattr(metrics, metric, None)
-        if value is not None and value < floor:
-            code = REJECT_CODE_FOR_METRIC.get(metric, "other")
+        if value is None:
+            continue  # known metric, just not scored on this run
+        code = REJECT_CODE_FOR_METRIC.get(metric, "other")
+        if not math.isfinite(value):
+            # NaN compares False with everything, so `value < floor` would let it pass the gate.
+            reasons.append(RejectReason(code=code, note=f"{metric} non-finite"))
+        elif value < floor:
             reasons.append(RejectReason(code=code, note=f"{metric} {value:.3f} < hard gate {floor:.3f}"))
+
     return reasons
 
 

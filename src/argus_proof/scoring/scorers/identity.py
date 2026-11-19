@@ -17,8 +17,12 @@ import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
+import structlog
+
 from argus_proof.models import ScorerProvenance
 from argus_proof.scoring.scorers._util import clamp01, module_available
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from argus_proof.scoring.base import ScoreContext
@@ -66,6 +70,7 @@ class IdentityScorer:
     """
 
     metric = "identity"
+    uses_gpu = True  # InsightFace runs on onnxruntime-gpu in the -score image
 
     def __init__(self, embedder: Embedder | None = None, aggregate: Literal["max", "mean"] = "max") -> None:
         self._embedder = embedder
@@ -78,24 +83,39 @@ class IdentityScorer:
             self._embedder = InsightFaceEmbedder()
         return self._embedder
 
+    def unload(self) -> None:
+        """Drop the embedder's model (see :func:`~argus_proof.scoring.scorers._util.release_models`)."""
+        unload = getattr(self._embedder, "unload", None)
+        if callable(unload):
+            unload()
+
     def provenance(self) -> ScorerProvenance:
         return ScorerProvenance(name="identity", metric="identity", model=self.embedder.name)
 
     def is_available(self) -> bool:
         return self.embedder.is_available()
 
+    def applies(self, ctx: ScoreContext) -> bool:
+        """Whether this scorer measures anything for *ctx*'s run: ArcFace only for ``identity`` runs."""
+        return ctx.profile.target_category == "identity"
+
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None:
-        if ctx.profile.target_category != "identity":
-            return None  # identity scoring only applies to identity runs
+        if not self.applies(ctx):
+            return None
         refs = self._reference_vectors(ctx)
         if not refs:
             return None  # no held-out references -> identity can't be measured
         vec = self.embedder.embed(image_path)
         if vec is None:
-            return 0.0  # no face detected -> the subject isn't present
+            return 0.0  # nothing to embed (no face detected) -> the subject isn't present
         sims = [cosine(vec, ref) for ref in refs]
+        if any(math.isnan(s) for s in sims):
+            # A degenerate embedding: propagate NaN for both aggregates so the
+            # orchestrator rejects it. max() alone would keep or drop a NaN
+            # depending on reference order.
+            return float("nan")
         agg = max(sims) if self.aggregate == "max" else sum(sims) / len(sims)
-        return clamp01(agg)  # NaN (degenerate embedding) passes through -> rejected by the orchestrator
+        return clamp01(agg)
 
     def _reference_vectors(self, ctx: ScoreContext) -> list[list[float]]:
         """Embed the reference set once, cached by path + size + mtime.
@@ -128,9 +148,23 @@ class InsightFaceEmbedder:
     def is_available(self) -> bool:
         return module_available("insightface", "PIL", "numpy")
 
+    def unload(self) -> None:
+        self._app = None
+
     def _load(self):  # noqa: ANN202 - insightface types aren't importable without the extra
         if self._app is None:
+            import onnxruntime
             from insightface.app import FaceAnalysis
+
+            # onnxruntime-gpu (the -score image) finds CUDA/cuDNN in the nvidia-*
+            # packages torch installed only once told to look; CPU builds lack it.
+            # A failure here just leaves InsightFace on its CPU fallback.
+            preload = getattr(onnxruntime, "preload_dlls", None)
+            if preload is not None:
+                try:
+                    preload()
+                except Exception as exc:  # noqa: BLE001 - a missing GPU lib must not stop scoring
+                    logger.warning("identity.ort_preload_failed", error=str(exc))
 
             app = FaceAnalysis(name=self.model_name)
             app.prepare(ctx_id=0, det_size=self.det_size)
@@ -139,10 +173,14 @@ class InsightFaceEmbedder:
 
     def embed(self, image_path: Path) -> list[float] | None:
         import numpy as np
-        from PIL import Image
+        from PIL import Image, ImageOps
 
         with Image.open(image_path) as im:
-            rgb = np.array(im.convert("RGB"))
+            # Honour the EXIF Orientation tag (phone/camera references are often
+            # stored sideways), as the curator's face preprocessing does, so the
+            # detector sees an upright face.
+            rgb = np.array(ImageOps.exif_transpose(im).convert("RGB"))
+
         # InsightFace expects a BGR, C-contiguous array; a bare ::-1 view has a
         # negative stride that cv2/onnxruntime inside insightface reject.
         bgr = np.ascontiguousarray(rgb[:, :, ::-1])

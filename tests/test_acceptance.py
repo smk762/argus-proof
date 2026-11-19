@@ -18,6 +18,7 @@ def report(
     n_groups: int,
     pass_rate: float,
     identity: float | None = None,
+    likeness: float | None = None,
     images: list[ImageScores] | None = None,
 ) -> EvalReport:
     return EvalReport(
@@ -28,7 +29,7 @@ def report(
             n_groups=n_groups,
             n_passed=n_passed,
             pass_rate=pass_rate,
-            means=MetricScores(identity=identity),
+            means=MetricScores(identity=identity, likeness=likeness),
         ),
         verdict=Verdict(passed=pass_rate >= 0.75),
     )
@@ -128,3 +129,25 @@ def test_all_checks_must_pass() -> None:
     r = report(n_passed=8, n_groups=10, pass_rate=0.8, identity=0.4)
     t = AcceptanceThresholds(min_pass_rate=0.75, min_identity_mean=0.7)  # pass_rate ok, identity fails
     assert evaluate_acceptance(r, t).passed is False
+
+
+def test_more_passes_than_groups_fails_the_ci_check_instead_of_clamping() -> None:
+    # 4 passes counted per image against 4 groups would read as 4/4 if clamped.
+    r = report(n_passed=5, n_groups=4, pass_rate=0.25)
+    c = check(evaluate_acceptance(r, AcceptanceThresholds(min_pass_rate_ci_lower=0.1)), "pass_rate_ci_lower")
+    assert not c.passed and "inconsistent report" in c.detail
+
+
+def test_likeness_floor() -> None:
+    r = report(n_passed=8, n_groups=10, pass_rate=0.8, likeness=0.6)
+    assert check(evaluate_acceptance(r, AcceptanceThresholds(min_likeness_mean=0.5)), "likeness_mean").passed is True
+    failed = check(evaluate_acceptance(r, AcceptanceThresholds(min_likeness_mean=0.7)), "likeness_mean")
+    assert (failed.passed, failed.actual, failed.threshold) == (False, 0.6, 0.7)
+
+
+def test_likeness_floor_fails_when_not_measured() -> None:
+    # e.g. identity scored but likeness not (no [score] extra): no evidence, no accept.
+    r = report(n_passed=8, n_groups=10, pass_rate=0.8, identity=0.9)
+    result = evaluate_acceptance(r, AcceptanceThresholds(min_likeness_mean=0.5))
+    assert result.passed is False
+    assert check(result, "likeness_mean").detail == "likeness not measured"

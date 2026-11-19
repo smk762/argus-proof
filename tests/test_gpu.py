@@ -15,7 +15,7 @@ from test_diffusers_backend import FakeRenderer
 
 from argus_proof import gpu
 from argus_proof.backends import ComfyUIBackend, DiffusersBackend
-from argus_proof.backends.base import BackendError, make_dir_resolver
+from argus_proof.backends.base import BackendError, BackendTimeout, make_dir_resolver
 from argus_proof.backends.workflow import example_template
 from argus_proof.models import ProgressEvent
 
@@ -76,14 +76,19 @@ def comfyui(models: Path, transport: FakeTransport, coordinator) -> ComfyUIBacke
 def test_the_manifest_validates_and_matches_the_lease_figures() -> None:
     manifest = load_tenant_manifest(MANIFEST)
     assert manifest.tenant == gpu.TENANT
-    assert manifest.residents == ()
-    assert {k.kind for k in manifest.kinds} == {gpu.GENERATE.kind, gpu.GENERATE_LOCAL.kind}
-    for footprint in (gpu.GENERATE, gpu.GENERATE_LOCAL):
+    assert manifest.residents == ()  # the scorers free their models inside the lease: nothing stays loaded
+    assert {k.kind for k in manifest.kinds} == {gpu.GENERATE.kind, gpu.GENERATE_LOCAL.kind, gpu.SCORE.kind}
+    for footprint in (gpu.GENERATE, gpu.GENERATE_LOCAL, gpu.SCORE):
         kind = manifest.kind_for(footprint.kind)
         assert kind is not None, footprint.kind
         assert (kind.target, kind.vram_mb, kind.model_mb) == (footprint.target, footprint.vram_mb, footprint.model_mb)
-        assert kind.priority == gpu.DEFAULT_PRIORITY == "batch"
-        assert kind.preemptible is footprint.preemptible is True
+        assert kind.preemptible is footprint.preemptible
+    for footprint in (gpu.GENERATE, gpu.GENERATE_LOCAL):
+        assert manifest.kind_for(footprint.kind).priority == gpu.DEFAULT_PRIORITY == "batch"
+        assert footprint.preemptible is True
+    score = manifest.kind_for(gpu.SCORE.kind)
+    assert (score.target, score.priority, score.preemptible) == ("in-process", gpu.SCORE_PRIORITY, False)
+    assert gpu.SCORE_PRIORITY == "interactive" and gpu.SCORE.model_mb == 0
 
 
 def test_no_coordinator_configured_means_no_gating(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -166,7 +171,9 @@ def test_a_failed_seed_is_reported_to_the_broker_as_failed(models: Path, tmp_pat
     coordinator = Recording()
     with pytest.raises(BackendError):
         comfyui(models, FakeTransport(make_png(), ready=False), coordinator).generate(make_spec([1]), tmp_path)
-    assert coordinator.exits == [BackendError]
+    # A timeout, after its retry: still a BackendError, and reported as a failure (#100).
+    assert coordinator.exits == [BackendTimeout]
+    assert issubclass(BackendTimeout, BackendError)
 
 
 @pytest.mark.parametrize(
@@ -205,3 +212,182 @@ def test_a_diffusers_run_leases_in_process(models: Path, tmp_path: Path) -> None
 def test_a_diffusers_lease_failure_is_a_backend_error(models: Path, tmp_path: Path) -> None:
     with pytest.raises(BackendError, match="refused the lease"):
         _diffusers(models, Recording(raises=GpuLeaseRefused("no"))).generate(make_spec([1]), tmp_path)
+
+
+def test_a_run_split_across_comfyui_versions_records_both(models: Path, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    old = FakeTransport(make_png(), version="0.9.0")
+    new = FakeTransport(make_png(), version="0.9.9")
+    backend = comfyui(models, FakeTransport(make_png()), Recording())
+    hosts = iter([old, new, new])
+    monkeypatch.setattr(backend, "_transport_for", lambda base_url: next(hosts))
+    result = backend.generate(make_spec([1, 2, 3]), tmp_path)
+    assert result.manifest.engine_version == "0.9.0 + 0.9.9"  # not just the last host's
+
+
+# --- scoring -------------------------------------------------------------------------------------------------
+
+
+class GpuScorer:
+    """A scorer standing in for InsightFace/CLIP-IQA: it 'loads' a model on first score and records when it is freed."""
+
+    metric = "aesthetic"
+    uses_gpu = True
+
+    def __init__(self, coordinator: Recording, available: bool = True) -> None:
+        self.coordinator = coordinator
+        self.available = available
+        self.model: object | None = None
+        self.scored_under_lease: list[bool] = []
+        self.unloaded_under_lease: list[bool] = []
+
+    def provenance(self):  # noqa: ANN201
+        from argus_proof.models import ScorerProvenance
+
+        return ScorerProvenance(name="gpu-fake", metric=self.metric)
+
+    def is_available(self) -> bool:
+        return self.available
+
+    def score(self, image_path: Path, ctx) -> float:  # noqa: ANN001
+        self.model = self.model or object()
+        self.scored_under_lease.append(self.coordinator.held)
+        return 0.9
+
+    def unload(self) -> None:
+        self.model = None
+        self.unloaded_under_lease.append(self.coordinator.held)
+
+
+def test_scoring_holds_one_interactive_score_lease_and_frees_the_models_inside_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_evaluate import _generated_run
+
+    import argus_proof.evaluate as evaluate
+
+    coordinator = Recording()
+    scorer = GpuScorer(coordinator)
+    monkeypatch.setattr(evaluate, "default_scorers", lambda: [scorer])
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    report = evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest), gpu_coordinator=coordinator)
+    [call] = coordinator.calls
+    assert call["caller"] == "run-1"
+    assert (call["kind"], call["target"], call["priority"], call["preemptible"]) == (
+        "score",
+        "in-process",
+        "interactive",
+        False,
+    )
+    assert (call["min_vram_mb"], call["model_mb"]) == (gpu.SCORE.vram_mb, 0)
+    assert scorer.scored_under_lease == [True, True]  # every image scored inside the lease
+    assert scorer.unloaded_under_lease == [True]  # freed before the lease went back
+    assert scorer.model is None
+    assert coordinator.exits == [None]
+    assert [img.metrics.aesthetic for img in report.images] == [0.9, 0.9]
+
+
+def test_a_batch_caller_leases_at_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from test_evaluate import _generated_run
+
+    import argus_proof.evaluate as evaluate
+
+    coordinator = Recording()
+    monkeypatch.setattr(evaluate, "default_scorers", lambda: [GpuScorer(coordinator)])
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    evaluate.score_images(
+        manifest, evaluate.discover_images(run_dir, manifest), gpu_coordinator=coordinator, priority="batch"
+    )
+    assert [c["priority"] for c in coordinator.calls] == ["batch"]
+
+
+def test_no_gpu_scorer_available_takes_no_lease(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from test_evaluate import _generated_run
+
+    import argus_proof.evaluate as evaluate
+    from argus_proof.scoring.scorers import SafetyScorer
+
+    coordinator = Recording()
+    unavailable = GpuScorer(coordinator, available=False)
+    # The thin image: no learned scorer installed, safety is an HTTP service. Nothing to lease a GPU for.
+    monkeypatch.setattr(evaluate, "default_scorers", lambda: [unavailable, SafetyScorer()])
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest), gpu_coordinator=coordinator)
+    assert coordinator.calls == []
+    assert unavailable.unloaded_under_lease == [False]  # still freed, outside any lease
+
+
+def test_a_refused_score_lease_is_an_evaluate_error_and_scores_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_evaluate import _generated_run
+
+    import argus_proof.evaluate as evaluate
+
+    coordinator = Recording(raises=GpuLeaseRefused("no GPU has 3500 MiB free"))
+    scorer = GpuScorer(coordinator)
+    monkeypatch.setattr(evaluate, "default_scorers", lambda: [scorer])
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    with pytest.raises(evaluate.EvaluateError, match="the GPU broker refused the lease"):
+        evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest), gpu_coordinator=coordinator)
+    assert scorer.scored_under_lease == []
+
+
+def test_a_failed_scoring_pass_frees_the_models_and_reports_the_lease_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_evaluate import _generated_run
+
+    import argus_proof.evaluate as evaluate
+
+    coordinator = Recording()
+    scorer = GpuScorer(coordinator)
+
+    def boom(image_path: Path, ctx) -> float:  # noqa: ANN001
+        raise RuntimeError("CUDA out of memory")
+
+    scorer.score = boom  # type: ignore[method-assign]
+    monkeypatch.setattr(evaluate, "default_scorers", lambda: [scorer])
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    with pytest.raises(RuntimeError, match="out of memory"):
+        evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest), gpu_coordinator=coordinator)
+    assert scorer.unloaded_under_lease == [True]
+    assert coordinator.exits == [RuntimeError]  # the broker sees a failed lease, not ok
+
+
+def test_run_stream_scores_under_a_batch_lease(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fastapi")
+    from fakebackend import FakeBackend
+    from fastapi.testclient import TestClient
+
+    import argus_proof.evaluate as evaluate
+    from argus_proof.server import create_app
+
+    coordinator = Recording()
+    monkeypatch.setattr(evaluate, "backend_from_env", lambda *a, **k: FakeBackend())
+    monkeypatch.setattr(evaluate, "default_scorers", lambda: [GpuScorer(coordinator)])
+    monkeypatch.setattr(gpu, "default_coordinator", lambda: coordinator)
+    client = TestClient(create_app(reports_dir=str(tmp_path / "reports"), runs_dir=str(tmp_path / "runs")))
+    resp = client.post(
+        "/run/stream",
+        json={"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "prompt": "p", "seeds": [1]},
+    )
+    assert resp.status_code == 200 and '"complete"' in resp.text, resp.text
+    assert [(c["kind"], c["priority"]) for c in coordinator.calls] == [("score", "batch")]
+
+
+def test_release_models_unloads_each_scorer() -> None:
+    from argus_proof.scoring.scorers import IdentityScorer, clip_score_scorer
+    from argus_proof.scoring.scorers._util import release_models
+    from argus_proof.scoring.scorers.identity import InsightFaceEmbedder
+
+    embedder = InsightFaceEmbedder()
+    embedder._app = object()
+    clip = clip_score_scorer()
+    clip.model._metric = object()
+    release_models([IdentityScorer(embedder=embedder), clip, object()])  # object(): a scorer with no unload()
+    assert embedder._app is None and clip.model._metric is None

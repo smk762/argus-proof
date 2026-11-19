@@ -13,7 +13,9 @@ directory is reduced to
 
 With ``blank_slate=True`` the loose per-image files that were archived (passing →
 zipped, rejected → recorded) are deleted, leaving only the artifacts above.
-Images still awaiting review (``passed is None``) are left untouched. Every
+Images still awaiting review (``passed is None``) are left untouched; archiving
+the run again once they are reviewed adds to ``passing_images.zip`` rather than
+replacing it. Every
 record joins back to its run by ``run_id``, so a reject is traceable to its exact
 config without the pixels.
 """
@@ -51,7 +53,7 @@ class ArchiveResult:
     """What :func:`archive_run` produced: counts + the artifact paths."""
 
     run_id: str
-    n_passing: int
+    n_passing: int  # passing images held in the zip (this call's and earlier ones'), not merely judged passing
     n_rejected: int
     n_pending: int  # images left for review (passed is None)
     passing_zip: Path | None
@@ -115,16 +117,29 @@ def archive_run(
 
     # Zip the passing images (that still exist on disk). Arcname is the unique
     # image_id (+ suffix) so two passing images that share a basename in
-    # different dirs don't collide and silently drop one.
+    # different dirs don't collide and silently drop one. A run is archived again
+    # after more review, by which time blank_slate deleted the images zipped last
+    # time: append to an existing zip (skipping what it already holds) rather
+    # than truncate it, or those images would be lost from both zip and disk.
     passing = [img for img in images if verdict_by_id.get(img.image_id) is True]
-    passing_zip: Path | None = None
+    zip_path = run_dir / PASSING_ZIP_NAME
     if passing:
-        passing_zip = run_dir / PASSING_ZIP_NAME
-        with zipfile.ZipFile(passing_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        mode = "a" if zip_path.is_file() else "w"
+        with zipfile.ZipFile(zip_path, mode, zipfile.ZIP_DEFLATED) as zf:
+            archived = set(zf.namelist())
             for img in passing:
                 src = Path(img.path)
-                if src.is_file():
-                    zf.write(src, arcname=f"{img.image_id}{src.suffix}")
+                arcname = f"{img.image_id}{src.suffix}"
+                if src.is_file() and arcname not in archived:
+                    zf.write(src, arcname=arcname)
+                    archived.add(arcname)
+    # Report what is archived, not what this call was handed: a zip from an
+    # earlier call still counts, and a passing image whose file was missing does not.
+    passing_zip = zip_path if zip_path.is_file() else None
+    n_passing = 0
+    if passing_zip is not None:
+        with zipfile.ZipFile(passing_zip) as zf:
+            n_passing = len(zf.namelist())
 
     run_resolved = run_dir.resolve()
     n_pending = sum(1 for img in report.images if img.passed is None)
@@ -150,7 +165,7 @@ def archive_run(
 
     result = ArchiveResult(
         run_id=report.run_id,
-        n_passing=len(passing),
+        n_passing=n_passing,
         n_rejected=len(reject_archive.records),
         n_pending=n_pending,
         passing_zip=passing_zip,

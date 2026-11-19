@@ -115,15 +115,32 @@ def test_read_only_403_keeps_cors_headers(tmp_path) -> None:  # noqa: ANN001
     origin = "http://studio.local"
     refused = app.post("/run/stream", json={}, headers={"Origin": origin})
     assert refused.status_code == 403
-    assert refused.headers["access-control-allow-origin"] == origin
+    assert refused.headers["access-control-allow-origin"] == "*"
     preflight = app.options("/run/stream", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
     assert preflight.status_code == 200
 
 
 def test_cors_header(client: TestClient) -> None:
     resp = client.get("/health", headers={"Origin": "http://localhost:3000"})
-    # allow_credentials=True makes CORSMiddleware echo the origin rather than "*"
-    assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"
+    # A wildcard never comes with credentials, so the origin isn't reflected.
+    assert resp.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-credentials" not in resp.headers
+
+
+def test_wildcard_cors_does_not_let_any_site_send_credentialed_writes(tmp_path) -> None:  # noqa: ANN001
+    app = TestClient(create_app(reports_dir=str(tmp_path), cors=True, devmode=True))
+    headers = {"Origin": "https://evil.example", "Access-Control-Request-Method": "POST"}
+    preflight = app.options("/purge", headers=headers)
+    assert preflight.headers.get("access-control-allow-credentials") != "true"
+
+
+def test_explicit_cors_origins_echo_with_credentials(tmp_path) -> None:  # noqa: ANN001
+    app = TestClient(create_app(reports_dir=str(tmp_path), cors=True, cors_origins=["http://studio.local"]))
+    resp = app.get("/health", headers={"Origin": "http://studio.local"})
+    assert resp.headers["access-control-allow-origin"] == "http://studio.local"
+    assert resp.headers["access-control-allow-credentials"] == "true"
+    other = app.get("/health", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in other.headers
 
 
 def test_put_get_and_list_report(report_client: TestClient) -> None:
@@ -390,7 +407,8 @@ def test_report_manifest_missing_cases(suite_client: TestClient, suite_dirs, mon
 
     # no report at all -> 404; unsafe run_id -> 400 (never joined under the runs root)
     assert suite_client.get("/report/nope/manifest").status_code == 404
-    assert suite_client.get("/report/..%2Fetc/manifest").status_code in (400, 404)
+    for unsafe in (".hidden", "a%20b", "bad%24id"):  # match the {run_id} segment, so the handler check runs
+        assert suite_client.get(f"/report/{unsafe}/manifest").status_code == 400
 
     # a manifest belonging to another run is refused, not served under this name
     original = manifest_path.read_text(encoding="utf-8")
@@ -425,6 +443,8 @@ def test_scorers_reports_availability(client: TestClient) -> None:
     # scorers, whose metric comes from provenance() (a bare getattr returned null).
     assert all(s["metric"] and s["name"] for s in scorers)
     assert {"duplicate", "diversity"} <= {s["metric"] for s in scorers}
+    # identity for faces and likeness (DINOv2) for everything else are both listed
+    assert {"identity", "likeness"} <= {s["metric"] for s in scorers}
     # phash dedup/diversity ship in the dev/test env, so at least one is available
     assert any(s["available"] for s in scorers)
 
@@ -451,6 +471,26 @@ def test_run_stream_refuses_references_that_are_training_images(suite_client, su
     assert resp.status_code == 400
     assert "training images" in resp.json()["detail"]
     assert backend.generated == []  # refused before any GPU spend
+
+
+def test_run_stream_success_clears_a_stale_failure_marker(suite_client, suite_dirs, monkeypatch) -> None:  # noqa: ANN001
+    from argus_proof.backends.base import FAILURE_NAME, mark_failed
+
+    _fake_backend(monkeypatch)
+    run_dir = suite_dirs["runs"] / "retry-1"
+    mark_failed(run_dir, "retry-1", "ComfyUI stalled")
+    frames = _stream_frames(
+        suite_client,
+        {
+            "lora": "l.safetensors",
+            "base_checkpoint": "c.safetensors",
+            "prompt": "hi",
+            "seeds": [1],
+            "run_id": "retry-1",
+        },
+    )
+    assert frames[-1]["type"] == "complete"
+    assert not (run_dir / FAILURE_NAME).exists()
 
 
 def test_run_stream_without_prompt_or_export_400(suite_client: TestClient) -> None:
@@ -488,6 +528,12 @@ def test_get_image_rejects_traversal_ids(suite_client: TestClient) -> None:
     assert suite_client.get("/report/run-1/image/.dotfile").status_code == 400
     assert suite_client.get("/report/.escape/image/img-1").status_code == 400
     assert suite_client.get("/report/run-1/image/..%2F..%2Fetc%2Fpasswd").status_code in (400, 404)
+
+
+def test_ids_with_a_trailing_newline_are_refused(suite_client: TestClient) -> None:
+    # `$` matches before a final newline, so the id check must use fullmatch: "run-1\n" is not "run-1".
+    assert suite_client.get("/report/run-1%0A/image/img-1").status_code == 400
+    assert suite_client.get("/report/run-1/image/img-1%0A").status_code == 400
 
 
 def test_get_image_missing_404(suite_client: TestClient) -> None:
@@ -658,3 +704,30 @@ def test_purge_refused_in_read_only_mode(tmp_path) -> None:  # noqa: ANN001
     health = client.get("/health").json()
     # devmode is on but the button would not work, so it isn't advertised
     assert health["devmode"] is True and "purge" not in health["capabilities"]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"seeds": list(range(65))}, {"steps": 201}, {"width": 4096}, {"height": 100_000}],
+)
+def test_run_stream_refuses_an_oversized_request(suite_client: TestClient, monkeypatch, override) -> None:  # noqa: ANN001
+    _fake_backend(monkeypatch)
+    payload = {"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "prompt": "x", **override}
+    assert suite_client.post("/run/stream", json=payload).status_code == 422
+
+
+def test_an_unexpected_worker_failure_ends_the_stream_with_an_error_frame(
+    suite_client: TestClient, monkeypatch
+) -> None:  # noqa: ANN001
+    backend = _fake_backend(monkeypatch)
+
+    def oom(*a, **kw):  # noqa: ANN002, ANN003, ANN202
+        raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(backend, "generate", oom)
+    frames = _stream_frames(
+        suite_client,
+        {"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "prompt": "x", "seeds": [1]},
+    )
+    assert frames[-1]["type"] == "error"
+    assert "CUDA out of memory" in frames[-1]["message"]

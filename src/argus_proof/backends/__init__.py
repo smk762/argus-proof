@@ -15,6 +15,7 @@ from __future__ import annotations
 from argus_proof.backends.a1111 import A1111Backend
 from argus_proof.backends.base import (
     BackendError,
+    BackendTimeout,
     GenBackend,
     GenResult,
     ModelResolver,
@@ -54,6 +55,7 @@ __all__ = [
     "KNOWN_BACKENDS",
     "A1111Backend",
     "BackendError",
+    "BackendTimeout",
     "ComfyUIBackend",
     "DiffusersBackend",
     "GenBackend",

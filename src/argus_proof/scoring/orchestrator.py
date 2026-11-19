@@ -68,6 +68,13 @@ def _score_images(images: list[GeneratedImage], scorers: Sequence[ImageScorer], 
     return rows
 
 
+def score_metrics(images: list[GeneratedImage], scorers: Sequence[ImageScorer], ctx: ScoreContext) -> list[ImageScores]:
+    """Per-image metrics alone: each available scorer over each image, with the same
+    one-scorer-per-metric and ``[0, 1]`` checks as :func:`score_run`, but no dedup,
+    gate or verdict (``POST /score`` returns the scores and the caller judges them)."""
+    return _score_images(images, scorers, ctx)
+
+
 def _apply_dedup(rows: list[ImageScores], images: list[GeneratedImage], deduper: Deduper | None) -> list[int]:
     """Return a group label per image; stamp it onto each row. No deduper → each
     image is its own group."""
@@ -132,4 +139,5 @@ def score_run(
         aggregate=aggregate,
         scorers=provenance,
         verdict=verdict,
+        gate=config,
     )

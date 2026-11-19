@@ -55,6 +55,7 @@ def test_only_models_no_client_authors_list_their_defaults_as_required() -> None
         HitlRequest,
         RefinementRequest,
         RunRequest,
+        models.ScoreRequest,
     )
     sent = _reachable(
         models.EvalReport,
@@ -65,6 +66,7 @@ def test_only_models_no_client_authors_list_their_defaults_as_required() -> None
         models.RejectArchive,
         models.GridPlan,
         models.GridEstimate,
+        models.ScoreResult,
     )
     # A RootModel (the frame union) has no fields of its own to require.
     ours = {m for m in sent - received if m.__module__ == models.__name__ and not issubclass(m, RootModel)}
@@ -79,16 +81,43 @@ def test_only_models_no_client_authors_list_their_defaults_as_required() -> None
     assert not {models.SamplingParams, models.RejectReason, models.ProgressEvent} & flagged
 
 
+def _kinds(schema: dict, defs: dict) -> set[str] | None:
+    """The JSON types a (sub)schema accepts, or None when it doesn't say (accepts anything)."""
+    if "$ref" in schema:
+        schema = defs[schema["$ref"].rsplit("/", 1)[-1]]
+    declared = schema.get("type")
+    if declared is not None:
+        return set(declared) if isinstance(declared, list) else {declared}
+    if "properties" in schema or "required" in schema:
+        return {"object"}
+    if "items" in schema:
+        return {"array"}
+    return None
+
+
+def _fits(value: object, branch: dict, defs: dict) -> bool:
+    """Whether *value*'s JSON type is one *branch* accepts."""
+    kinds = _kinds(branch, defs)
+    if kinds is None:
+        return True
+    if isinstance(value, dict):
+        return "object" in kinds
+    if isinstance(value, list):
+        return "array" in kinds
+    return not kinds <= {"object", "array"}
+
+
 def _missing_required(value: object, schema: dict, defs: dict, path: str = "$") -> list[str]:
     """Paths where *value* lacks a key its schema requires (a small subset of JSON Schema)."""
     if "$ref" in schema:
         return _missing_required(value, defs[schema["$ref"].rsplit("/", 1)[-1]], defs, path)
     for key in ("anyOf", "oneOf"):
-        if key in schema:  # the branch whose type matches decides
-            if value is None and any(b.get("type") == "null" for b in schema[key]):
-                return []
-            branches = [b for b in schema[key] if b.get("type") != "null"]
-            return min((_missing_required(value, b, defs, path) for b in branches), key=len, default=[])
+        if key in schema:  # among the branches whose type matches the value, the best fit decides
+            branches = [b for b in schema[key] if _fits(value, b, defs)]
+            if not branches:
+                return [f"{path} (matches no {key} branch)"]
+            return min((_missing_required(value, b, defs, path) for b in branches), key=len)
+
     out: list[str] = []
     if isinstance(value, dict):
         out += [f"{path}.{name}" for name in schema.get("required", []) if name not in value]
@@ -169,6 +198,9 @@ def test_the_error_frame_is_a_stream_frame(tmp_path, monkeypatch) -> None:  # no
 SCHEMA_DIGESTS = {
     "1.5": "9c349411243316294ca466bb8a267918e882b681193f369fd90983eaeb5aed2a",
     "1.6": "305e949056d00055426bf6bcc007cdaac6ff502861ae645038cedcde65b191fb",
+    "1.7": "76cd564e21a838fe0d02327a78224d5d4f6dbe7e473035bf38b319801dc00a94",
+    "1.8": "0a6043b7b1b2514d47f202cb36e38255ff8426ff21223fdb4d24b53036deb659",
+    "1.9": "9dfbf632a0ec24c01ffd68831d88a8d49da2db9d7c1647c4ac4bc888050f238e",
 }
 
 
@@ -192,3 +224,12 @@ def test_a_wire_change_bumps_proof_version() -> None:
         f"the wire schema changed but PROOF_VERSION is still {models.PROOF_VERSION}: bump it, then record "
         f"{_shape_digest()!r} under the new version"
     )
+
+
+def test_the_required_key_walker_only_tries_branches_of_the_values_type() -> None:
+    defs = {"Model": {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]}}
+    union = {"anyOf": [{"$ref": "#/$defs/Model"}, {"type": "string"}, {"type": "null"}]}
+    assert _missing_required({}, union, defs) == ["$.a"]  # the string branch can't excuse a dict
+    assert _missing_required("text", union, defs) == []
+    assert _missing_required(None, union, defs) == []
+    assert _missing_required([1], union, defs) == ["$ (matches no anyOf branch)"]

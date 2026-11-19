@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - non-POSIX dev machines lose locking, n
 from pydantic import BaseModel, Field
 
 from argus_proof.models import EvalReport, GateConfig, ProofError, RejectReason, ReportSummary
+from argus_proof.scoring.gate import gate_image
 from argus_proof.scoring.summary import summarise
 
 if TYPE_CHECKING:
@@ -59,8 +60,9 @@ class HitlRequest(BaseModel):
     """A batch of HITL updates from one rater against a run's images.
 
     ``rater`` is stamped onto every image the batch touches (for later
-    inter-rater reliability). ``gate`` lets a caller re-roll the verdict under
-    the same thresholds the run was scored with; omit it for the defaults.
+    inter-rater reliability). ``gate`` re-rolls the verdict under other
+    thresholds; omit it to keep the gate the run was scored with
+    (``EvalReport.gate``, or the defaults for a report that predates it).
     """
 
     rater: str | None = None
@@ -110,12 +112,17 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
     longer "needs review"). An update fully specifies the reviewer's decision:
     its ``hitl_rating`` and ``reject_reasons`` replace the image's values, so a
     reviewer can *retract* a rating (send ``null`` / ``[]``) — a cleared image
-    with no human verdict falls back to the gate's auto ``passed``. The aggregate
-    and verdict are then recomputed over the updated rows, so the run's pass-rate
-    and pending/passed status reflect the review. Untouched images (not in the
-    batch) are carried through unchanged.
+    with no human verdict falls back to the gate's auto ``passed``, recomputed
+    from its metrics (``row.passed`` may hold an earlier human verdict). The
+    aggregate and verdict are then recomputed over the updated rows, so the run's
+    pass-rate and pending/passed status reflect the review. Untouched images (not
+    in the batch) are carried through unchanged.
+
+    A ``request.gate`` applies to this batch only and is not saved as the report's
+    gate: the untouched images were judged under the report's own gate, so
+    recording the request's would claim a gate most rows were never judged with.
     """
-    gate = request.gate or GateConfig()
+    gate = request.gate or report.gate or GateConfig()
     by_id = {u.image_id: u for u in request.updates}
     rows = list(report.images)
     for i, row in enumerate(rows):
@@ -126,7 +133,7 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
         # for this image (the client sends the full intended state), so they
         # replace the row's — otherwise a cleared rating/reason can't be honored.
         decision = _hitl_decision(upd.hitl_rating, upd.reject_reasons)
-        new_passed = decision if decision is not None else row.passed
+        new_passed = decision if decision is not None else gate_image(row.metrics, gate)[0]
         update = {
             "hitl_rating": upd.hitl_rating,
             "hitl_rater": request.rater if request.rater is not None else row.hitl_rater,
@@ -141,7 +148,10 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
     aggregate, verdict = summarise(
         rows, gate=gate, diversity=report.aggregate.diversity, n_images=report.aggregate.n_images
     )
-    return report.model_copy(update={"images": rows, "aggregate": aggregate, "verdict": verdict})
+    # A batch's own gate is not persisted (see above); without one, ``gate`` is the
+    # report's gate, or the default a pre-1.7 report was scored with.
+    stored_gate = report.gate if request.gate is not None else gate
+    return report.model_copy(update={"images": rows, "aggregate": aggregate, "verdict": verdict, "gate": stored_gate})
 
 
 class ReportStore:
@@ -183,7 +193,15 @@ class ReportStore:
 
         Atomic: the JSON is written to a unique temp file and ``os.replace``d over
         the target, so a crash (or a concurrent reader) never sees a torn report.
+        Takes the run's update lock, so a whole-report write can't land inside a
+        review's or refinement's read-apply-write and be lost to it.
         """
+        with self._update_lock(report.run_id):
+            return self._save_unlocked(report)
+
+    def _save_unlocked(self, report: EvalReport) -> Path:
+        """:meth:`save` for a caller already holding the run's update lock
+        (``flock`` is per open file, so taking it again would deadlock)."""
         self.root.mkdir(parents=True, exist_ok=True)
         path = self._path(report.run_id)
         fd, tmp_name = tempfile.mkstemp(dir=self.root, prefix=f".{path.name}.", suffix=".tmp")
@@ -234,7 +252,11 @@ class ReportStore:
         than writing it back. The HITL review and refinement live inside the
         report, so they go with it. The lock sidecar is left in place: unlinking
         a file another process may be waiting to ``flock`` would split the lock.
+        A run with no report returns ``False`` before any lock file is created,
+        so made-up ids can't fill the directory with sidecars.
         """
+        if not self._path(run_id).is_file():
+            return False
         with self._update_lock(run_id):
             path = self._path(run_id)
             if not path.is_file():
@@ -244,16 +266,24 @@ class ReportStore:
 
     def review(self, run_id: str, request: HitlRequest) -> EvalReport:
         """Apply a HITL batch to a stored report and persist the result."""
+        self._require(run_id)
         with self._update_lock(run_id):
             updated = apply_hitl(self.get(run_id), request)
-            self.save(updated)
+            self._save_unlocked(updated)
         return updated
+
+    def _require(self, run_id: str) -> None:
+        """Raise :class:`FileNotFoundError` for a run with no report, before its lock
+        file is created (the check inside the lock still catches a racing delete)."""
+        if not self._path(run_id).is_file():
+            raise FileNotFoundError(run_id)
 
     def refine(self, run_id: str, request: RefinementRequest) -> EvalReport:
         """Apply a refinement batch (second-pass re-rank) to a stored report and persist it."""
         from argus_proof.refinement import apply_refinement
 
+        self._require(run_id)
         with self._update_lock(run_id):
             updated = apply_refinement(self.get(run_id), request)
-            self.save(updated)
+            self._save_unlocked(updated)
         return updated

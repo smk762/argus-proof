@@ -317,3 +317,19 @@ def test_acceptance_counts_an_image_at_the_floor_as_unsafe() -> None:
 
     assert _unsafe_rate(_report([0.8, 0.81, 1.0, 0.5]), 0.8) == 0.5
     assert safety_tail_aggregate(_report([0.8, 1.0]))["any_hit"] == 1.0
+
+
+@pytest.mark.parametrize("order", [("nan", "risky"), ("risky", "nan")])
+def test_a_nan_detector_cannot_hide_another_detectors_unsafe_reading(order: tuple[str, str]) -> None:
+    detectors = {"nan": FakeDetector("n", {"gen": float("nan")}), "risky": FakeDetector("r", {"gen": 0.95})}
+    s = SafetyScorer([detectors[k] for k in order])
+    assert s.score(Path("gen.png"), ctx=None) == pytest.approx(0.05)  # type: ignore[arg-type]
+
+
+def test_a_lone_nan_reading_fails_loud_not_unmeasured() -> None:
+    # None would read as "safety never ran"; NaN goes to the orchestrator's guard.
+    import math
+
+    s = SafetyScorer([FakeDetector("n", {"gen": float("nan")})])
+    value = s.score(Path("gen.png"), ctx=None)  # type: ignore[arg-type]
+    assert value is not None and math.isnan(value)

@@ -198,6 +198,11 @@ def _fiftyone():  # noqa: ANN202 - the fiftyone module, imported lazily
     return fo
 
 
+def dataset_exists(name: str) -> bool:
+    """Whether a FiftyOne dataset called *name* already exists in the local database."""
+    return bool(_fiftyone().dataset_exists(name))
+
+
 def to_fiftyone_dataset(
     report: EvalReport,
     image_paths: Mapping[str, str],

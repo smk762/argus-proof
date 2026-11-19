@@ -13,7 +13,8 @@ so the adapter is unit-testable without a live A1111.
 
 from __future__ import annotations
 
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 
 import structlog
 
@@ -33,6 +34,24 @@ logger = structlog.get_logger()
 
 BACKEND_NAME = "a1111"
 DEFAULT_BASE_URL = "http://127.0.0.1:7860"
+
+# A1111 loads extra networks from these prompt tags; a prompt carrying one would
+# load weights the manifest never pinned.
+_EXTRA_NETWORK_TAG = re.compile(r"<\s*(lora|lyco|hypernet)\s*:", re.IGNORECASE)
+# Extensions A1111 drops from a LoRA's name in its prompt syntax.
+_LORA_EXTENSIONS = (".safetensors", ".pt", ".ckpt")
+
+
+def _lora_tag_name(name: str) -> str:
+    """The ``<lora:...>`` name for *name*: the path minus a known LoRA extension.
+
+    Only a real weight extension is dropped, so a bare versioned name such as
+    ``char/subject.v2`` keeps its dot; the separator is always ``/``.
+    """
+    posix = PurePosixPath(name.replace("\\", "/"))
+    if posix.suffix.lower() in _LORA_EXTENSIONS:
+        posix = posix.with_suffix("")
+    return str(posix)
 
 
 class A1111Backend:
@@ -79,17 +98,20 @@ class A1111Backend:
 
         images: list[GeneratedImage] = []
         try:
+            if len(set(spec.seeds)) != len(spec.seeds):
+                # image ids are <run_id>-<seed>: a repeated seed would overwrite its earlier image.
+                raise BackendError("the a1111 backend needs distinct seeds; the run repeats one")
             manifest = build_local_manifest(
                 spec, resolve_model=self.resolve_model, engine=BACKEND_NAME, engine_version=self._engine_version
             )
             for done, seed in enumerate(spec.seeds, start=1):
                 images.extend(self._generate_seed(spec, seed, out_dir, emit))
                 emit(ProgressEvent(run_id=spec.run_id, type="progress", completed=done, total=total))
+            write_manifest(out_dir, manifest)
         except BackendError as exc:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
 
-        write_manifest(out_dir, manifest)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return GenResult(manifest=manifest, images=images)
 
@@ -127,10 +149,17 @@ class A1111Backend:
         if spec.text_encoders:
             # /sdapi loads a checkpoint's own encoders; the manifest would record files that never loaded.
             raise BackendError("the a1111 backend can't load separate text_encoders (Flux) — use comfyui")
+        for field_name, text in (("prompt", spec.prompt), ("negative_prompt", spec.negative_prompt)):
+            if text and _EXTRA_NETWORK_TAG.search(text):
+                # A1111 would load that network, but the manifest pins only spec.loras.
+                raise BackendError(
+                    f"the a1111 {field_name} carries a <lora:/lyco:/hypernet:> tag; list LoRAs in spec.loras instead"
+                )
         # A1111 applies LoRAs via the prompt: "<lora:name:weight>" — keep any
-        # subdirectory (with_suffix drops only the extension) so a nested LoRA
-        # (loras/char/subject.safetensors) resolves as "<lora:char/subject:...>".
-        lora_tags = "".join(f" <lora:{Path(lo.name).with_suffix('')}:{lo.weight}>" for lo in spec.loras)
+        # subdirectory so a nested LoRA (loras/char/subject.safetensors) resolves
+        # as "<lora:char/subject:...>".
+        lora_tags = "".join(f" <lora:{_lora_tag_name(lo.name)}:{lo.weight}>" for lo in spec.loras)
+
         # Pin the checkpoint, VAE, and clip-skip via override_settings so the run
         # matches the manifest; restore_afterwards=False keeps the checkpoint loaded
         # across the run's seeds instead of reloading it per request.

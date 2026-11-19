@@ -32,9 +32,19 @@ app = typer.Typer(
 
 @app.callback()
 def _cli(verbose: bool = Option(False, "--verbose", "-v", help="Show info/debug logs")) -> None:
-    """Keep stdout clean for --json output; ``serve`` re-enables info logs."""
+    """Keep stdout clean for --json output; ``serve`` re-enables info logs.
+
+    Logs go to stderr at every level: structlog's default factory prints to
+    stdout, where a warning would corrupt a ``--json`` payload.
+    """
     level = logging.DEBUG if verbose else logging.WARNING
-    structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(level))
+    structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(level), logger_factory=_stderr_logger)
+
+
+def _stderr_logger(*_args: object) -> structlog.PrintLogger:
+    # Resolve sys.stderr per logger rather than once at configure time, so a
+    # swapped stream (a test runner, a redirect) is honoured, never a closed one.
+    return structlog.PrintLogger(file=sys.stderr)
 
 
 def _load_model(path: Path, model_cls, label: str):  # noqa: ANN001, ANN202 - generic pydantic loader
@@ -53,9 +63,6 @@ def _load_report(report_json: Path):  # noqa: ANN202 - EvalReport imported lazil
     from argus_proof.models import EvalReport
 
     return _load_model(report_json, EvalReport, "EvalReport")
-
-
-_RUN_PREFIX_RE = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
 
 
 def _echo_progress(event) -> None:  # noqa: ANN001 - ProgressEvent, imported lazily by callers
@@ -89,11 +96,12 @@ def inspect(
     path: Path = Argument(..., help="A proof run dir (manifest.json) or a curator export dir (manifest.jsonl)"),
 ) -> None:
     """Summarise a proof run dir or a curator export dir."""
-    from argus_proof.backends.base import MANIFEST_NAME
+    from argus_proof.backends.base import FAILURE_NAME, MANIFEST_NAME
     from argus_proof.evaluate import EvaluateError, discover_images, load_manifest
     from argus_proof.grid import read_export_prompts
 
-    if (path / MANIFEST_NAME).is_file():
+    # A failed run has failed.json in place of a manifest: load_manifest reports why.
+    if (path / MANIFEST_NAME).is_file() or (path / FAILURE_NAME).is_file():
         try:
             manifest = load_manifest(path)
             images = discover_images(path, manifest)
@@ -160,24 +168,39 @@ def run(
     ),
     backend: str | None = Option(None, "--backend", help="Override $PROOF_BACKEND (comfyui/diffusers/a1111/remote)"),
     prefix: str = Option("proof", "--run-prefix", help="run_id prefix for the generated runs"),
+    fail_fast: bool = Option(
+        False, "--fail-fast", help="Stop at the first failed run instead of generating the rest of the grid"
+    ),
 ) -> None:
-    """Generate a sample grid from a trained LoRA via the configured backend."""
-    import re as _re
+    """Generate a sample grid from a trained LoRA via the configured backend.
+
+    A run that fails (after the backend's own retries) leaves a ``failed.json`` in
+    its run dir and the grid carries on; the command exits 1 at the end, naming
+    every failed run. ``--fail-fast`` stops at the first failure instead.
+    """
+    from argus_cortex.fs import PathRefused, safe_name
 
     from argus_proof.backends import BackendError
+    from argus_proof.backends.base import clear_failed, mark_failed
     from argus_proof.backends.workflow import model_defaults, sampling_defaults
     from argus_proof.evaluate import EvaluateError, backend_from_env, runs_root
     from argus_proof.grid import GridError, build_grid, read_export_prompts
     from argus_proof.models import GridConfig, SamplingParams
 
-    if not _re.match(_RUN_PREFIX_RE, prefix):
+    try:
+        safe_name(prefix)
+    except PathRefused:
         typer.echo(f"invalid --run-prefix {prefix!r}: use letters, digits, '.', '_' or '-'", err=True)
-        raise typer.Exit(2)
+        raise typer.Exit(2) from None
     if no_guidance and guidance is not None:
         typer.echo("--guidance and --no-guidance are mutually exclusive", err=True)
         raise typer.Exit(2)
 
-    base_prompts = [prompt] if prompt else read_export_prompts(export)
+    try:
+        base_prompts = [prompt] if prompt else read_export_prompts(export)
+    except GridError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
     defaults = sampling_defaults(checkpoint)  # by the checkpoint's family folder
     models = model_defaults(checkpoint)
     export_manifest = export / "manifest.jsonl"
@@ -215,6 +238,8 @@ def run(
     typer.echo(f"grid: {est.n_runs} run(s), {est.n_images} image(s), est. {est.est_gpu_hours:.2f} GPU-hours")
 
     out_root = runs_root(out)
+    done: list[str] = []
+    failed: list[tuple[str, str]] = []
     for spec in plan.specs:
         run_dir = out_root / spec.run_id
         typer.echo(f"[{spec.run_id}] generating {len(spec.seeds)} image(s) -> {run_dir}")
@@ -222,25 +247,86 @@ def run(
             result = engine.generate(spec, run_dir, progress=_echo_progress)
         except BackendError as exc:
             typer.echo(f"[{spec.run_id}] failed: {exc}", err=True)
-            raise typer.Exit(1) from exc
+            try:
+                mark_failed(run_dir, spec.run_id, str(exc))
+            except OSError as write_exc:
+                typer.echo(f"[{spec.run_id}] cannot record the failure in {run_dir}: {write_exc}", err=True)
+            failed.append((spec.run_id, str(exc)))
+            if fail_fast:
+                break
+            continue
+        clear_failed(run_dir)
+        done.append(spec.run_id)
         typer.echo(f"[{spec.run_id}] done: {len(result.images)} image(s)")
-    typer.echo(f"score with: argus-proof score {out_root / plan.specs[0].run_id}")
+
+    if done:
+        typer.echo(f"score with: argus-proof score {out_root / done[0]}")
+    if failed:
+        skipped = len(plan.specs) - len(done) - len(failed)
+        tail = f", {skipped} not attempted (--fail-fast)" if skipped else ""
+        typer.echo(f"{len(failed)} of {len(plan.specs)} run(s) failed{tail}:", err=True)
+        for run_id, error in failed:
+            typer.echo(f"  {run_id}: {error}", err=True)
+        raise typer.Exit(1)
 
 
 @app.command()
 def score(
     run_dir: Path = Argument(..., help="Proof run dir containing manifest.json + generated samples"),
     references: Path | None = Option(
-        None, "--references", help="Held-out reference image dir for identity scoring (must not overlap training)"
+        None,
+        "--references",
+        help="Held-out reference image dir for identity and likeness scoring (must not overlap training)",
     ),
     reports_dir: Path | None = Option(None, "--reports-dir", help="Report store (default $ARGUS_PROOF_REPORTS_DIR)"),
     save: bool = Option(True, "--save/--no-save", help="Persist the report into the report store"),
     json_out: bool = Option(False, "--json", help="Print the full EvalReport JSON to stdout"),
+    require_scorers: list[str] | None = Option(
+        None,
+        "--require-scorers",
+        help="Metrics whose scorer must be available, else exit 2 (repeatable or comma-separated, e.g. "
+        "identity,likeness,clip_score,aesthetic,safety)",
+    ),
 ) -> None:
-    """Score a generated run into an EvalReport: identity, quality, diversity, safety."""
-    from argus_proof.evaluate import EvaluateError, reference_images, score_run_dir
+    """Score a generated run into an EvalReport: identity, likeness, quality, diversity, safety.
+
+    A default scorer that can't run here (its extra isn't installed, or its service
+    isn't configured) leaves its metric empty; that is warned about on stderr, and
+    ``--require-scorers`` turns it into a refusal.
+    """
+    from argus_proof.evaluate import (
+        EvaluateError,
+        all_reporting_scorers,
+        reference_images,
+        score_run_dir,
+        unavailable_metrics,
+    )
     from argus_proof.models import ProofError
     from argus_proof.reports import ReportStore
+
+    required = [m.strip() for item in require_scorers or [] for m in item.split(",") if m.strip()]
+    known = [sc.provenance().metric for sc in all_reporting_scorers()]
+    unknown = [m for m in required if m not in known]
+    if unknown:
+        typer.echo(
+            f"unknown metric(s) for --require-scorers: {', '.join(unknown)} (known: {', '.join(known)})", err=True
+        )
+        raise typer.Exit(2)
+    missing = unavailable_metrics()
+    missing_required = [m for m in required if m in missing]
+    if missing_required:
+        typer.echo(
+            f"required scorer(s) unavailable: {', '.join(missing_required)} — install argus-proof[score] "
+            "(and set PROOF_NUDENET_URL for safety), or use the -score image",
+            err=True,
+        )
+        raise typer.Exit(2)
+    if missing:
+        typer.echo(
+            f"warning: no scorer available for {', '.join(missing)}; those metrics will be empty and their "
+            "groups left for review (install argus-proof[score], or use the -score image)",
+            err=True,
+        )
 
     try:
         refs = reference_images(references) if references else []
@@ -306,7 +392,10 @@ def gate(
     report_json: Path = Argument(..., help="Scored EvalReport JSON to gate"),
     min_pass_rate: float = Option(0.75, help="Minimum aggregate pass-rate"),
     min_pass_rate_ci_lower: float | None = Option(None, help="Minimum Wilson lower bound on the pass-rate"),
-    min_identity: float | None = Option(None, help="Minimum mean identity score"),
+    min_identity: float | None = Option(None, help="Minimum mean identity score (ArcFace, human faces)"),
+    min_likeness: float | None = Option(
+        None, help="Minimum mean likeness score (DINOv2 vs the references: masked or non-human subjects, scenes)"
+    ),
     max_unsafe_rate: float | None = Option(None, help="Maximum fraction of images flagged unsafe"),
     confidence: float = Option(0.95, help="Confidence level for the CI lower bound"),
 ) -> None:
@@ -321,6 +410,7 @@ def gate(
             min_pass_rate=min_pass_rate,
             min_pass_rate_ci_lower=min_pass_rate_ci_lower,
             min_identity_mean=min_identity,
+            min_likeness_mean=min_likeness,
             max_unsafe_rate=max_unsafe_rate,
             confidence=confidence,
         )
@@ -386,9 +476,9 @@ def experiment(
     from argus_proof.grid import GridError, read_export_prompts
 
     matrix = _load_model(matrix_json, ExperimentMatrix, "ExperimentMatrix")
-    prompts = read_export_prompts(export_dir)
 
     try:
+        prompts = read_export_prompts(export_dir)
         plan = expand_experiment(matrix, prompts, max_gpu_hours=max_gpu_hours)
     except (ExperimentError, GridError) as exc:
         typer.echo(f"cannot expand experiment: {exc}", err=True)
@@ -412,6 +502,9 @@ def explore(
         None, "--ingest", help="After the App closes, fold rating:/reject: tags back and write the report here"
     ),
     rater: str | None = Option(None, "--rater", help="Rater id stamped on ingested tags"),
+    overwrite: bool = Option(
+        False, "--overwrite", help="Replace an existing FiftyOne dataset of the same --name (its tags are lost)"
+    ),
 ) -> None:
     """Open a scored run in FiftyOne with metrics attached, for embedding viz + tag triage."""
     from argus_proof import explore as fo_explore
@@ -423,8 +516,14 @@ def explore(
 
     report = _load_report(report_json)
     try:
+        if name is not None and not overwrite and fo_explore.dataset_exists(name):
+            # FiftyOne datasets share one database and hold the App's triage tags:
+            # never delete one just because a name was reused.
+            typer.echo(f"a FiftyOne dataset named {name!r} already exists; pass --overwrite to replace it", err=True)
+            raise typer.Exit(2)
         paths = fo_explore.image_paths_from_dir(images)
-        dataset = fo_explore.to_fiftyone_dataset(report, paths, name=name, overwrite=True)
+        dataset = fo_explore.to_fiftyone_dataset(report, paths, name=name, overwrite=overwrite)
+
         typer.echo(f"dataset {dataset.name!r}: {len(dataset)} samples ({len(paths)} images found)")
         if umap:
             fo_explore.compute_visualization(dataset)

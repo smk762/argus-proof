@@ -12,12 +12,43 @@ from __future__ import annotations
 
 import base64
 import binascii
+import http.client
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Protocol
 
 from argus_proof.backends.base import BackendError
+
+# Headers that carry credentials and must not follow a redirect to another origin.
+_CREDENTIAL_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie", "x-api-key", "x-api-token"})
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urllib.parse.urlsplit(url)
+    port = parts.port or {"http": 80, "https": 443}.get(parts.scheme)
+    return parts.scheme.lower(), (parts.hostname or "").lower(), port
+
+
+class _SameOriginAuthRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects, but drop credential headers when the target is another origin.
+
+    The stdlib handler copies every request header (``Authorization`` included)
+    onto the redirected request, so one 3xx from a misconfigured or compromised
+    endpoint would hand a cloud bearer token to a third-party host.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001, ANN201 - stdlib signature
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and _origin(newurl) != _origin(req.full_url):
+            for key in list(new.headers):
+                if key.lower() in _CREDENTIAL_HEADERS:
+                    del new.headers[key]
+        return new
+
+
+_OPENER = urllib.request.build_opener(_SameOriginAuthRedirectHandler)
 
 
 def decode_base64_image(encoded: str, *, context: str) -> bytes:
@@ -61,9 +92,9 @@ class UrllibTransport:
 
     def _open(self, req: urllib.request.Request) -> bytes:
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with _OPENER.open(req, timeout=self.timeout) as resp:
                 return resp.read()
-        except (urllib.error.URLError, OSError) as exc:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise BackendError(f"{self.label} request to {req.full_url} failed: {exc}") from exc
 
     def _request(
@@ -76,6 +107,10 @@ class UrllibTransport:
         return self._open(req)
 
     def _loads(self, raw: bytes) -> dict:
+        # Some endpoints answer a POST with an empty 200 (ComfyUI's /queue and
+        # /interrupt); that's an empty object, not a malformed reply.
+        if not raw.strip():
+            return {}
         try:
             return json.loads(raw)
         except (json.JSONDecodeError, ValueError) as exc:

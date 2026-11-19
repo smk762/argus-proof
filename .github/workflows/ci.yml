@@ -18,7 +18,59 @@ jobs:
       test-extras: "dev,server,cli"
       post-test: "uv run --no-sync argus-proof schema --check"
 
+  score-imports:
+    # The [score] extra is too heavy for the test job, so it is resolved and
+    # imported here on its own. A pin that resolves but won't import (#98) would
+    # otherwise only make a scorer report unavailable and drop its metric from
+    # every report, with nothing failing.
+    runs-on: ubuntu-latest
+    env:
+      # No tag in a PR checkout's shallow history; the version is irrelevant here.
+      SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.11
+      # CPU torch: the import check needs no CUDA, and the CUDA wheels are GBs.
+      - run: uv pip install --torch-backend cpu ".[score]"
+      - run: uv run --no-sync python scripts/check_scorers.py
+
   suite-rules:
     # argus-ci suite rules: lint rules that each eliminate a finding class. New violations fail;
     # existing ones are in .suite-rules-baseline.json, which may only shrink.
     uses: smk762/argus-ci/.github/workflows/suite-rules.yml@v1
+
+  # The hosted demo (proof.dragonhound.dev): lint, typecheck and tests for web/, then the static export of the
+  # committed tape with a hash CSP on every page and check-static.mjs (every tape image listed and present, no
+  # container paths, opsec over the tape and pages, size budget).
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          OPSEC_DENYLIST: ${{ secrets.OPSEC_DENYLIST }}
+
+  # The Dragonhound shared design layer (web/vendor/dh) is vendored from dragonhound.dev/brand/v1 and must not be
+  # edited here. A newer upstream version is only a warning (re-sync in its own PR).
+  dh-shared:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node web/vendor/dh/sync-shared.mjs --check . --against https://dragonhound.dev/brand/v1/manifest.json --allow-outdated

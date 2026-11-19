@@ -110,6 +110,9 @@ class PolicyModerator:
     ) -> None:
         self._image_detectors = image_detectors
         self._text_detectors = text_detectors
+        # Detector failures from the last moderate_* call that other detectors
+        # covered: the verdict came from a smaller ensemble than provenance names.
+        self.failures: list[str] = []
 
     @property
     def image_detectors(self) -> Sequence[ImagePolicyDetector]:
@@ -136,14 +139,19 @@ class PolicyModerator:
 
     def moderate_images(self, image_paths: Sequence[Path]) -> list[CategoryScores]:
         available = [d for d in self.image_detectors if d.is_available()]
-        return [self._combine(available, "moderate_image", item) for item in image_paths]
+        self.failures = []
+        return [self._combine(available, "moderate_image", item, self.failures) for item in image_paths]
 
     def moderate_texts(self, texts: Sequence[str]) -> list[CategoryScores]:
         available = [d for d in self.text_detectors if d.is_available()]
-        return [self._combine(available, "moderate_text", item) for item in texts]
+        self.failures = []
+        return [self._combine(available, "moderate_text", item, self.failures) for item in texts]
 
     @staticmethod
-    def _combine(detectors: Sequence, method: str, item) -> CategoryScores:  # noqa: ANN001, ANN205
+    def _combine(detectors: Sequence, method: str, item, failures_out: list[str] | None = None) -> CategoryScores:  # noqa: ANN001, ANN205
+        if not detectors:
+            # No detector to ask: an empty result would read as safe.
+            raise ModerationError("no policy detector is available to moderate this item")
         merged: CategoryScores = {}
         failures: list[str] = []
         for detector in detectors:  # already filtered to the available ones (probed once per run)
@@ -165,10 +173,16 @@ class PolicyModerator:
                 # as maximally unsafe (fail-safe) rather than let NaN read as 0.0/safe.
                 clamped = clamp01(prob_f) if math.isfinite(prob_f) else 1.0
                 merged[category] = max(merged.get(category, 0.0), clamped)  # most-unsafe wins
-        if detectors and len(failures) == len(detectors):
+        if len(failures) == len(detectors):
             # Every detector failed (e.g. a CUDA OOM loading the Guard model): no
             # verdict at all must not read as safe.
             raise ModerationError(f"every policy detector failed: {'; '.join(failures)}")
+        if failures:
+            # The rest of the ensemble scored it, but a max-ensemble missing a member
+            # can understate risk: record it rather than let it vanish.
+            logger.warning("moderation.detector_failed", item=str(item), failures=failures)
+            if failures_out is not None:
+                failures_out.extend(f"{item}: {f}" for f in failures)
         return merged
 
 
@@ -228,6 +242,9 @@ class ModerationReport(BaseModel):
     n_items: int
     unsafe_at: float
     categories: dict[str, CategoryTail] = Field(default_factory=dict)
+    # "<item>: <detector>: <error>" for each detector that failed on an item the
+    # others scored; non-empty means some verdicts came from a partial ensemble.
+    detector_failures: list[str] = Field(default_factory=list)
 
     def flagged(self, *, min_hit_rate: float = 0.0) -> list[str]:
         """Categories with any hit (optionally over a hit-rate floor), worst first."""
@@ -245,7 +262,7 @@ def moderate_images(
     if not moderator.is_available("output"):
         raise ModerationError("no image policy detector available: pip install 'argus-proof[moderation]'")
     per_item = moderator.moderate_images(image_paths)
-    return _report("output", per_item, moderator.provenance("output"), len(image_paths), unsafe_at)
+    return _report("output", per_item, moderator.provenance("output"), len(image_paths), unsafe_at, moderator.failures)
 
 
 def moderate_texts(
@@ -261,7 +278,7 @@ def moderate_texts(
     if not moderator.is_available("input"):
         raise ModerationError("no text policy detector available: pip install 'argus-proof[moderation]'")
     per_item = moderator.moderate_texts(texts)
-    return _report("input", per_item, moderator.provenance("input"), len(texts), unsafe_at)
+    return _report("input", per_item, moderator.provenance("input"), len(texts), unsafe_at, moderator.failures)
 
 
 def _report(
@@ -270,6 +287,7 @@ def _report(
     provenance: ScorerProvenance,
     n_items: int,
     unsafe_at: float,
+    failures: Sequence[str] = (),
 ) -> ModerationReport:
     return ModerationReport(
         side=side,
@@ -277,6 +295,7 @@ def _report(
         n_items=n_items,
         unsafe_at=unsafe_at,
         categories=category_tails(per_item, unsafe_at=unsafe_at),
+        detector_failures=list(failures),
     )
 
 
@@ -310,6 +329,9 @@ _CODE_RE = re.compile(r"\bS\d{1,2}\b", re.IGNORECASE)
 # Llama Guard 3's child-exploitation code: deliberately unmapped (a separate CSAM
 # policy gate owns it), but a hit is logged rather than vanishing.
 _CSAM_CODE = "S4"
+# Every hazard code Llama Guard 3 defines (S1–S14). An unsafe verdict naming only
+# codes outside this set (a truncated or future code) is unreadable, so fail safe.
+_KNOWN_GUARD_CODES = frozenset(f"S{i}" for i in range(1, 15))
 
 
 def parse_guard_output(text: str) -> tuple[bool, list[str]]:
@@ -371,11 +393,17 @@ class _LlamaGuardBase:
         if not unsafe:
             return {}
         confidence = 1.0 if p_unsafe is None or not math.isfinite(p_unsafe) else clamp01(p_unsafe)
+        codes = [code.strip().upper() for code in codes]  # one normal form for the CSAM check and the mapping
         if not codes:
             return dict.fromkeys(CATEGORIES, confidence)
         if _CSAM_CODE in codes:
             logger.warning("moderation.csam_code", detector=self.model_id, codes=codes, note="route to the CSAM gate")
-        return self._codes_to_scores(codes, confidence)
+        scores = self._codes_to_scores(codes, confidence)
+        if not scores and any(code not in _KNOWN_GUARD_CODES for code in codes):
+            # "unsafe" with only codes we can't read must not come out as {} (safe).
+            logger.warning("moderation.unknown_codes", detector=self.model_id, codes=codes)
+            return dict.fromkeys(CATEGORIES, confidence)
+        return scores
 
     @staticmethod
     def _codes_to_scores(codes: Sequence[str], confidence: float = 1.0) -> CategoryScores:

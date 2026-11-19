@@ -2,8 +2,8 @@
 
 Closes the loop for CI — "was this dataset/LoRA good enough?" becomes an
 automatable yes/no against declared :class:`~argus_proof.models.AcceptanceThresholds`
-(a min pass-rate, a statistically-defensible pass-rate lower bound, an identity
-floor, a safety ceiling). Only the configured checks run; the run is accepted
+(a min pass-rate, a statistically-defensible pass-rate lower bound, identity and
+likeness floors, a safety ceiling). Only the configured checks run; the run is accepted
 iff every check passes.
 """
 
@@ -51,7 +51,11 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
     agg = report.aggregate
     # The pass-rate is over near-dup groups when deduped, else over images.
     n = agg.n_groups if agg.n_groups is not None else agg.n_images
-    n_passed = min(agg.n_passed, n)  # defensive: never let successes exceed the denominator
+    # n_passed is counted per group (the same basis as n). More successes than
+    # groups means the aggregate is inconsistent, e.g. passes counted per image;
+    # clamping would hide that and inflate the Wilson bound, so it fails instead.
+    n_passed = agg.n_passed
+    consistent = n_passed <= n
 
     if thresholds.min_pass_rate is not None:
         ok = agg.pass_rate >= thresholds.min_pass_rate
@@ -65,7 +69,16 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
             )
         )
 
-    if thresholds.min_pass_rate_ci_lower is not None:
+    if thresholds.min_pass_rate_ci_lower is not None and not consistent:
+        checks.append(
+            GateCheck(
+                name="pass_rate_ci_lower",
+                passed=False,
+                threshold=thresholds.min_pass_rate_ci_lower,
+                detail=f"inconsistent report: {n_passed} passed > {n} groups; the pass count is on another basis",
+            )
+        )
+    elif thresholds.min_pass_rate_ci_lower is not None:
         lb = wilson_lower_bound(n_passed, n, thresholds.confidence)
         ok = lb >= thresholds.min_pass_rate_ci_lower
         checks.append(
@@ -81,19 +94,16 @@ def evaluate_acceptance(report: EvalReport, thresholds: AcceptanceThresholds) ->
             )
         )
 
-    if thresholds.min_identity_mean is not None:
-        val = agg.means.identity
-        ok = val is not None and val >= thresholds.min_identity_mean
+    # The mean-similarity floors: ArcFace identity (faces) and DINOv2 likeness (any subject).
+    for metric, floor in (("identity", thresholds.min_identity_mean), ("likeness", thresholds.min_likeness_mean)):
+        if floor is None:
+            continue
+        val = getattr(agg.means, metric)
+        ok = val is not None and val >= floor
         detail = (
-            "identity not measured"
-            if val is None
-            else f"identity mean {val:.3f} {'>=' if ok else '<'} {thresholds.min_identity_mean:.3f}"
+            f"{metric} not measured" if val is None else f"{metric} mean {val:.3f} {'>=' if ok else '<'} {floor:.3f}"
         )
-        checks.append(
-            GateCheck(
-                name="identity_mean", passed=ok, actual=val, threshold=thresholds.min_identity_mean, detail=detail
-            )
-        )
+        checks.append(GateCheck(name=f"{metric}_mean", passed=ok, actual=val, threshold=floor, detail=detail))
 
     if thresholds.max_unsafe_rate is not None:
         rate = _unsafe_rate(report, thresholds.unsafe_safety_floor)
