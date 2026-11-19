@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `-score` image imports `pyiqa`**: `pyiqa` pulls `opencv-python`, whose `cv2` needs `libxcb`, which
+  `python:3.11-slim` doesn't ship, so the 0.5.0 score image failed its smoke test and wasn't published. The image now
+  swaps in `opencv-python-headless` at the same version.
+
 ## [0.5.0] - 2026-11-19
 
 ### Added
