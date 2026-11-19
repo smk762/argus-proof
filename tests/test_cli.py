@@ -348,6 +348,16 @@ def test_inspect_run_and_export_dirs(tmp_path: Path, fake_backend) -> None:  # n
     assert "1 base prompt(s)" in inspected.output
 
 
+def test_inspect_a_failed_run_dir_says_it_failed(tmp_path: Path) -> None:
+    from argus_proof.backends.base import mark_failed
+
+    mark_failed(tmp_path, "proof-x", "ComfyUI stalled")
+    result = runner.invoke(app, ["inspect", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "failed to generate" in result.output
+    assert "ComfyUI stalled" in result.output
+
+
 def test_inspect_unrecognised_dir_exits_two(tmp_path: Path) -> None:
     result = runner.invoke(app, ["inspect", str(tmp_path)])
     assert result.exit_code == 2

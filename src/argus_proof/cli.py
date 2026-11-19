@@ -96,11 +96,12 @@ def inspect(
     path: Path = Argument(..., help="A proof run dir (manifest.json) or a curator export dir (manifest.jsonl)"),
 ) -> None:
     """Summarise a proof run dir or a curator export dir."""
-    from argus_proof.backends.base import MANIFEST_NAME
+    from argus_proof.backends.base import FAILURE_NAME, MANIFEST_NAME
     from argus_proof.evaluate import EvaluateError, discover_images, load_manifest
     from argus_proof.grid import read_export_prompts
 
-    if (path / MANIFEST_NAME).is_file():
+    # A failed run has failed.json in place of a manifest: load_manifest reports why.
+    if (path / MANIFEST_NAME).is_file() or (path / FAILURE_NAME).is_file():
         try:
             manifest = load_manifest(path)
             images = discover_images(path, manifest)

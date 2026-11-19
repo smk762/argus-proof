@@ -156,6 +156,11 @@ def test_a_non_clipiqa_pyiqa_metric_needs_explicit_calibration() -> None:
     assert (s.lo, s.hi) == (20.0, 80.0)
 
 
+def test_clipiqa_keeps_a_single_explicit_bound() -> None:
+    assert (pyiqa_scorer(lo=0.2).lo, pyiqa_scorer(lo=0.2).hi) == (0.2, 1.0)
+    assert (pyiqa_scorer(hi=0.9).lo, pyiqa_scorer(hi=0.9).hi) == (0.0, 0.9)
+
+
 def test_a_lower_is_better_pyiqa_metric_is_negated(monkeypatch: pytest.MonkeyPatch) -> None:
     from argus_proof.scoring.scorers.quality import PyiqaModel
 

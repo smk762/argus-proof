@@ -231,6 +231,23 @@ def test_an_unavailable_scorer_is_503(client: TestClient, monkeypatch: pytest.Mo
     assert "likeness" in resp.json()["detail"]
 
 
+def test_a_scorer_breaking_its_range_is_a_500_with_a_reason(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, coordinator: Recording
+) -> None:
+    class NanScorer(LikenessScorer):
+        def score(self, image_path, ctx):  # noqa: ANN001, ANN201
+            return float("nan")
+
+    monkeypatch.setattr(evaluate, "reference_scorers", lambda names: [NanScorer(embedder=ColourEmbedder())])
+    resp = TestClient(client.app, raise_server_exceptions=False).post(
+        "/score",
+        data={"request": json.dumps({"export": "android", "scorers": ["likeness"]})},
+        files=[("images", ("t.png", png(RED), "image/png"))],
+    )
+    assert resp.status_code == 500
+    assert "scoring failed" in resp.json()["detail"]
+
+
 def test_read_only_refuses_score(dirs: dict[str, Path], embedder: ColourEmbedder) -> None:
     ro = TestClient(create_app(reports_dir=str(dirs["reports"]), exports_dir=str(dirs["exports"]), read_only=True))
     resp = post(ro, {"export": "android", "scorers": ["likeness"]}, ("t.png", png(RED)))

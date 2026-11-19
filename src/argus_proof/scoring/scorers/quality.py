@@ -208,12 +208,13 @@ def pyiqa_scorer(lo: float | None = None, hi: float | None = None, metric_name: 
     lower-is-better (negated, see :class:`PyiqaModel`), so it needs an explicit
     ``lo``/``hi`` calibration rather than CLIP-IQA's ``[0, 1]``.
     """
-    if lo is None or hi is None:
-        if metric_name != "clipiqa":
-            raise ValueError(
-                f"pyiqa metric {metric_name!r} needs explicit lo/hi: only clipiqa's [0, 1] range is the default"
-            )
-        lo, hi = 0.0, 1.0
+    if (lo is None or hi is None) and metric_name != "clipiqa":
+        raise ValueError(
+            f"pyiqa metric {metric_name!r} needs explicit lo/hi: only clipiqa's [0, 1] range is the default"
+        )
+    # Fill only the bound that wasn't given: an explicit lo or hi alone is kept.
+    lo = 0.0 if lo is None else lo
+    hi = 1.0 if hi is None else hi
     return ModelScorer("aesthetic", PyiqaModel(metric_name), lo, hi)
 
 

@@ -324,3 +324,12 @@ def test_a_nan_detector_cannot_hide_another_detectors_unsafe_reading(order: tupl
     detectors = {"nan": FakeDetector("n", {"gen": float("nan")}), "risky": FakeDetector("r", {"gen": 0.95})}
     s = SafetyScorer([detectors[k] for k in order])
     assert s.score(Path("gen.png"), ctx=None) == pytest.approx(0.05)  # type: ignore[arg-type]
+
+
+def test_a_lone_nan_reading_fails_loud_not_unmeasured() -> None:
+    # None would read as "safety never ran"; NaN goes to the orchestrator's guard.
+    import math
+
+    s = SafetyScorer([FakeDetector("n", {"gen": float("nan")})])
+    value = s.score(Path("gen.png"), ctx=None)  # type: ignore[arg-type]
+    assert value is not None and math.isnan(value)

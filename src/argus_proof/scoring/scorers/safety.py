@@ -102,6 +102,7 @@ class SafetyScorer:
 
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None:
         unsafe: list[float] = []
+        non_finite = False
         for detector in self.detectors:
             if not detector.is_available():
                 continue
@@ -109,13 +110,19 @@ class SafetyScorer:
                 prob = detector.unsafe_probability(image_path)
             except Exception:  # noqa: BLE001 - one flaky detector must not abort the whole run
                 continue
-            if prob is not None and math.isfinite(prob):
-                # A NaN would make max() order-dependent and could hide another
-                # detector's unsafe reading; treat it like a failed detector.
+            if prob is None:
+                continue
+            if math.isfinite(prob):
                 unsafe.append(prob)
+            else:
+                # A NaN would make max() order-dependent and could hide another
+                # detector's unsafe reading, so a finite reading wins over it.
+                non_finite = True
 
         if not unsafe:
-            return None
+            # Only a broken reading: hand it to the orchestrator's guard (fail loud)
+            # rather than None, which would read as "safety never ran".
+            return float("nan") if non_finite else None
         return clamp01(1.0 - max(unsafe))  # most-unsafe detector wins; non-finite -> rejected by orchestrator
 
 

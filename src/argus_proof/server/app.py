@@ -232,7 +232,7 @@ def create_app(
     ``purge`` in ``capabilities`` when the routes will actually work (devmode
     on and not read-only).
     """
-    from argus_proof.backends.base import MANIFEST_NAME, BackendError, mark_failed
+    from argus_proof.backends.base import MANIFEST_NAME, BackendError, clear_failed, mark_failed
     from argus_proof.evaluate import EvaluateError, load_manifest, runs_root
 
     read_only = env_flag(ENV_READ_ONLY) if read_only is None else read_only
@@ -514,6 +514,8 @@ def create_app(
                     with contextlib.suppress(OSError):  # the error frame is what the client sees
                         mark_failed(run_dir, run_id, str(exc))
                     raise
+                with contextlib.suppress(OSError):  # a stale marker from an earlier failed run of this run_id
+                    clear_failed(run_dir)
                 emit(ScoringFrame(run_id=run_id, n_images=len(result.images)).model_dump(mode="json"))
                 # Scoring is part of this batch run, so its lease is batch too.
                 report = score_images(result.manifest, result.images, references=references, priority="batch")
@@ -624,6 +626,10 @@ def create_app(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except EvaluateError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            # A scorer broke its [0, 1] contract (a NaN embedding): say so, not a bare 500.
+            logger.exception("score.failed", export=req.export)
+            raise HTTPException(status_code=500, detail=f"scoring failed: {exc}") from exc
 
     @app.get("/reports")
     async def list_reports() -> dict[str, list[ReportSummary]]:

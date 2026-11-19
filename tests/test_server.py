@@ -473,6 +473,26 @@ def test_run_stream_refuses_references_that_are_training_images(suite_client, su
     assert backend.generated == []  # refused before any GPU spend
 
 
+def test_run_stream_success_clears_a_stale_failure_marker(suite_client, suite_dirs, monkeypatch) -> None:  # noqa: ANN001
+    from argus_proof.backends.base import FAILURE_NAME, mark_failed
+
+    _fake_backend(monkeypatch)
+    run_dir = suite_dirs["runs"] / "retry-1"
+    mark_failed(run_dir, "retry-1", "ComfyUI stalled")
+    frames = _stream_frames(
+        suite_client,
+        {
+            "lora": "l.safetensors",
+            "base_checkpoint": "c.safetensors",
+            "prompt": "hi",
+            "seeds": [1],
+            "run_id": "retry-1",
+        },
+    )
+    assert frames[-1]["type"] == "complete"
+    assert not (run_dir / FAILURE_NAME).exists()
+
+
 def test_run_stream_without_prompt_or_export_400(suite_client: TestClient) -> None:
     resp = suite_client.post("/run/stream", json={"lora": "l", "base_checkpoint": "c"})
     assert resp.status_code == 400
