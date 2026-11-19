@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-19
+
 ### Fixed
 
 - **The `-score` image imports `pyiqa`**: `pyiqa` pulls `opencv-python`, whose `cv2` needs `libxcb`, which
@@ -298,7 +300,8 @@ First release: the MVP evaluation pipeline for trained LoRAs.
   `/run/stream`, report/HITL/refine endpoints, and model and export listings.
 - Container image `ghcr.io/smk762/argus-proof`.
 
-[Unreleased]: https://github.com/smk762/argus-proof/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/smk762/argus-proof/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/smk762/argus-proof/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/smk762/argus-proof/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/smk762/argus-proof/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/smk762/argus-proof/compare/v0.2.2...v0.3.0
