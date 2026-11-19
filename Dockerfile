@@ -34,6 +34,9 @@ ARG EXTRAS="server,cli"
 # as nvidia-* packages, which onnxruntime-gpu loads too (the identity scorer calls
 # onnxruntime.preload_dlls()). Without a GPU, both fall back to CPU.
 ARG ORT_GPU=0
+# pyiqa (in [score]) depends on opencv-python, the GUI build, whose cv2 needs
+# libxcb/libGL that slim lacks. The install below swaps it for the same version of
+# opencv-python-headless (same cv2 module, no X11), so `import pyiqa` works here.
 # The release tag without its "v". Empty: read the version from .git.
 ARG VERSION=""
 
@@ -48,6 +51,11 @@ RUN python -m pip install --no-cache-dir \
     && if [ "$ORT_GPU" = 1 ]; then \
         uv pip uninstall --system onnxruntime \
         && uv pip install --system --no-cache "onnxruntime-gpu>=1.19"; \
+    fi \
+    && cv=$(uv pip show --system opencv-python 2>/dev/null | sed -n 's/^Version: //p') \
+    && if [ -n "$cv" ]; then \
+        uv pip uninstall --system opencv-python \
+        && uv pip install --system --no-cache "opencv-python-headless==$cv"; \
     fi
 
 EXPOSE 8104
