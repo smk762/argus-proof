@@ -292,8 +292,19 @@
           "title": "Images",
           "type": "array"
         },
+        "pose": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PoseReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "proof_version": {
-          "default": "1.9",
+          "default": "1.10",
           "title": "Proof Version",
           "type": "string"
         },
@@ -320,7 +331,8 @@
         "scorers",
         "verdict",
         "created_at",
-        "gate"
+        "gate",
+        "pose"
       ],
       "title": "EvalReport",
       "type": "object"
@@ -967,6 +979,546 @@
       "title": "ModelRef",
       "type": "object"
     },
+    "PoseClosePair": {
+      "description": "An output whose pose is a close match to one training frame: a pointer for an\nimage-level check, not evidence of copying on its own (the same pose is not the\nsame frame). ``training_frame`` is the frame's path relative to the curator\nexport, or its file name when it lives outside it; ``training_sha256`` names it\nexactly.",
+      "properties": {
+        "distance": {
+          "minimum": 0.0,
+          "title": "Distance",
+          "type": "number"
+        },
+        "image_id": {
+          "title": "Image Id",
+          "type": "string"
+        },
+        "training_frame": {
+          "title": "Training Frame",
+          "type": "string"
+        },
+        "training_sha256": {
+          "description": "lowercase hex SHA256 digest",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Training Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image_id",
+        "training_frame",
+        "training_sha256",
+        "distance"
+      ],
+      "title": "PoseClosePair",
+      "type": "object"
+    },
+    "PoseComparison": {
+      "description": "The run's poses against its training set's (argus-puppet ``POST /compare``).\n\n``close_share`` is the share of eligible outputs within ``threshold`` of a\ntraining frame; ``baseline_close_share`` is the same statistic inside the\ntraining set (leave-one-out), and ``close_excess`` the difference: the\nrun-level copying signal. A pose-conditioned generator shows a high excess by\ndesign, so it is evidence for review, never a reject. ``training_diversity``\nand ``training_largest_cluster_share`` describe the training set itself, so a\ncollapse onto a pose the training set is dominated by reads as a dataset\nproblem. Every statistic puppet could not define is ``None``.",
+      "properties": {
+        "baseline_close_share": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Baseline Close Share"
+        },
+        "baseline_eligible": {
+          "minimum": 0,
+          "title": "Baseline Eligible",
+          "type": "integer"
+        },
+        "close_eligible": {
+          "minimum": 0,
+          "title": "Close Eligible",
+          "type": "integer"
+        },
+        "close_excess": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Close Excess"
+        },
+        "close_pairs": {
+          "items": {
+            "$ref": "#/$defs/PoseClosePair"
+          },
+          "title": "Close Pairs",
+          "type": "array"
+        },
+        "close_share": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Close Share"
+        },
+        "coverage_divergence": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coverage Divergence"
+        },
+        "matched_count": {
+          "minimum": 0,
+          "title": "Matched Count",
+          "type": "integer"
+        },
+        "n_close": {
+          "default": 0,
+          "minimum": 0,
+          "title": "N Close",
+          "type": "integer"
+        },
+        "output_count": {
+          "minimum": 0,
+          "title": "Output Count",
+          "type": "integer"
+        },
+        "output_nn_distance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PoseDistanceQuantiles"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reference_count": {
+          "minimum": 0,
+          "title": "Reference Count",
+          "type": "integer"
+        },
+        "reference_coverage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PoseCoverage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reference_nn_distance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PoseDistanceQuantiles"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "threshold": {
+          "minimum": 0.0,
+          "title": "Threshold",
+          "type": "number"
+        },
+        "training_diversity": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Training Diversity"
+        },
+        "training_frames": {
+          "minimum": 0,
+          "title": "Training Frames",
+          "type": "integer"
+        },
+        "training_largest_cluster_share": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Training Largest Cluster Share"
+        }
+      },
+      "required": [
+        "training_frames",
+        "output_count",
+        "matched_count",
+        "reference_count",
+        "close_eligible",
+        "close_share",
+        "baseline_eligible",
+        "baseline_close_share",
+        "close_excess",
+        "output_nn_distance",
+        "reference_nn_distance",
+        "coverage_divergence",
+        "reference_coverage",
+        "training_diversity",
+        "training_largest_cluster_share",
+        "threshold",
+        "n_close",
+        "close_pairs"
+      ],
+      "title": "PoseComparison",
+      "type": "object"
+    },
+    "PoseCoverage": {
+      "description": "How many usable poses carry each coarse label (argus-puppet's rule-based labels).",
+      "properties": {
+        "arms": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Arms",
+          "type": "object"
+        },
+        "facing": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Facing",
+          "type": "object"
+        },
+        "stance": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Stance",
+          "type": "object"
+        }
+      },
+      "required": [
+        "stance",
+        "arms",
+        "facing"
+      ],
+      "title": "PoseCoverage",
+      "type": "object"
+    },
+    "PoseDistanceQuantiles": {
+      "description": "Quantiles of nearest-neighbour pose distances (torso units) over ``n`` poses.",
+      "properties": {
+        "n": {
+          "minimum": 1,
+          "title": "N",
+          "type": "integer"
+        },
+        "p01": {
+          "title": "P01",
+          "type": "number"
+        },
+        "p10": {
+          "title": "P10",
+          "type": "number"
+        },
+        "p50": {
+          "title": "P50",
+          "type": "number"
+        },
+        "p90": {
+          "title": "P90",
+          "type": "number"
+        }
+      },
+      "required": [
+        "n",
+        "p01",
+        "p10",
+        "p50",
+        "p90"
+      ],
+      "title": "PoseDistanceQuantiles",
+      "type": "object"
+    },
+    "PoseProvenance": {
+      "description": "Which argus-puppet produced the pose block, with what parameters, and what\nwas not checked. Never the service's URL.",
+      "properties": {
+        "detector_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detector Model"
+        },
+        "not_checked": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Not Checked",
+          "type": "array"
+        },
+        "package_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Package Version"
+        },
+        "params": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "pose_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pose Model"
+        },
+        "puppet_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Puppet Version"
+        },
+        "training": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Training"
+        }
+      },
+      "required": [
+        "puppet_version",
+        "package_version",
+        "pose_model",
+        "detector_model",
+        "params",
+        "training",
+        "not_checked"
+      ],
+      "title": "PoseProvenance",
+      "type": "object"
+    },
+    "PoseReport": {
+      "description": "Run-level pose diversity of the outputs (argus-puppet ``POST /stats`` on each\nimage's primary person), and, when the training export is readable here, the\ncomparison with the training frames' poses.\n\n``count`` is every output image of the run; ``posed`` those puppet returned a\npose for (``partial`` when fewer); ``usable`` those with a usable primary pose.\nA number puppet could not measure is ``None``, never ``0.0``.\n``largest_cluster_medoids`` names the image(s) at the centre of the largest pose\ncluster(s), so a collapse says which pose the outputs collapsed onto.",
+      "properties": {
+        "cluster_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cluster Count"
+        },
+        "comparable_share": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comparable Share"
+        },
+        "comparison": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PoseComparison"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "count": {
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "coverage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PoseCoverage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "diversity": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Diversity"
+        },
+        "failed_images": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Failed Images",
+          "type": "array"
+        },
+        "largest_cluster_medoids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Largest Cluster Medoids",
+          "type": "array"
+        },
+        "largest_cluster_share": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Largest Cluster Share"
+        },
+        "mean_pairwise_distance": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mean Pairwise Distance"
+        },
+        "partial": {
+          "default": false,
+          "title": "Partial",
+          "type": "boolean"
+        },
+        "posed": {
+          "minimum": 0,
+          "title": "Posed",
+          "type": "integer"
+        },
+        "provenance": {
+          "$ref": "#/$defs/PoseProvenance"
+        },
+        "usable": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Usable"
+        }
+      },
+      "required": [
+        "count",
+        "posed",
+        "partial",
+        "failed_images",
+        "usable",
+        "comparable_share",
+        "diversity",
+        "mean_pairwise_distance",
+        "cluster_count",
+        "largest_cluster_share",
+        "largest_cluster_medoids",
+        "coverage",
+        "comparison",
+        "provenance"
+      ],
+      "title": "PoseReport",
+      "type": "object"
+    },
     "ProgressEvent": {
       "description": "One NDJSON progress line streamed during generation (suite convention).\n\n``type`` selects which fields matter: ``start`` sets ``total`` (images to\nmake); ``progress`` sets ``completed``/``total``; ``image`` sets ``seed`` +\n``image_id`` as each finishes; ``done`` closes the run; ``error`` carries a\nfailure ``message``.",
       "properties": {
@@ -1106,7 +1658,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.9",
+          "default": "1.10",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1349,7 +1901,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.9",
+          "default": "1.10",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1716,7 +2268,7 @@
           "type": "integer"
         },
         "proof_version": {
-          "default": "1.9",
+          "default": "1.10",
           "title": "Proof Version",
           "type": "string"
         },

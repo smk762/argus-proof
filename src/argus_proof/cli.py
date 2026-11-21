@@ -84,11 +84,31 @@ def _echo_report(rep) -> None:  # noqa: ANN001 - EvalReport, imported lazily by 
     )
     for reason in verdict.reasons:
         typer.echo(f"  reason: {reason}")
+    if rep.pose is not None:
+        typer.echo(f"  pose: {_pose_line(rep.pose)}")
     for img in rep.images:
         mark = "?" if img.passed is None else ("+" if img.passed else "-")
         rating = f" hitl={img.hitl_rating}" if img.hitl_rating is not None else ""
         rejects = f" rejects={','.join(r.code for r in img.reject_reasons)}" if img.reject_reasons else ""
         typer.echo(f"  [{mark}] {img.image_id} (seed {img.seed}){rating}{rejects}")
+
+
+def _pose_line(pose) -> str:  # noqa: ANN001 - PoseReport, imported lazily by callers
+    """One line for the run-level pose block."""
+
+    def num(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.2f}"
+
+    usable = "?" if pose.usable is None else str(pose.usable)
+    line = (
+        f"diversity {num(pose.diversity)}, largest cluster {num(pose.largest_cluster_share)} "
+        f"({usable}/{pose.count} usable{', partial' if pose.partial else ''})"
+    )
+    if pose.comparison is not None:
+        line += f", close excess vs training {num(pose.comparison.close_excess)}"
+    if pose.provenance.not_checked:
+        line += f"; not checked: {pose.provenance.not_checked[0]}"
+    return line
 
 
 @app.command()
@@ -285,10 +305,10 @@ def score(
         None,
         "--require-scorers",
         help="Metrics whose scorer must be available, else exit 2 (repeatable or comma-separated, e.g. "
-        "identity,likeness,clip_score,aesthetic,safety)",
+        "identity,likeness,clip_score,aesthetic,safety,pose)",
     ),
 ) -> None:
-    """Score a generated run into an EvalReport: identity, likeness, quality, diversity, safety.
+    """Score a generated run into an EvalReport: identity, likeness, quality, diversity, safety, pose.
 
     A default scorer that can't run here (its extra isn't installed, or its service
     isn't configured) leaves its metric empty; that is warned about on stderr, and
@@ -317,14 +337,15 @@ def score(
     if missing_required:
         typer.echo(
             f"required scorer(s) unavailable: {', '.join(missing_required)} — install argus-proof[score] "
-            "(and set PROOF_NUDENET_URL for safety), or use the -score image",
+            "(and set PROOF_NUDENET_URL for safety, PROOF_PUPPET_URL for pose), or use the -score image",
             err=True,
         )
         raise typer.Exit(2)
     if missing:
         typer.echo(
             f"warning: no scorer available for {', '.join(missing)}; those metrics will be empty and their "
-            "groups left for review (install argus-proof[score], or use the -score image)",
+            "groups left for review (install argus-proof[score], or use the -score image; safety and pose need "
+            "PROOF_NUDENET_URL and PROOF_PUPPET_URL)",
             err=True,
         )
 

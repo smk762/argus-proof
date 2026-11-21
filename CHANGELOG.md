@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Run-level pose diversity and pose-copying evidence from argus-puppet** (#122, item 3): `PoseScorer` and
+  `PuppetClient` (`scoring/scorers/pose.py`) post each output to argus-puppet's `/pose` over HTTP
+  (`PROOF_PUPPET_URL`, `PROOF_PUPPET_TIMEOUT`; that host only, no redirects, a per-call deadline, `Retry-After`
+  honoured on a busy 503, proof's priority as `X-Argus-Priority`) and fill the new top-level `EvalReport.pose` from
+  `/stats`, plus `/compare` against the training frames when the export is readable here. Proof speaks puppet's wire
+  (major 1, unknown fields ignored) and never depends on the package. Unset, it is reported unavailable (`GET
+  /scorers`, the `score` warning, `--require-scorers pose`); down or erroring, the run still scores and the pose block
+  says what wasn't measured (`None`, never `0.0`).
+- Wire `PROOF_VERSION` 1.10 (additive: `EvalReport.pose` and its models).
+
 ## [0.5.2] - 2026-11-19
 
 ### Fixed

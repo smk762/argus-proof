@@ -433,11 +433,18 @@ def default_phash_scorers() -> tuple:
     return PhashDeduper(), PhashDiversityScorer()
 
 
+def default_pose_scorer():  # noqa: ANN201 - PoseScorer, imported lazily
+    """The run-level pose scorer (argus-puppet at ``$PROOF_PUPPET_URL``; unavailable without one)."""
+    from argus_proof.scoring.scorers import PoseScorer
+
+    return PoseScorer()
+
+
 def all_reporting_scorers() -> list:
-    """Every scorer a default run applies (per-image set + phash dedup/diversity),
-    flat — so a capability probe like the server's ``/scorers`` reports exactly
-    what :func:`score_images` will run, with no separate list to drift."""
-    return [*default_scorers(), *default_phash_scorers()]
+    """Every scorer a default run applies (per-image set + phash dedup/diversity +
+    run-level pose), flat — so a capability probe like the server's ``/scorers``
+    reports exactly what :func:`score_images` will run, with no separate list to drift."""
+    return [*default_scorers(), *default_phash_scorers(), default_pose_scorer()]
 
 
 def unavailable_metrics() -> list[str]:
@@ -469,19 +476,20 @@ def score_images(
     :class:`EvaluateError`.
 
     With *references*, the run's training export (``manifest.source_manifest``'s
-    directory, when it is readable here) is checked first: a reference that is a
-    training image raises :class:`EvaluateError` (:func:`check_held_out`). The
-    report's ``scorers`` records which check ran, or that none could, as
-    ``held-out-references``.
+    directory, when it is readable here: :func:`training_export`) is checked first:
+    a reference that is a training image raises :class:`EvaluateError`
+    (:func:`check_held_out`). The report's ``scorers`` records which check ran, or
+    that none could, as ``held-out-references``.
+
+    With ``$PROOF_PUPPET_URL`` set, the run-level pose block (``report.pose``) is
+    filled from argus-puppet afterwards, outside the lease (puppet takes its own),
+    comparing against the training frames under the same readability rule; *priority*
+    goes along as ``X-Argus-Priority``. Puppet being down never fails the run.
     """
+    export_dir, unreadable = training_export(manifest)
     held_out: str | None = None
     if references:
-        held_out = "not checked: no training export"
-        if manifest.source_manifest:
-            export_dir = Path(manifest.source_manifest).parent
-            held_out = "not checked: training export not readable here"
-            if export_dir.is_dir():
-                held_out = check_held_out(references, export_dir)
+        held_out = check_held_out(references, export_dir) if export_dir is not None else unreadable
     deduper, diversity = default_phash_scorers()
     ctx = ScoreContext(prompt=manifest.prompt, reference_images=list(references or []))
     scorers = default_scorers()
@@ -496,7 +504,32 @@ def score_images(
     )
     if held_out is not None:
         report.scorers.append(ScorerProvenance(name=HELD_OUT_CHECK, metric="identity", model=held_out))
+    pose = default_pose_scorer()
+    if pose.is_available():
+        # After the lease: puppet takes its own. Never raises for a puppet failure; the block says what happened.
+        report.pose = pose.score(
+            images,
+            training=training_images(export_dir) if export_dir is not None else None,
+            export_dir=export_dir,
+            training_note=unreadable,
+            priority=priority,
+        )
+        report.scorers.append(pose.provenance())
     return report
+
+
+def training_export(manifest: RunManifest) -> tuple[Path | None, str | None]:
+    """The run's curator export dir when it is readable on this host, else ``(None, why not)``.
+
+    The export is ``manifest.source_manifest``'s directory. Both the held-out
+    reference check and the pose comparison use it only under this one rule.
+    """
+    if not manifest.source_manifest:
+        return None, "not checked: no training export"
+    export_dir = Path(manifest.source_manifest).parent
+    if not export_dir.is_dir():
+        return None, "not checked: training export not readable here"
+    return export_dir, None
 
 
 def _score_leased(
