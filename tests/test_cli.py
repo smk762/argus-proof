@@ -523,7 +523,7 @@ def test_require_scorers_rejects_an_unknown_metric(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
-# pose: --require-scorers pose, the digest line (#122)
+# pose: --require-scorers pose, the gate flags, the digest line (#122)
 # --------------------------------------------------------------------------
 
 
@@ -561,6 +561,39 @@ def _pose_report(path: Path, **pose: object) -> None:
         pose=PoseReport(**fields),
     )
     path.write_text(report.model_dump_json(), encoding="utf-8")
+
+
+def test_gate_min_pose_diversity_rejects_a_collapse_with_its_code(tmp_path: Path) -> None:
+    path = tmp_path / "eval_report.json"
+    _pose_report(path)
+    assert runner.invoke(app, ["gate", str(path)]).exit_code == 0  # off by default
+    result = runner.invoke(app, ["gate", str(path), "--min-pose-diversity", "0.3"])
+    assert result.exit_code == 1, result.output
+    assert "[FAIL] pose_diversity (pose_collapse): pose diversity 0.200 < 0.300" in result.output
+    assert "[FAIL] pose_largest_cluster (pose_collapse)" in result.output and "REJECTED" in result.output
+    loose = runner.invoke(app, ["gate", str(path), "--min-pose-diversity", "0.1", "--max-pose-cluster-share", "0.95"])
+    assert loose.exit_code == 0 and "[PASS] pose_largest_cluster: largest pose cluster 0.90 < 0.95" in loose.output
+
+
+def test_gate_flags_pose_copying_without_rejecting(tmp_path: Path) -> None:
+    path = tmp_path / "eval_report.json"
+    _pose_report(path, diversity=0.7, largest_cluster_share=0.2, copying=True)
+    result = runner.invoke(app, ["gate", str(path), "--min-pose-diversity", "0.3"])
+    assert result.exit_code == 0, result.output
+    assert "[FLAG] pose_copying (pose_copying): flagged for review" in result.output and "ACCEPTED" in result.output
+
+
+def test_gate_fails_an_unmeasurable_pose_block(tmp_path: Path) -> None:
+    path = tmp_path / "eval_report.json"
+    _write_report(path, n_passed=90, n_groups=100, pass_rate=0.9)  # no pose block
+    result = runner.invoke(app, ["gate", str(path), "--min-pose-diversity", "0.3"])
+    assert result.exit_code == 1 and "[FAIL] pose_measurable: pose gate not measurable: no pose block" in result.output
+
+
+def test_gate_refuses_an_out_of_range_pose_threshold(tmp_path: Path) -> None:
+    path = tmp_path / "eval_report.json"
+    _pose_report(path)
+    assert runner.invoke(app, ["gate", str(path), "--max-pose-cluster-share", "0"]).exit_code == 2
 
 
 def test_require_scorers_pose_refuses_without_a_puppet_url(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001

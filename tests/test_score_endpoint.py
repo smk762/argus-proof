@@ -126,7 +126,7 @@ def test_score_returns_per_image_metrics_means_and_pinned_provenance(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     ScoreResult.model_validate(body)
-    assert body["proof_version"] == PROOF_VERSION == "1.10"
+    assert body["proof_version"] == PROOF_VERSION == "1.11"
     assert body["n_images"] == 2
     [same, other] = body["images"]
     assert (same["index"], same["filename"], same["crop"]) == (0, "teaser-1.png", None)
