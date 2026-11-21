@@ -17,7 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (major 1, unknown fields ignored) and never depends on the package. Unset, it is reported unavailable (`GET
   /scorers`, the `score` warning, `--require-scorers pose`); down or erroring, the run still scores and the pose block
   says what wasn't measured (`None`, never `0.0`).
-- Wire `PROOF_VERSION` 1.10 (additive: `EvalReport.pose` and its models).
+- `argus-proof gate --min-pose-diversity` / `--max-pose-cluster-share` (`AcceptanceThresholds.min_pose_diversity`,
+  off by default; `max_pose_cluster_share` 0.75): an unmeasurable pose block fails it, a collapse fails with
+  `pose_collapse`, and pose copying is only ever a `pose_copying` flag for review. Thresholds are calibrated on
+  synthetic poses only. `GateCheck.code` carries those run-level codes.
+- `recommend` routes a pose collapse to **curator** (narrow training poses, or outputs matching their mix) or the
+  **grid** (`RecommendConfig.min_pose_diversity`, `argus-proof recommend --min-pose-diversity`; off by default).
+- Wire `PROOF_VERSION` 1.10 (additive: `EvalReport.pose` and its models), then 1.11 (additive: the two pose
+  thresholds and `GateCheck.code`).
 
 ## [0.5.2] - 2026-11-19
 

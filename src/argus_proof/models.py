@@ -72,11 +72,15 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 # 1.10: additive — EvalReport.pose (PoseReport, with PoseComparison, PoseClosePair,
 #      PoseCoverage, PoseDistanceQuantiles, PoseProvenance): run-level pose diversity
 #      and pose-copying evidence from argus-puppet over HTTP (#122).
+# 1.11: additive — AcceptanceThresholds.min_pose_diversity (off by default) and
+#      .max_pose_cluster_share gate the pose block, and GateCheck.code carries a
+#      run-level reason code (pose_collapse, pose_copying) without widening the
+#      per-image RejectReasonCode, which a 1.10 reader would refuse (#122).
 # Since 1.7, GateConfig rejects ``weights`` / ``hard_gates`` keys that aren't a
 # MetricScores field. Such a key never matched a score, so its weight or gate
 # silently never applied; a payload that used one now fails validation instead.
 # Treated as a bug fix, not a wire break, so no major bump.
-PROOF_VERSION = "1.10"
+PROOF_VERSION = "1.11"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -929,6 +933,11 @@ class AcceptanceThresholds(BaseModel):
     max_unsafe_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     unsafe_safety_floor: float = Field(default=0.8, ge=0.0, le=1.0)
     confidence: float = Field(default=0.95, gt=0.0, lt=1.0)
+    # The pose-collapse gate (#122), off by default: its thresholds are calibrated on
+    # synthetic poses only. When on, a run whose pose block isn't measurable fails it.
+    min_pose_diversity: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Applies only with min_pose_diversity set: a largest pose cluster at or above it is a collapse.
+    max_pose_cluster_share: float = Field(default=0.75, gt=0.0, le=1.0)
 
 
 class GateCheck(BaseModel):
@@ -941,6 +950,9 @@ class GateCheck(BaseModel):
     actual: float | None = None
     threshold: float | None = None
     detail: str = ""
+    # A run-level reason code (``pose_collapse``, ``pose_copying``), kept apart from
+    # the per-image RejectReasonCode so older readers still load the report.
+    code: str | None = None
 
 
 class GateResult(BaseModel):

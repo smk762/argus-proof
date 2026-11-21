@@ -445,6 +445,30 @@ argus-proof gate eval_report.json \
 floors the mean DINOv2 likeness (any subject, `AcceptanceThresholds.min_likeness_mean`).
 Use whichever measures the subject, or both.
 
+**Pose collapse** (`--min-pose-diversity`, `AcceptanceThresholds.min_pose_diversity`, #122) is **off by default**:
+its thresholds (argus-puppet's suggested 0.3 diversity floor and 0.75 cluster share) are calibrated on synthetic
+stick figures only, so confirm them on a real run before relying on them, as `--min-likeness` was. When on, it reads
+the report's pose block (see Scoring):
+
+```bash
+argus-proof gate eval_report.json --min-pose-diversity 0.3 --max-pose-cluster-share 0.75
+# [PASS] pose_measurable: 38/40 usable poses, comparable share 0.97
+# [FAIL] pose_diversity (pose_collapse): pose diversity 0.200 < 0.300; the outputs collapsed toward proof-1-4
+# [FAIL] pose_largest_cluster (pose_collapse): largest pose cluster 0.90 >= 0.75 (medoid proof-1-4)
+```
+
+1. **Measurable first.** No pose block, fewer than 10 usable poses, a usable share of the run under 0.5, or a
+   comparable share under 0.8 fails `pose_measurable`: an unmeasured run never passes the gate.
+2. **Collapse.** Diversity under the floor, or a largest pose cluster at or above `--max-pose-cluster-share`, fails
+   with the run-level code `pose_collapse` (`GateCheck.code`; run-level codes stay out of the per-image reject
+   reasons). The detail names the largest cluster's medoid, the pose the outputs collapsed onto.
+3. **Copying is a flag, never a reject.** With at least 20 eligible poses on each side and `close_excess >= 0.1`, a
+   passing `[FLAG] pose_copying (pose_copying)` check marks the run for review and counts the close pairs to compare
+   at image level. **Never gate on pose copying:** a pose-conditioned generator (a ControlNet, a pose library)
+   reproduces training poses by design and shows a high excess.
+
+The view encodes composition, not only articulation: one stance shot frontal and in profile counts as two poses.
+
 The pass-rate lower bound uses a Wilson score interval (`argus_proof.stats`, no
 scipy), so acceptance is statistically defensible at small N. A configured metric
 that wasn't measured fails its check rather than passing silently.
@@ -498,7 +522,10 @@ for rec in recommend(report, config=cfg, store=cross_run_store):   # store optio
 ```
 
 Safety first, then: low identity/likeness/aesthetic → **forge** (training), low adherence →
-**lens** + **grid**, low diversity → **grid**, borderline → **refine** (HITL). With a
+**lens** + **grid**, low diversity → **grid**, borderline → **refine** (HITL). A pose collapse
+(`--min-pose-diversity`, off by default like the gate's) goes to **curator** when the training poses are themselves
+narrow or the outputs match their mix (a low coverage divergence): rebalance the dataset's poses and retrain.
+Otherwise to the **grid**: generation narrowed it. With a
 cross-run store it also surfaces the best checkpoint / LoRA weight — but only when
 the evidence separates a clear winner (non-overlapping CIs), never on a tie.
 

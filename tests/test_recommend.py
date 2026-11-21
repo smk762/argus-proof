@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from argus_proof.models import (
+    AcceptanceThresholds,
     AggregateScores,
     EvalReport,
     ImageScores,
     MetricScores,
+    PoseComparison,
+    PoseReport,
     Verdict,
 )
 from argus_proof.recommend import RecommendConfig, recommend
@@ -287,3 +290,89 @@ def test_likeness_floor_is_off_by_default_and_routes_to_forge() -> None:
     assert not any(r.metric == "likeness" for r in recommend(low))  # uncalibrated: no default floor
     recs = recommend(low, config=RecommendConfig(min_likeness=0.5))
     assert any(r.stage == "forge" and r.metric == "likeness" for r in recs)
+
+
+# --------------------------------------------------------------------------
+# pose collapse (#122)
+# --------------------------------------------------------------------------
+
+
+def _posed(
+    *,
+    diversity: float = 0.15,
+    largest: float = 0.9,
+    divergence: float | None = None,
+    training_diversity: float | None = None,
+    training_largest: float | None = None,
+    compared: bool = True,
+) -> EvalReport:
+    cmp = (
+        PoseComparison(
+            training_frames=50,
+            output_count=40,
+            matched_count=40,
+            reference_count=50,
+            close_eligible=30,
+            baseline_eligible=40,
+            threshold=0.04,
+            coverage_divergence=divergence,
+            training_diversity=training_diversity,
+            training_largest_cluster_share=training_largest,
+        )
+        if compared
+        else None
+    )
+    pose = PoseReport(
+        count=40,
+        posed=40,
+        usable=38,
+        comparable_share=0.97,
+        diversity=diversity,
+        largest_cluster_share=largest,
+        largest_cluster_medoids=["run-1-4"],
+        comparison=cmp,
+    )
+    return _report(means=MetricScores(identity=0.9, clip_score=0.9, aesthetic=0.9), diversity=0.9).model_copy(
+        update={"pose": pose}
+    )
+
+
+ON = RecommendConfig(min_pose_diversity=0.3)
+
+
+def test_pose_collapse_is_off_by_default() -> None:
+    assert recommend(_posed()) == []
+
+
+def test_a_collapse_onto_narrow_training_poses_routes_to_curator() -> None:
+    [rec] = recommend(_posed(training_diversity=0.2, training_largest=0.85, divergence=0.4), config=ON)
+    assert (rec.stage, rec.metric, rec.value, rec.threshold) == ("curator", "pose_diversity", 0.15, 0.3)
+    assert "training poses are narrow" in rec.issue and "run-1-4" in rec.issue
+
+
+def test_a_collapse_matching_the_training_mix_routes_to_curator() -> None:
+    [rec] = recommend(_posed(training_diversity=0.7, training_largest=0.3, divergence=0.05), config=ON)
+    assert rec.stage == "curator" and "match the training pose mix" in rec.issue
+
+
+def test_a_collapse_the_training_set_does_not_share_routes_to_the_grid() -> None:
+    [rec] = recommend(_posed(training_diversity=0.7, training_largest=0.3, divergence=0.4), config=ON)
+    assert rec.stage == "grid" and "training poses are broader" in rec.issue
+    [rec] = recommend(_posed(compared=False), config=ON)
+    assert rec.stage == "grid" and "wasn't compared" in rec.issue
+
+
+def test_a_cluster_share_collapse_cites_the_share() -> None:
+    [rec] = recommend(_posed(diversity=0.5, largest=0.8, compared=False), config=ON)
+    assert (rec.metric, rec.value, rec.threshold) == ("pose_largest_cluster_share", 0.8, 0.75)
+
+
+def test_no_pose_recommendation_for_a_varied_or_unmeasurable_run() -> None:
+    assert recommend(_posed(diversity=0.6, largest=0.3), config=ON) == []
+    unmeasured = _posed().model_copy(update={"pose": None})
+    assert recommend(unmeasured, config=ON) == []
+
+
+def test_from_acceptance_tracks_the_pose_gate() -> None:
+    cfg = RecommendConfig.from_acceptance(AcceptanceThresholds(min_pose_diversity=0.25, max_pose_cluster_share=0.8))
+    assert (cfg.min_pose_diversity, cfg.max_pose_cluster_share) == (0.25, 0.8)

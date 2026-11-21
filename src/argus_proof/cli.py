@@ -419,6 +419,14 @@ def gate(
     ),
     max_unsafe_rate: float | None = Option(None, help="Maximum fraction of images flagged unsafe"),
     confidence: float = Option(0.95, help="Confidence level for the CI lower bound"),
+    min_pose_diversity: float | None = Option(
+        None,
+        help="Turn on the pose-collapse gate: minimum run-level pose diversity (argus-puppet; suggested 0.3, "
+        "calibrated on synthetic poses only). A run whose pose block isn't measurable fails it",
+    ),
+    max_pose_cluster_share: float = Option(
+        0.75, help="With --min-pose-diversity: a largest pose cluster at or above this share is a collapse"
+    ),
 ) -> None:
     """Gate a scored EvalReport against acceptance thresholds; exit non-zero if rejected (for CI)."""
     from argus_proof.acceptance import evaluate_acceptance
@@ -434,6 +442,8 @@ def gate(
             min_likeness_mean=min_likeness,
             max_unsafe_rate=max_unsafe_rate,
             confidence=confidence,
+            min_pose_diversity=min_pose_diversity,
+            max_pose_cluster_share=max_pose_cluster_share,
         )
     except ValueError as exc:  # out-of-range option (e.g. --confidence 1.0)
         typer.echo(f"invalid threshold: {exc}", err=True)
@@ -441,7 +451,10 @@ def gate(
 
     result = evaluate_acceptance(report, thresholds)
     for check in result.checks:
-        typer.echo(f"[{'PASS' if check.passed else 'FAIL'}] {check.name}: {check.detail}")
+        # A passing check that carries a code is a flag for review (pose_copying), never a reject.
+        mark = ("FLAG" if check.code else "PASS") if check.passed else "FAIL"
+        code = f" ({check.code})" if check.code else ""
+        typer.echo(f"[{mark}] {check.name}{code}: {check.detail}")
     typer.echo("ACCEPTED" if result.passed else "REJECTED")
     raise typer.Exit(0 if result.passed else 1)
 
@@ -452,9 +465,20 @@ def recommend(
     store: Path | None = Option(
         None, "--store", help="CrossRunStore parquet: also recommend the best checkpoint / LoRA weight (needs [stats])"
     ),
+    min_pose_diversity: float | None = Option(
+        None, help="Route a pose collapse below this diversity (off by default, like the gate's)"
+    ),
+    max_pose_cluster_share: float = Option(0.75, help="With --min-pose-diversity: the largest pose cluster's ceiling"),
 ) -> None:
     """Suggest routed fixes (which suite stage to act on) from a scored EvalReport."""
+    from argus_proof.recommend import RecommendConfig
     from argus_proof.recommend import recommend as _recommend
+
+    try:
+        config = RecommendConfig(min_pose_diversity=min_pose_diversity, max_pose_cluster_share=max_pose_cluster_share)
+    except ValueError as exc:
+        typer.echo(f"invalid threshold: {exc}", err=True)
+        raise typer.Exit(2) from exc
 
     report = _load_report(report_json)
 
@@ -469,7 +493,7 @@ def recommend(
 
         cross_run = CrossRunStore(store)
 
-    recommendations = _recommend(report, store=cross_run)
+    recommendations = _recommend(report, config=config, store=cross_run)
     if not recommendations:
         typer.echo("no recommendations — nothing actionable")
         return
