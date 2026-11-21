@@ -6,8 +6,9 @@ silently drops out of every report. CI's score-imports job and the ``-score``
 image build (#99) run this so that becomes a failure instead.
 
 The heavy packages are imported directly first, so a failure prints the real
-traceback rather than only ``available: False``. Safety is not checked: it needs
-a NudeNet service (``PROOF_NUDENET_URL``), not a package.
+traceback rather than only ``available: False``. Safety and pose are not checked:
+they need a NudeNet service (``PROOF_NUDENET_URL``) and an argus-puppet service
+(``PROOF_PUPPET_URL``), not a package.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import importlib
 import sys
 
 PACKAGES = ("torch", "torchmetrics", "transformers", "pyiqa", "insightface", "onnxruntime", "PIL", "imagehash")
-NEEDS_A_SERVICE = {"safety"}
+NEEDS_A_SERVICE = {"safety", "pose"}
 
 
 def main() -> int:

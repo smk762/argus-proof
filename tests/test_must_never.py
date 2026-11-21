@@ -69,6 +69,18 @@ def test_no_agpl_package_is_imported_in_process() -> None:
     assert {k: v for k, v in offenders.items() if v} == {}
 
 
+def test_argus_puppet_is_reached_over_http_only() -> None:
+    # Proof speaks puppet's wire (scoring/scorers/pose.py): the package would bring its own argus-cortex pin and
+    # onnxruntime, and its weights belong in its service.
+    importers = [
+        str(path.relative_to(ROOT))
+        for path in [*SRC.rglob("*.py"), *(ROOT / "tests").rglob("*.py")]
+        if "argus_puppet" in _imported_roots(ast.parse(path.read_text(encoding="utf-8")))
+    ]
+    assert importers == []
+    assert "argus-puppet" not in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+
 def test_the_import_scan_sees_every_form() -> None:
     tree = ast.parse(
         "import nudenet\nfrom ultralytics.models import YOLO\nimportlib.import_module('dyn.x')\n__import__('a')"

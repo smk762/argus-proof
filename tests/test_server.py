@@ -445,6 +445,8 @@ def test_scorers_reports_availability(client: TestClient) -> None:
     assert {"duplicate", "diversity"} <= {s["metric"] for s in scorers}
     # identity for faces and likeness (DINOv2) for everything else are both listed
     assert {"identity", "likeness"} <= {s["metric"] for s in scorers}
+    # the run-level pose scorer (argus-puppet), unavailable without PROOF_PUPPET_URL
+    assert {"metric": "pose", "name": "argus-puppet", "available": False} in scorers
     # phash dedup/diversity ship in the dev/test env, so at least one is available
     assert any(s["available"] for s in scorers)
 

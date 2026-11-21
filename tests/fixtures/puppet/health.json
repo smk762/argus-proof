@@ -1,0 +1,1 @@
+{"puppet_version":"1.1","version":"0.2.0","read_only":false,"models":{"dwpose-l-384x288":true,"dwpose-m-256x192":true,"yolox_m":true,"yolox_nano":true},"pose_model":"dwpose-l-384x288","detector_model":"yolox_m","provider":null,"device":"cpu","gpu_coordinator":"none","free_vram_mb":null}

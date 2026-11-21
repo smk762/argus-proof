@@ -520,3 +520,64 @@ def test_require_scorers_rejects_an_unknown_metric(tmp_path: Path) -> None:
     result = runner.invoke(app, ["score", str(tmp_path), "--require-scorers", "vibes"])
     assert result.exit_code == 2
     assert "unknown metric(s) for --require-scorers: vibes" in result.output
+
+
+# --------------------------------------------------------------------------
+# pose: --require-scorers pose, the digest line (#122)
+# --------------------------------------------------------------------------
+
+
+def _pose_report(path: Path, **pose: object) -> None:
+    from argus_proof.models import PoseComparison, PoseReport
+
+    fields: dict = {
+        "count": 40,
+        "posed": 40,
+        "usable": 38,
+        "comparable_share": 0.97,
+        "diversity": 0.2,
+        "largest_cluster_share": 0.9,
+        "largest_cluster_medoids": ["run-1-4"],
+    }
+    fields.update(pose)
+    if fields.pop("copying", False):
+        fields["comparison"] = PoseComparison(
+            training_frames=40,
+            output_count=40,
+            matched_count=40,
+            reference_count=40,
+            close_eligible=30,
+            baseline_eligible=30,
+            close_share=0.3,
+            baseline_close_share=0.0,
+            close_excess=0.3,
+            threshold=0.04,
+            n_close=9,
+        )
+    report = EvalReport(
+        run_id="run-1",
+        aggregate=AggregateScores(n_images=40, n_groups=40, n_passed=40, pass_rate=1.0, means=MetricScores()),
+        verdict=Verdict(passed=True),
+        pose=PoseReport(**fields),
+    )
+    path.write_text(report.model_dump_json(), encoding="utf-8")
+
+
+def test_require_scorers_pose_refuses_without_a_puppet_url(tmp_path: Path, fake_backend) -> None:  # noqa: ANN001
+    _, run_dir = _run_grid(tmp_path)
+    refused = runner.invoke(app, ["score", str(run_dir), "--no-save", "--require-scorers", "pose"])
+    assert refused.exit_code == 2
+    assert "required scorer(s) unavailable: pose" in refused.output and "PROOF_PUPPET_URL" in refused.output
+    warned = runner.invoke(app, ["score", str(run_dir), "--no-save"])
+    assert warned.exit_code == 0 and "pose" in warned.output.split("warning: no scorer available for", 1)[1]
+
+
+def test_report_digest_has_a_pose_line(tmp_path: Path) -> None:
+    from argus_proof.reports import ReportStore
+
+    path = tmp_path / "eval_report.json"
+    _pose_report(path, copying=True)
+    ReportStore(tmp_path / "reports").save(EvalReport.model_validate_json(path.read_text(encoding="utf-8")))
+    result = runner.invoke(app, ["report", "run-1", "--reports-dir", str(tmp_path / "reports")])
+    assert result.exit_code == 0, result.output
+    assert "  pose: diversity 0.20, largest cluster 0.90 (38/40 usable), close excess vs training 0.30" in result.output
