@@ -69,11 +69,14 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #      (ScoredImage rows, MetricScores means, ScorerProvenance) out. Scores
 #      caller-supplied images against an export's held-out references (#103,
 #      argus-mint#51).
+# 1.10: additive — EvalReport.pose (PoseReport, with PoseComparison, PoseClosePair,
+#      PoseCoverage, PoseDistanceQuantiles, PoseProvenance): run-level pose diversity
+#      and pose-copying evidence from argus-puppet over HTTP (#122).
 # Since 1.7, GateConfig rejects ``weights`` / ``hard_gates`` keys that aren't a
 # MetricScores field. Such a key never matched a score, so its weight or gate
 # silently never applied; a payload that used one now fails validation instead.
 # Treated as a bug fix, not a wire break, so no major bump.
-PROOF_VERSION = "1.9"
+PROOF_VERSION = "1.10"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -615,6 +618,130 @@ class GateConfig(BaseModel):
         return v
 
 
+# ---------------------------------------------------------------------------
+# Pose — run-level pose diversity and pose-copying evidence (argus-puppet, #122)
+# ---------------------------------------------------------------------------
+
+
+class PoseCoverage(BaseModel):
+    """How many usable poses carry each coarse label (argus-puppet's rule-based labels)."""
+
+    model_config = RESPONSE_ONLY
+
+    stance: dict[str, int] = Field(default_factory=dict)
+    arms: dict[str, int] = Field(default_factory=dict)
+    facing: dict[str, int] = Field(default_factory=dict)
+
+
+class PoseDistanceQuantiles(BaseModel):
+    """Quantiles of nearest-neighbour pose distances (torso units) over ``n`` poses."""
+
+    model_config = RESPONSE_ONLY
+
+    n: int = Field(ge=1)
+    p01: float
+    p10: float
+    p50: float
+    p90: float
+
+
+class PoseClosePair(BaseModel):
+    """An output whose pose is a close match to one training frame: a pointer for an
+    image-level check, not evidence of copying on its own (the same pose is not the
+    same frame). ``training_frame`` is the frame's path relative to the curator
+    export, or its file name when it lives outside it; ``training_sha256`` names it
+    exactly."""
+
+    model_config = RESPONSE_ONLY
+
+    image_id: str
+    training_frame: str
+    training_sha256: Sha256
+    distance: float = Field(ge=0.0)
+
+
+class PoseComparison(BaseModel):
+    """The run's poses against its training set's (argus-puppet ``POST /compare``).
+
+    ``close_share`` is the share of eligible outputs within ``threshold`` of a
+    training frame; ``baseline_close_share`` is the same statistic inside the
+    training set (leave-one-out), and ``close_excess`` the difference: the
+    run-level copying signal. A pose-conditioned generator shows a high excess by
+    design, so it is evidence for review, never a reject. ``training_diversity``
+    and ``training_largest_cluster_share`` describe the training set itself, so a
+    collapse onto a pose the training set is dominated by reads as a dataset
+    problem. Every statistic puppet could not define is ``None``.
+    """
+
+    model_config = RESPONSE_ONLY
+
+    training_frames: int = Field(ge=0)
+    output_count: int = Field(ge=0)
+    matched_count: int = Field(ge=0)
+    reference_count: int = Field(ge=0)
+    close_eligible: int = Field(ge=0)
+    close_share: float | None = Field(default=None, ge=0.0, le=1.0)
+    baseline_eligible: int = Field(ge=0)
+    baseline_close_share: float | None = Field(default=None, ge=0.0, le=1.0)
+    close_excess: float | None = Field(default=None, ge=0.0, le=1.0)
+    output_nn_distance: PoseDistanceQuantiles | None = None
+    reference_nn_distance: PoseDistanceQuantiles | None = None
+    coverage_divergence: float | None = Field(default=None, ge=0.0, le=1.0)
+    reference_coverage: PoseCoverage | None = None
+    training_diversity: float | None = Field(default=None, ge=0.0, le=1.0)
+    training_largest_cluster_share: float | None = Field(default=None, ge=0.0, le=1.0)
+    threshold: float = Field(ge=0.0)
+    n_close: int = Field(default=0, ge=0)
+    # At most POSE_MAX_CLOSE_PAIRS, closest first; n_close counts them all.
+    close_pairs: list[PoseClosePair] = Field(default_factory=list)
+
+
+class PoseProvenance(BaseModel):
+    """Which argus-puppet produced the pose block, with what parameters, and what
+    was not checked. Never the service's URL."""
+
+    model_config = RESPONSE_ONLY
+
+    puppet_version: str | None = None  # puppet's wire version
+    package_version: str | None = None  # the argus-puppet release
+    pose_model: str | None = None
+    detector_model: str | None = None
+    params: dict[str, float] = Field(default_factory=dict)  # puppet's MetricParams, as it reported them
+    # "compared: N frames", or why the training set was not compared ("not checked: ...").
+    training: str | None = None
+    not_checked: list[str] = Field(default_factory=list)
+
+
+class PoseReport(BaseModel):
+    """Run-level pose diversity of the outputs (argus-puppet ``POST /stats`` on each
+    image's primary person), and, when the training export is readable here, the
+    comparison with the training frames' poses.
+
+    ``count`` is every output image of the run; ``posed`` those puppet returned a
+    pose for (``partial`` when fewer); ``usable`` those with a usable primary pose.
+    A number puppet could not measure is ``None``, never ``0.0``.
+    ``largest_cluster_medoids`` names the image(s) at the centre of the largest pose
+    cluster(s), so a collapse says which pose the outputs collapsed onto.
+    """
+
+    model_config = RESPONSE_ONLY
+
+    count: int = Field(ge=0)
+    posed: int = Field(ge=0)
+    partial: bool = False
+    failed_images: list[str] = Field(default_factory=list)
+    usable: int | None = Field(default=None, ge=0)
+    comparable_share: float | None = Field(default=None, ge=0.0, le=1.0)
+    diversity: float | None = Field(default=None, ge=0.0, le=1.0)
+    mean_pairwise_distance: float | None = Field(default=None, ge=0.0)
+    cluster_count: int | None = Field(default=None, ge=0)
+    largest_cluster_share: float | None = Field(default=None, ge=0.0, le=1.0)
+    largest_cluster_medoids: list[str] = Field(default_factory=list)
+    coverage: PoseCoverage | None = None
+    comparison: PoseComparison | None = None
+    provenance: PoseProvenance = Field(default_factory=PoseProvenance)
+
+
 class EvalReport(_Versioned):
     """Scored evaluation of a generation run: per-image + aggregate + verdict.
 
@@ -633,6 +760,10 @@ class EvalReport(_Versioned):
     # The gate the images were judged with; None on a report from before 1.7,
     # where the default GateConfig is the only fallback.
     gate: GateConfig | None = None
+    # Run-level pose diversity / copying evidence from argus-puppet; None when no
+    # puppet is configured (PROOF_PUPPET_URL) or on a report from before 1.10. A
+    # top-level field, so a HITL re-roll of the aggregate keeps it.
+    pose: PoseReport | None = None
 
 
 class ReportSummary(BaseModel):
@@ -885,6 +1016,12 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
     ScorerProvenance,
     Verdict,
     GateConfig,
+    PoseCoverage,
+    PoseDistanceQuantiles,
+    PoseClosePair,
+    PoseComparison,
+    PoseProvenance,
+    PoseReport,
     EvalReport,
     ReportSummary,
     ScoringFrame,
