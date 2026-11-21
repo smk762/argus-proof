@@ -614,3 +614,13 @@ def test_report_digest_has_a_pose_line(tmp_path: Path) -> None:
     result = runner.invoke(app, ["report", "run-1", "--reports-dir", str(tmp_path / "reports")])
     assert result.exit_code == 0, result.output
     assert "  pose: diversity 0.20, largest cluster 0.90 (38/40 usable), close excess vs training 0.30" in result.output
+
+
+def test_recommend_routes_a_pose_collapse_when_asked(tmp_path: Path) -> None:
+    path = tmp_path / "eval_report.json"
+    _pose_report(path)
+    assert "pose collapse" not in runner.invoke(app, ["recommend", str(path)]).output  # off by default
+    result = runner.invoke(app, ["recommend", str(path), "--min-pose-diversity", "0.3"])
+    assert result.exit_code == 0, result.output
+    assert "[grid] pose collapse (largest cluster around run-1-4)" in result.output
+    assert "[pose_diversity 0.20 vs 0.30]" in result.output

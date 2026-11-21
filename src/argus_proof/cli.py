@@ -465,9 +465,20 @@ def recommend(
     store: Path | None = Option(
         None, "--store", help="CrossRunStore parquet: also recommend the best checkpoint / LoRA weight (needs [stats])"
     ),
+    min_pose_diversity: float | None = Option(
+        None, help="Route a pose collapse below this diversity (off by default, like the gate's)"
+    ),
+    max_pose_cluster_share: float = Option(0.75, help="With --min-pose-diversity: the largest pose cluster's ceiling"),
 ) -> None:
     """Suggest routed fixes (which suite stage to act on) from a scored EvalReport."""
+    from argus_proof.recommend import RecommendConfig
     from argus_proof.recommend import recommend as _recommend
+
+    try:
+        config = RecommendConfig(min_pose_diversity=min_pose_diversity, max_pose_cluster_share=max_pose_cluster_share)
+    except ValueError as exc:
+        typer.echo(f"invalid threshold: {exc}", err=True)
+        raise typer.Exit(2) from exc
 
     report = _load_report(report_json)
 
@@ -482,7 +493,7 @@ def recommend(
 
         cross_run = CrossRunStore(store)
 
-    recommendations = _recommend(report, store=cross_run)
+    recommendations = _recommend(report, config=config, store=cross_run)
     if not recommendations:
         typer.echo("no recommendations — nothing actionable")
         return

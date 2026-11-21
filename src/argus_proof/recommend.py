@@ -7,6 +7,8 @@ owns the fix, so a failing eval loops back concretely instead of vaguely:
 * identity / aesthetic didn't transfer → **forge** (training config / data)
 * prompt adherence low → **lens** (captioning) and the prompt **grid**
 * low diversity → the **grid** (token axes) or forge (overfit)
+* pose collapse → **curator** when the training poses are themselves narrow (or the outputs
+  match their mix), else the **grid** (generation)
 * unsafe outputs → **lens** (data/caption filtering)
 * which checkpoint / LoRA weight to prefer → the cross-run **store**
 * borderline band → **refine** (run HITL)
@@ -28,14 +30,22 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol
 
 from pydantic import BaseModel, Field
 
-from argus_proof.acceptance import _unsafe_rate  # single source of "what counts as unsafe"
+from argus_proof.acceptance import (
+    _unsafe_rate,  # single source of "what counts as unsafe"
+    pose_collapsed,
+    pose_unmeasurable,
+)
 from argus_proof.models import AcceptanceThresholds, EvalReport
 from argus_proof.scoring.scorers.safety import is_unsafe
 
 if TYPE_CHECKING:
     from argus_proof.crossrun import SliceStats
 
-RecommendStage = Literal["forge", "lens", "grid", "weight", "checkpoint", "refine"]
+RecommendStage = Literal["curator", "forge", "lens", "grid", "weight", "checkpoint", "refine"]
+
+# A coverage divergence (Jensen-Shannon, base 2, 0..1) at or under this means the outputs' pose mix matches the
+# training set's. Not calibrated on a real run yet.
+POSE_LOW_COVERAGE_DIVERGENCE = 0.1
 
 
 class Recommendation(BaseModel):
@@ -44,7 +54,8 @@ class Recommendation(BaseModel):
     ``value`` and ``threshold`` are the measured metric and the floor it missed
     (both ``[0,1]`` in the same "higher = better" sense as the metric), except for
     the ``unsafe_rate`` metric where ``value`` is the fraction of unsafe images
-    and ``threshold`` is the allowed ceiling.
+    and ``threshold`` is the allowed ceiling, and ``pose_largest_cluster_share``,
+    the share of poses in the largest cluster against its ceiling.
     """
 
     stage: RecommendStage
@@ -71,6 +82,9 @@ class RecommendConfig(BaseModel):
     min_diversity: float | None = Field(default=0.3, ge=0.0, le=1.0)
     max_unsafe_rate: float | None = Field(default=0.0, ge=0.0, le=1.0)
     unsafe_safety_floor: float = Field(default=0.8, ge=0.0, le=1.0)  # == safety.UNSAFE_SAFETY_FLOOR (640m, #84)
+    # Off by default, like the gate: the pose thresholds are calibrated on synthetic poses only.
+    min_pose_diversity: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_pose_cluster_share: float = Field(default=0.75, gt=0.0, le=1.0)
 
     @classmethod
     def from_acceptance(cls, thresholds: AcceptanceThresholds, **overrides: float | None) -> RecommendConfig:
@@ -78,7 +92,7 @@ class RecommendConfig(BaseModel):
 
         Keeps the recommender and :func:`~argus_proof.acceptance.evaluate_acceptance`
         from disagreeing about the same report: the identity and likeness floors, unsafe ceiling,
-        and safety floor are taken from *thresholds*. The recommend-only floors
+        safety floor and pose-collapse thresholds are taken from *thresholds*. The recommend-only floors
         (clip_score / aesthetic / preference / diversity) keep their defaults
         unless supplied in *overrides*.
         """
@@ -87,6 +101,8 @@ class RecommendConfig(BaseModel):
             "min_likeness": thresholds.min_likeness_mean,
             "max_unsafe_rate": thresholds.max_unsafe_rate,
             "unsafe_safety_floor": thresholds.unsafe_safety_floor,
+            "min_pose_diversity": thresholds.min_pose_diversity,
+            "max_pose_cluster_share": thresholds.max_pose_cluster_share,
         }
         fields.update(overrides)
         return cls(**fields)
@@ -256,6 +272,8 @@ def recommend(
                 for stage, issue, action in rule.targets
             )
 
+    recs.extend(_pose_collapse(report, cfg))
+
     if report.verdict.pending:
         recs.append(
             Recommendation(
@@ -270,6 +288,63 @@ def recommend(
         recs.extend(_best_across_runs(store, "base_checkpoint", "checkpoint"))
         recs.extend(_best_across_runs(store, "lora_weight", "weight"))
     return recs
+
+
+def _pose_collapse(report: EvalReport, cfg: RecommendConfig) -> list[Recommendation]:
+    """Route a pose collapse to the stage that owns it.
+
+    A collapse onto a pose the training set is itself dominated by (the training poses fail the same collapse test,
+    or the outputs' pose mix matches the training mix: a low coverage divergence) is a dataset-balance problem for
+    **curator** (rebalance the export's poses, then retrain). Otherwise generation narrowed it: the **grid**.
+    Nothing when the floor is off or the pose block isn't measurable (the gate reports that).
+    """
+    floor = cfg.min_pose_diversity
+    pose = report.pose
+    if floor is None or pose is None or pose_unmeasurable(pose) is not None:
+        return []
+    if not pose_collapsed(pose, floor, cfg.max_pose_cluster_share):
+        return []
+    if pose.diversity is not None and pose.diversity < floor:
+        evidence = {"metric": "pose_diversity", "value": pose.diversity, "threshold": floor}
+    else:  # collapsed on the cluster share alone
+        evidence = {
+            "metric": "pose_largest_cluster_share",
+            "value": pose.largest_cluster_share,
+            "threshold": cfg.max_pose_cluster_share,
+        }
+    onto = f" (largest cluster around {pose.largest_cluster_medoids[0]})" if pose.largest_cluster_medoids else ""
+    cmp = pose.comparison
+    narrow_training = cmp is not None and (
+        (cmp.training_diversity is not None and cmp.training_diversity < floor)
+        or (
+            cmp.training_largest_cluster_share is not None
+            and cmp.training_largest_cluster_share >= cfg.max_pose_cluster_share
+        )
+    )
+    matches_training = (
+        cmp is not None
+        and cmp.coverage_divergence is not None
+        and cmp.coverage_divergence <= POSE_LOW_COVERAGE_DIVERGENCE
+    )
+    if narrow_training or matches_training:
+        why = "the training poses are narrow" if narrow_training else "the outputs match the training pose mix"
+        rec = Recommendation(
+            stage="curator",
+            issue=f"pose collapse{onto}: {why}",
+            action="rebalance the dataset's poses (curator's coverage panel: angle, shot scale, framing), "
+            "re-export and retrain",
+            **evidence,
+        )
+    else:
+        context = "the training set wasn't compared" if cmp is None else "the training poses are broader"
+        rec = Recommendation(
+            stage="grid",
+            issue=f"pose collapse{onto}: {context}",
+            action="vary pose and composition tokens in the prompt grid; if the LoRA forces one pose at every "
+            "prompt, train less (overfit)",
+            **evidence,
+        )
+    return [rec]
 
 
 def _best_across_runs(store: _Sliceable, dimension: str, stage: RecommendStage) -> list[Recommendation]:
