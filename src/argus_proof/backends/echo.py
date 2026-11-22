@@ -156,6 +156,21 @@ def _error_text(body: bytes) -> str:
     return f"{text} (request_id {request_id})".strip() if request_id else text
 
 
+def _runtime(value: Any) -> dict[str, str | None] | None:
+    """echo's ``image.runtime`` (library -> version, ``None`` when not installed), or ``None`` before echo 0.3.0.
+
+    Anything that isn't a short string version is dropped rather than recorded, so a malformed block can't fail a run
+    or bloat the manifest.
+    """
+    if not isinstance(value, dict):
+        return None
+    return {
+        str(k)[:64]: (v[:128] if isinstance(v, str) else None)
+        for k, v in list(value.items())[:64]
+        if isinstance(k, str) and (v is None or isinstance(v, str))
+    }
+
+
 def _lower(headers: Mapping[str, str]) -> dict[str, str]:
     return {str(k).lower(): str(v) for k, v in dict(headers).items()}
 
@@ -442,7 +457,12 @@ class EchoBackend:
         return SpeechRunManifest(
             run_id=spec.run_id,
             engine=f"argus-echo-{spec.engine}",
-            image=EchoImage(tag=self.image, version=image.get("version"), revision=image.get("revision")),
+            image=EchoImage(
+                tag=self.image,
+                version=image.get("version"),
+                revision=image.get("revision"),
+                runtime=_runtime(image.get("runtime")),
+            ),
             weights=weights,
             language=spec.language,
             prompts=[SpeechPrompt(index=i, text=t) for i, t in enumerate(spec.prompts)],

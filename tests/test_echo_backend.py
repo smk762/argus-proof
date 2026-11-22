@@ -143,7 +143,7 @@ def test_the_manifest_pins_the_weights_image_references_and_prompts(tmp_path: Pa
     assert [(f.name, f.sha256) for f in m.weights.files] == [(f["name"], f["sha256"]) for f in tuned]
     assert (m.image.tag, m.image.version, m.image.revision) == (
         "ghcr.io/smk762/argus-echo-xtts:0.2.0",
-        "0.2.0",
+        "0.3.0",
         "abc1234",
     )
     assert m.engine == "argus-echo-xtts" and m.route == "/synthesise/stream"
@@ -362,3 +362,25 @@ def test_the_spec_caps_the_grid_and_refuses_repeats(tmp_path: Path) -> None:
         SpeechRunSpec(run_id="r", engine="xtts", prompts=["a"], references=refs, seeds=[2**32])
     with pytest.raises(ValueError, match="prompt is empty"):
         SpeechRunSpec(run_id="r", engine="xtts", prompts=["  "], references=refs, seeds=[1])
+
+
+def test_the_manifest_records_echos_runtime_libraries(tmp_path: Path) -> None:
+    echo = FakeEcho()
+    m = _backend(echo).generate(_spec(tmp_path), tmp_path / "run").manifest
+    assert m.image.runtime == {"python": "3.11.11", "torch": "2.6.0+cu124", "cuda": "12.4", "coqui-tts": "0.28.0"}
+
+
+@pytest.mark.parametrize(
+    ("runtime", "recorded"),
+    [
+        (None, None),  # echo before 0.3.0 has no runtime block
+        ({"torch": "2.6.0", "moshi": None}, {"torch": "2.6.0", "moshi": None}),  # None: not installed
+        ({"torch": 2.6, "ok": "1.0"}, {"ok": "1.0"}),  # a malformed entry is dropped, not fatal
+        ("2.6.0", None),
+    ],
+)
+def test_a_missing_or_malformed_runtime_never_fails_a_run(tmp_path: Path, runtime: object, recorded: object) -> None:
+    echo = FakeEcho()
+    echo.runtime = runtime  # type: ignore[assignment]
+    m = _backend(echo).generate(_spec(tmp_path), tmp_path / "run").manifest
+    assert m.image.runtime == recorded
