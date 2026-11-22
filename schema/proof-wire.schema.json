@@ -373,7 +373,7 @@
           "default": null
         },
         "proof_version": {
-          "default": "1.14",
+          "default": "1.15",
           "title": "Proof Version",
           "type": "string"
         },
@@ -604,6 +604,70 @@
         "device"
       ],
       "title": "GeneratedClip",
+      "type": "object"
+    },
+    "GeneratedFrame": {
+      "description": "A speech run's last frame (#118): its clips and ``manifest.json`` are written; nothing is scored yet (#119).\n\n``weights_fingerprint`` is echo's fingerprint of the weights every clip was spoken by.",
+      "properties": {
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint"
+        },
+        "engine": {
+          "title": "Engine",
+          "type": "string"
+        },
+        "modality": {
+          "const": "speech",
+          "default": "speech",
+          "title": "Modality",
+          "type": "string"
+        },
+        "n_clips": {
+          "minimum": 0,
+          "title": "N Clips",
+          "type": "integer"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "speaker_check": {
+          "title": "Speaker Check",
+          "type": "string"
+        },
+        "type": {
+          "const": "generated",
+          "default": "generated",
+          "title": "Type",
+          "type": "string"
+        },
+        "weights_fingerprint": {
+          "description": "lowercase hex SHA256 digest",
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Weights Fingerprint",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "type",
+        "modality",
+        "n_clips",
+        "engine",
+        "checkpoint",
+        "weights_fingerprint",
+        "speaker_check"
+      ],
+      "title": "GeneratedFrame",
       "type": "object"
     },
     "GeneratedImage": {
@@ -1812,7 +1876,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.14",
+          "default": "1.15",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2055,7 +2119,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.14",
+          "default": "1.15",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2255,12 +2319,13 @@
       "type": "object"
     },
     "RunStreamFrame": {
-      "description": "One NDJSON line of ``POST /run/stream``, discriminated by ``type``.\n\nGeneration streams :class:`ProgressEvent` frames (``start`` / ``progress`` /\n``image`` / ``done``), then a :class:`ScoringFrame`, then either a\n:class:`CompleteFrame` or a ``ProgressEvent`` of type ``error``.",
+      "description": "One NDJSON line of ``POST /run/stream``, discriminated by ``type``.\n\nGeneration streams :class:`ProgressEvent` frames (``start`` / ``progress`` /\n``image`` / ``done``), then a :class:`ScoringFrame`, then either a\n:class:`CompleteFrame` or a ``ProgressEvent`` of type ``error``. A speech run\n(``modality: speech``) has no scoring yet: it ends with a :class:`GeneratedFrame`\n(or an ``error``) after its ``done``.",
       "discriminator": {
         "mapping": {
           "complete": "#/$defs/CompleteFrame",
           "done": "#/$defs/ProgressEvent",
           "error": "#/$defs/ProgressEvent",
+          "generated": "#/$defs/GeneratedFrame",
           "image": "#/$defs/ProgressEvent",
           "progress": "#/$defs/ProgressEvent",
           "scoring": "#/$defs/ScoringFrame",
@@ -2277,6 +2342,9 @@
         },
         {
           "$ref": "#/$defs/CompleteFrame"
+        },
+        {
+          "$ref": "#/$defs/GeneratedFrame"
         }
       ],
       "title": "RunStreamFrame"
@@ -2422,7 +2490,7 @@
           "type": "integer"
         },
         "proof_version": {
-          "default": "1.14",
+          "default": "1.15",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2808,7 +2876,7 @@
           "type": "array"
         },
         "proof_version": {
-          "default": "1.14",
+          "default": "1.15",
           "title": "Proof Version",
           "type": "string"
         },
