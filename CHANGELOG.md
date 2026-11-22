@@ -18,8 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `held_out_references` builds a run's reference voices from the held-out part, and `check_speakers_disjoint` refuses
   a reference whose corpus speaker label or speaker cluster is in the training export, or whose clip is a training
   clip by SHA256.
+- `POST /run/stream` with `modality: speech` (#118, part 3): `SpeechRunRequest` names the training and held-out
+  speech exports, the echo engine and checkpoint, the prompts and seeds. The references are checked against the
+  training speakers before anything is generated (`400` on an overlap, `503` without `PROOF_ECHO_URL`), and the
+  stream ends with a new `generated` frame. A body without `modality` is an image run, as before.
 - Wire `PROOF_VERSION` 1.14 (additive): `SpeechRunSpec` / `SpeechReferenceSpec` in, `SpeechRunManifest` (`SpeechPrompt`,
-  `SpeechReference`, `EchoImage`, `SpeechWeights`, `GeneratedClip`) out.
+  `SpeechReference`, `EchoImage`, `SpeechWeights`, `GeneratedClip`) out; then 1.15 (additive): `GeneratedFrame`.
 
 ### Changed
 

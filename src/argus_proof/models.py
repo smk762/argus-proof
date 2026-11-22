@@ -86,11 +86,13 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 # 1.14: additive — speech runs through argus-echo (#118): SpeechRunSpec (with
 #      SpeechReferenceSpec) in, SpeechRunManifest (SpeechPrompt, SpeechReference,
 #      EchoImage, SpeechWeights, GeneratedClip) out.
+# 1.15: additive — GeneratedFrame, a speech run's last /run/stream frame (type
+#      "generated"; its clips and manifest are written, nothing is scored yet).
 # Since 1.7, GateConfig rejects ``weights`` / ``hard_gates`` keys that aren't a
 # MetricScores field. Such a key never matched a score, so its weight or gate
 # silently never applied; a payload that used one now fails validation instead.
 # Treated as a bug fix, not a wire break, so no major bump.
-PROOF_VERSION = "1.14"
+PROOF_VERSION = "1.15"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -832,15 +834,35 @@ class CompleteFrame(BaseModel):
     report: ReportSummary
 
 
+class GeneratedFrame(BaseModel):
+    """A speech run's last frame (#118): its clips and ``manifest.json`` are written; nothing is scored yet (#119).
+
+    ``weights_fingerprint`` is echo's fingerprint of the weights every clip was spoken by.
+    """
+
+    model_config = RESPONSE_ONLY
+
+    run_id: str
+    type: Literal["generated"] = "generated"
+    modality: Literal["speech"] = "speech"
+    n_clips: int = Field(ge=0)
+    engine: str
+    checkpoint: str | None = None
+    weights_fingerprint: Sha256
+    speaker_check: str
+
+
 class RunStreamFrame(RootModel):
     """One NDJSON line of ``POST /run/stream``, discriminated by ``type``.
 
     Generation streams :class:`ProgressEvent` frames (``start`` / ``progress`` /
     ``image`` / ``done``), then a :class:`ScoringFrame`, then either a
-    :class:`CompleteFrame` or a ``ProgressEvent`` of type ``error``.
+    :class:`CompleteFrame` or a ``ProgressEvent`` of type ``error``. A speech run
+    (``modality: speech``) has no scoring yet: it ends with a :class:`GeneratedFrame`
+    (or an ``error``) after its ``done``.
     """
 
-    root: Annotated[ProgressEvent | ScoringFrame | CompleteFrame, Field(discriminator="type")]
+    root: Annotated[ProgressEvent | ScoringFrame | CompleteFrame | GeneratedFrame, Field(discriminator="type")]
 
 
 # ---------------------------------------------------------------------------
@@ -1224,6 +1246,7 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
     ReportSummary,
     ScoringFrame,
     CompleteFrame,
+    GeneratedFrame,
     RunStreamFrame,
     CropBox,
     ScoreRequest,

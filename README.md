@@ -93,7 +93,7 @@ GET  /health                            liveness + version + read_only flag + ca
 GET  /exports                           curator export dirs available to evaluate against
 GET  /models                            checkpoints + LoRAs under $PROOF_MODELS_DIR
 GET  /scorers                           scorers a run applies + whether each is installed
-POST /run/stream                        generate + score + store one run (NDJSON RunStreamFrame lines)
+POST /run/stream                        generate + score + store one run (NDJSON RunStreamFrame lines); modality: speech generates a speech grid
 POST /score                             score uploaded images vs an export's references (ScoreResult; stores nothing)
 GET  /reports                           stored report digests (run browser)
 GET  /report/{run_id}                   full EvalReport            PUT to store one
@@ -344,7 +344,22 @@ refused). `check_speakers_disjoint` refuses a reference whose speaker is in the 
 A different recording of a training speaker that shares no label or cluster isn't caught yet: speaker-embedding
 similarity is the follow-up.
 
-Still to come: `/run/stream` with `modality: speech`. Speech scorers are #119.
+**`POST /run/stream` with `modality: speech`** runs it end to end:
+
+```json
+{"modality": "speech", "engine": "xtts", "checkpoint": "forge/run-7",
+ "export": "voice-train", "references": "voice-held",
+ "prompts": ["Bom dia.", "Uma frase bem mais longa, para ver a voz se manter até o fim."],
+ "seeds": [42, 43], "training_run_id": "forge-run-7"}
+```
+
+`export` (the training part) and `references` (the held-out part) are export names under `ARGUS_PROOF_EXPORTS_DIR`.
+Before anything is generated, the references are read and checked against the training speakers, so an overlap is
+a `400` and an unset `PROOF_ECHO_URL` a `503`. `language` defaults to the references' shared label. The stream sends
+the backend's `start` / `image` / `progress` / `done` frames, then a **`generated`** frame
+(`GeneratedFrame`: `n_clips`, `engine`, `checkpoint`, `weights_fingerprint`, `speaker_check`), or an `error`. The
+clips and `manifest.json` are in the run dir. No report is stored: speech scorers are #119. A body without
+`modality` is an image run, as before.
 
 ## Scoring
 
