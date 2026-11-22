@@ -37,8 +37,8 @@ def ctx(refs: list[str], category: str = "identity") -> ScoreContext:
 class PinnedEmbedder(FakeEmbedder):
     """A stub that also pins its weights, as Dinov2Embedder does once loaded."""
 
-    def model_ref(self) -> ModelRef:
-        return ModelRef(name=self.name, sha256="ab" * 32)
+    def weight_refs(self) -> list[ModelRef]:
+        return [ModelRef(name=self.name, sha256="ab" * 32)]
 
 
 # --------------------------------------------------------------------------
@@ -150,6 +150,8 @@ def test_dinov2_pins_the_file_it_loaded_by_sha256(tmp_path: Path) -> None:
     embedder._model = object()  # stands in for a loaded model: no torch here
     ref = embedder.model_ref()
     assert ref == ModelRef(name=f"dinov2:{tmp_path}", sha256=sha256_file(weights))
+    prov = LikenessScorer(embedder=embedder).provenance()
+    assert (prov.model_file, prov.extra_files) == (ref, [])
 
 
 def test_dinov2_with_no_weights_file_pins_nothing(tmp_path: Path) -> None:

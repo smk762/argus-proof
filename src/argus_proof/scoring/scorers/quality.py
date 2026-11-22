@@ -11,19 +11,33 @@ default ``lo``/``hi`` per scorer are **calibration placeholders** — tune them
 against real generations (this is what the CI-gate phase, #12, calibrates). The
 model backend is injectable (:class:`ScoreModel`) so the normalization + wiring
 is CI-tested without torch; the real adapters are lazy and behind ``[score]``.
+Once a model has loaded, the weights files it loaded are pinned by SHA256 in the
+scorer's provenance (CLIPScore and pyiqa; ImageReward runs in its own
+environment and pins nothing yet).
 """
 
 from __future__ import annotations
 
+import importlib
 import math
+import sys
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from argus_proof.models import ScorerProvenance
-from argus_proof.scoring.scorers._util import clamp01, module_available
+import structlog
+
+from argus_proof.models import ModelRef, ScorerProvenance
+from argus_proof.scoring.scorers._util import clamp01, hf_cached_file, module_available, pin_file, weight_pins
 
 if TYPE_CHECKING:
     from argus_proof.scoring.base import ScoreContext
+
+logger = structlog.get_logger()
+
+# The weights files transformers looks for in a checkpoint, in the order it prefers them.
+HF_WEIGHTS_FILES = ("model.safetensors", "pytorch_model.bin")
 
 
 def linear_normalize(raw: float, lo: float, hi: float) -> float:
@@ -70,7 +84,14 @@ class ModelScorer:
     uses_gpu = True
 
     def provenance(self) -> ScorerProvenance:
-        return ScorerProvenance(name=self.model.name, metric=self.metric, model=self.model.name)
+        model_file, extra_files = weight_pins(self.model)
+        return ScorerProvenance(
+            name=self.model.name,
+            metric=self.metric,
+            model=self.model.name,
+            model_file=model_file,
+            extra_files=extra_files,
+        )
 
     def unload(self) -> None:
         """Drop the model (see :func:`~argus_proof.scoring.scorers._util.release_models`)."""
@@ -115,6 +136,20 @@ class ClipScoreModel:
             self._metric = CLIPScore(model_name_or_path=self.clip_model)
         return self._metric
 
+    def weight_refs(self) -> list[ModelRef]:
+        """The CLIP checkpoint's weights file pinned by SHA256; empty before a load.
+
+        torchmetrics loads the checkpoint through ``transformers``, so this is the
+        local directory's or the Hugging Face cache's copy (never downloaded here).
+        """
+        if self._metric is None:
+            return []
+        path = hf_cached_file(self.clip_model, HF_WEIGHTS_FILES)
+        if path is None:
+            logger.warning("clip_score.weights_unpinned", model=self.clip_model)
+            return []
+        return [pin_file(f"{self.clip_model}/{path.name}", path)]
+
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None:
         import numpy as np
         import torch
@@ -140,6 +175,7 @@ class PyiqaModel:
     def __init__(self, metric_name: str = "clipiqa") -> None:
         self.metric_name = metric_name
         self._metric = None
+        self._files: list[Path] = []
 
     @property
     def name(self) -> str:
@@ -150,18 +186,89 @@ class PyiqaModel:
 
     def unload(self) -> None:
         self._metric = None
+        self._files = []
 
     def _load(self):  # noqa: ANN202
         if self._metric is None:
             import pyiqa
 
-            self._metric = pyiqa.create_metric(self.metric_name)
+            with _pyiqa_downloads() as files:
+                self._metric = pyiqa.create_metric(self.metric_name)
+            self._files = files
         return self._metric
+
+    def weight_refs(self) -> list[ModelRef]:
+        """The weights files pyiqa fetched (or found cached) for this metric, pinned by SHA256.
+
+        Empty before a load. A metric that loads its weights some other way
+        (a local path, the Hugging Face Hub) records nothing here, and says so.
+        """
+        if self._metric is None:
+            return []
+        if not self._files:
+            logger.warning("pyiqa.weights_unpinned", metric=self.metric_name)
+        return [pin_file(f"{self.name}/{path.name}", path) for path in self._files if path.is_file()]
 
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None:
         metric = self._load()
         raw = float(metric(str(image_path)).item())
         return -raw if getattr(metric, "lower_better", False) else raw
+
+
+# pyiqa's helpers that resolve a weights URL to a file in its cache, downloading it
+# only when it isn't there.
+_PYIQA_FETCHERS = (("pyiqa.utils.download_util", "load_file_from_url"), ("pyiqa.archs.clip_model", "_download"))
+
+
+def _pyiqa_modules() -> list[object]:
+    return [m for n, m in list(sys.modules.items()) if m is not None and (n == "pyiqa" or n.startswith("pyiqa."))]
+
+
+@contextmanager
+def _pyiqa_downloads() -> Iterator[list[Path]]:
+    """Record the file every pyiqa weights fetch returns while the block runs.
+
+    pyiqa keeps no record of what it loaded, so its fetch helpers (the generic
+    URL cache and its CLIP loader's) are wrapped for one ``create_metric`` call.
+    pyiqa imports its architectures lazily, inside that call, so each helper is
+    patched where it is defined (a module importing it during the block binds
+    the wrapper) and in every module that already bound it; on the way out,
+    every wrapper is swapped back, wherever it ended up. The wrappers call
+    through unchanged. A helper missing from this pyiqa version is skipped.
+    """
+    files: list[Path] = []
+
+    def recording(fn: Callable[..., object]) -> Callable[..., object]:
+        def wrapper(*args: object, **kwargs: object) -> object:
+            path = fn(*args, **kwargs)
+            if isinstance(path, str | Path) and Path(path) not in files:
+                files.append(Path(path))
+            return path
+
+        wrapper._proof_wraps = fn  # type: ignore[attr-defined]
+        return wrapper
+
+    wrappers: dict[int, Callable[..., object]] = {}
+    for module_name, attr in _PYIQA_FETCHERS:
+        try:
+            fn = getattr(importlib.import_module(module_name), attr, None)
+        except Exception as exc:  # noqa: BLE001 - a pyiqa layout change must not stop scoring
+            logger.warning("pyiqa.fetcher_missing", module=module_name, error=str(exc))
+            continue
+        if callable(fn):
+            wrappers[id(fn)] = recording(fn)
+    for module in _pyiqa_modules():
+        for attr, value in list(vars(module).items()):
+            if id(value) in wrappers and wrappers[id(value)]._proof_wraps is value:  # type: ignore[attr-defined]
+                setattr(module, attr, wrappers[id(value)])
+    try:
+        yield files
+    finally:
+        for module in _pyiqa_modules():
+            for attr, value in list(vars(module).items()):
+                original = getattr(value, "_proof_wraps", None)
+                if original is not None and callable(value):
+                    setattr(module, attr, original)
 
 
 class ImageRewardModel:

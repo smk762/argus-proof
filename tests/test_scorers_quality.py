@@ -180,3 +180,123 @@ def test_a_lower_is_better_pyiqa_metric_is_negated(monkeypatch: pytest.MonkeyPat
     model = PyiqaModel("niqe")
     model._metric = Niqe()
     assert model.score(Path("x.png"), None) == -4.0  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------
+# provenance: the weights each model loaded, pinned by SHA256 (#105)
+# --------------------------------------------------------------------------
+
+
+class PinnedModel(FakeModel):
+    def weight_refs(self) -> list:
+        from argus_proof.models import ModelRef
+
+        return [ModelRef(name="a", sha256="aa" * 32), ModelRef(name="b", sha256="bb" * 32)]
+
+
+def test_model_scorer_provenance_pins_the_model_file_and_the_extras() -> None:
+    from argus_proof.models import ModelRef
+
+    prov = ModelScorer("aesthetic", PinnedModel({}), 0.0, 1.0).provenance()
+    assert prov.model_file == ModelRef(name="a", sha256="aa" * 32)
+    assert prov.extra_files == [ModelRef(name="b", sha256="bb" * 32)]
+    plain = ModelScorer("aesthetic", FakeModel({}), 0.0, 1.0).provenance()
+    assert (plain.model_file, plain.extra_files) == (None, [])
+
+
+def test_clip_score_pins_the_checkpoint_it_loaded(tmp_path: Path) -> None:
+    from argus_proof.hashing import sha256_file
+    from argus_proof.models import ModelRef
+    from argus_proof.scoring.scorers.quality import ClipScoreModel
+
+    (tmp_path / "pytorch_model.bin").write_bytes(b"bin weights")
+    (tmp_path / "model.safetensors").write_bytes(b"safetensors weights")
+    model = ClipScoreModel(clip_model=str(tmp_path))
+    assert model.weight_refs() == []  # nothing loaded yet: nothing hashed
+    model._metric = object()  # stands in for a loaded CLIPScore: no torch here
+    # transformers prefers safetensors when a checkpoint carries both.
+    assert model.weight_refs() == [
+        ModelRef(name=f"{tmp_path}/model.safetensors", sha256=sha256_file(tmp_path / "model.safetensors"))
+    ]
+
+
+def test_clip_score_with_no_weights_file_pins_nothing(tmp_path: Path) -> None:
+    from argus_proof.scoring.scorers.quality import ClipScoreModel
+
+    model = ClipScoreModel(clip_model=str(tmp_path))
+    model._metric = object()
+    assert model.weight_refs() == []
+
+
+def _fake_pyiqa(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, object]:
+    """A stand-in pyiqa whose create_metric fetches two weights files, one through
+    an architecture module it imports lazily (as pyiqa 0.1.16 does)."""
+    from types import ModuleType
+
+    def load_file_from_url(url: str, model_dir: str | None = None) -> str:
+        path = tmp_path / url.rsplit("/", 1)[-1]
+        path.write_bytes(url.encode())
+        return str(path)
+
+    def _download(url: str, root: str) -> str:
+        return load_file_from_url(url)
+
+    download_util = ModuleType("pyiqa.utils.download_util")
+    download_util.load_file_from_url = load_file_from_url  # type: ignore[attr-defined]
+    clip_model = ModuleType("pyiqa.archs.clip_model")
+    clip_model._download = _download  # type: ignore[attr-defined]
+    clip_model.load = lambda: clip_model._download("https://x/RN50.pt", "/")  # type: ignore[attr-defined]
+    pyiqa = ModuleType("pyiqa")
+
+    def create_metric(name: str) -> object:
+        # The arch module binds load_file_from_url at its import, inside create_metric.
+        arch = ModuleType("pyiqa.archs.clipiqa_arch")
+        arch.load_file_from_url = download_util.load_file_from_url  # type: ignore[attr-defined]
+        sys.modules["pyiqa.archs.clipiqa_arch"] = arch
+        clip_model.load()  # type: ignore[attr-defined]
+        arch.load_file_from_url("https://x/prompts.pth")  # type: ignore[attr-defined]
+        return object()
+
+    pyiqa.create_metric = create_metric  # type: ignore[attr-defined]
+    for name, module in {
+        "pyiqa": pyiqa,
+        "pyiqa.utils": ModuleType("pyiqa.utils"),
+        "pyiqa.utils.download_util": download_util,
+        "pyiqa.archs": ModuleType("pyiqa.archs"),
+        "pyiqa.archs.clip_model": clip_model,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.delitem(sys.modules, "pyiqa.archs.clipiqa_arch", raising=False)
+    return {"load_file_from_url": load_file_from_url, "_download": _download}
+
+
+def test_pyiqa_pins_every_weights_file_it_fetched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from argus_proof.hashing import sha256_file
+    from argus_proof.models import ModelRef
+    from argus_proof.scoring.scorers.quality import PyiqaModel
+
+    originals = _fake_pyiqa(monkeypatch, tmp_path)
+    model = PyiqaModel("clipiqa+")
+    assert model.weight_refs() == []  # nothing loaded yet
+    model._load()
+    assert model.weight_refs() == [
+        ModelRef(name="pyiqa-clipiqa+/RN50.pt", sha256=sha256_file(tmp_path / "RN50.pt")),
+        ModelRef(name="pyiqa-clipiqa+/prompts.pth", sha256=sha256_file(tmp_path / "prompts.pth")),
+    ]
+    prov = ModelScorer("aesthetic", model, 0.0, 1.0).provenance()
+    assert prov.model_file is not None and prov.model_file.name == "pyiqa-clipiqa+/RN50.pt"
+    assert [f.name for f in prov.extra_files] == ["pyiqa-clipiqa+/prompts.pth"]
+    # Every wrapper is undone, including the one the lazily imported arch module bound.
+    assert sys.modules["pyiqa.utils.download_util"].load_file_from_url is originals["load_file_from_url"]
+    assert sys.modules["pyiqa.archs.clip_model"]._download is originals["_download"]
+    assert sys.modules["pyiqa.archs.clipiqa_arch"].load_file_from_url is originals["load_file_from_url"]
+
+
+def test_pyiqa_unload_forgets_its_pins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from argus_proof.scoring.scorers.quality import PyiqaModel
+
+    _fake_pyiqa(monkeypatch, tmp_path)
+    model = PyiqaModel()
+    model._load()
+    model.unload()
+    assert model.weight_refs() == []

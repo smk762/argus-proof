@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from imagehash import ImageHash
 
+    from argus_proof.models import ModelRef
+
 
 def module_available(*names: str) -> bool:
     """Whether every named module imports cleanly.
@@ -33,6 +35,50 @@ def module_available(*names: str) -> bool:
         except Exception:
             return False
     return True
+
+
+def pin_file(name: str, path: Path) -> ModelRef:
+    """*path* pinned by SHA256 under *name* (hashed once per process, see :func:`~argus_proof.hashing.sha256_cached`)."""
+    from argus_proof.hashing import sha256_cached
+    from argus_proof.models import ModelRef
+
+    return ModelRef(name=name, sha256=sha256_cached(path))
+
+
+def hf_cached_file(model: str, filenames: Iterable[str], revision: str | None = None) -> Path | None:
+    """The first of *filenames* that *model* has on this host, or ``None``.
+
+    *model* is a local ``save_pretrained`` directory or a Hugging Face Hub id; a
+    Hub id is looked up in the local cache only, never downloaded. List the
+    filenames in the order ``transformers`` prefers them (safetensors first).
+    """
+    local = Path(model).expanduser()
+    if local.is_dir():
+        return next((local / f for f in filenames if (local / f).is_file()), None)
+    if not module_available("huggingface_hub"):
+        return None
+    from huggingface_hub import try_to_load_from_cache
+
+    for filename in filenames:
+        cached = try_to_load_from_cache(model, filename, revision=revision)
+        if isinstance(cached, str):
+            return Path(cached)
+    return None
+
+
+def weight_pins(model: object) -> tuple[ModelRef | None, list[ModelRef]]:
+    """``(model_file, extra_files)`` for a scorer's provenance, from *model*'s ``weight_refs()``.
+
+    A model that has no ``weight_refs``, or hasn't loaded yet, pins nothing; one
+    that loaded but couldn't find its files logs that itself.
+    """
+    weight_refs = getattr(model, "weight_refs", None)
+    if not callable(weight_refs):
+        return None, []
+    refs = list(weight_refs())
+    if not refs:
+        return None, []
+    return refs[0], refs[1:]
 
 
 def release_models(scorers: Iterable[object]) -> None:

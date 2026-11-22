@@ -325,7 +325,7 @@
           "default": null
         },
         "proof_version": {
-          "default": "1.12",
+          "default": "1.13",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1692,7 +1692,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.12",
+          "default": "1.13",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1935,7 +1935,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.12",
+          "default": "1.13",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2302,7 +2302,7 @@
           "type": "integer"
         },
         "proof_version": {
-          "default": "1.12",
+          "default": "1.13",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2370,6 +2370,13 @@
     "ScorerProvenance": {
       "description": "Where a score came from: the scorer, its version, and the model it used.\n\nRecorded for every scorer that contributed to an :class:`EvalReport` so a\nresult is auditable and reproducible \u2014 a score is only as trustworthy as the\nmodel and version that produced it.",
       "properties": {
+        "extra_files": {
+          "items": {
+            "$ref": "#/$defs/ModelRef"
+          },
+          "title": "Extra Files",
+          "type": "array"
+        },
         "metric": {
           "title": "Metric",
           "type": "string"
@@ -2419,7 +2426,8 @@
         "metric",
         "version",
         "model",
-        "model_file"
+        "model_file",
+        "extra_files"
       ],
       "title": "ScorerProvenance",
       "type": "object"
