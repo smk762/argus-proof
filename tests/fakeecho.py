@@ -10,6 +10,7 @@ import struct
 from urllib.parse import quote
 
 import httpx
+from argus_cortex.hashing import sha256_hex
 
 from argus_proof.backends.echo import EchoClient, weights_fingerprint
 
@@ -22,10 +23,6 @@ def resolve(host: str, port: int) -> list[str]:
     return ["127.0.0.1"]
 
 
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()
-
-
 class FakeEcho:
     """One echo engine (``xtts`` or ``qwen``). ``checkpoints`` maps a name (``None`` = stock) to its weight files;
     ``swap_after`` makes another client load ``swap_to`` after that many utterances; ``script[path]`` holds
@@ -35,12 +32,12 @@ class FakeEcho:
         self.engine = engine
         prefix = "base/" if engine == "qwen" else ""
         self.checkpoints: dict[str | None, list[dict]] = {
-            None: [{"name": f"{prefix}model.pth", "sha256": _sha("stock")}],
-            "forge/run 7": [{"name": f"{prefix}model.pth", "sha256": _sha("fine-tune")}],
+            None: [{"name": f"{prefix}model.pth", "sha256": sha256_hex(b"stock")}],
+            "forge/run 7": [{"name": f"{prefix}model.pth", "sha256": sha256_hex(b"fine-tune")}],
         }
         if engine == "qwen":  # the other slot, always stock
             for files in self.checkpoints.values():
-                files.append({"name": "custom_voice/model.safetensors", "sha256": _sha("custom")})
+                files.append({"name": "custom_voice/model.safetensors", "sha256": sha256_hex(b"custom")})
         self.runtime: dict | None = {"python": "3.11.11", "torch": "2.6.0+cu124", "cuda": "12.4", "coqui-tts": "0.28.0"}
         self.selected: str | None = None
         self.loaded = False  # files are null until the first synthesis (lazy load)
