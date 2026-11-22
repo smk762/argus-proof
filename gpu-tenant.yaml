@@ -55,8 +55,8 @@ kinds:
   # XTTS-v2 or Qwen3-TTS engine, one utterance at a time. Echo is a resident and keeps its weights loaded (declared in
   # echo's own manifest); proof only asks it to speak. Targets are iris's names for the engines: `xtts`, and `tts` for
   # Qwen3-TTS. Figures are echo's: XTTS-v2 about 2 GB loaded; Qwen3-TTS speaks clones only with Base loaded beside
-  # CustomVoice (TTS_LOAD_MODELS=both), measured at 5178 MiB peak with a clone on the 0.6B models (echo#6). model_mb is
-  # the loaded weights without the working set, estimated.
+  # CustomVoice (TTS_LOAD_MODELS=both), measured at 5692 MiB peak speaking 27 s clones on the 0.6B models (echo#6).
+  # model_mb is the loaded weights without the working set, estimated.
   - kind: speak-xtts
     target: xtts
     vram_mb: 2000
@@ -67,7 +67,7 @@ kinds:
 
   - kind: speak-qwen
     target: tts
-    vram_mb: 5200
+    vram_mb: 5800
     model_mb: 4300
     priority: batch
     preemptible: true
