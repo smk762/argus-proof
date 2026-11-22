@@ -124,7 +124,10 @@ def test_a_run_speaks_every_prompt_in_every_voice_at_every_seed(tmp_path: Path) 
     # Every utterance went out seeded, in its reference's clone, in the run's language.
     sent = echo.bodies("/synthesise/stream")
     assert [(b["seed"], b["language"]) for b in sent][:2] == [(42, "pt"), (43, "pt")]
-    assert {b["voice_clone_id"] for b in sent} == {clone_id(spec.run_id, "r0"), clone_id(spec.run_id, "r1")}
+    # Spoken by the voice_clone_id echo answered /clone-voice with, not the bare companion_id.
+    assert {b["voice_clone_id"] for b in sent} == {
+        f"voice_clones/{clone_id(spec.run_id, r)}/prompt.pt" for r in ("r0", "r1")
+    }
     assert [e.type for e in events][0] == "start" and events[-1].type == "done"
     assert sum(e.type == "image" for e in events) == 8
 
@@ -236,7 +239,7 @@ def test_qwen_speaking_a_clone_with_another_slot_fails(tmp_path: Path) -> None:
 
 def test_the_wrong_engine_is_refused_before_anything_is_cloned(tmp_path: Path) -> None:
     echo = FakeEcho("qwen")
-    with pytest.raises(EchoError, match="qwen engine, not xtts"):
+    with pytest.raises(EchoError, match="qwen-tts engine, not xtts-v2"):
         _backend(echo).generate(_spec(tmp_path), tmp_path / "run")
     assert echo.clones == {} and echo.bodies("/admin/load") == []
 
@@ -294,7 +297,7 @@ def test_a_refused_lease_fails_the_run_and_cleans_up(tmp_path: Path) -> None:
 def test_a_busy_engine_is_retried_honouring_retry_after(tmp_path: Path) -> None:
     echo = FakeEcho()
     echo.script["/health"] = [httpx.Response(503, json={"error": "busy"}, headers={"Retry-After": "2"})]
-    assert echo.client().health()["engine"] == "xtts"
+    assert echo.client().health()["engine"] == "xtts-v2"
     assert echo.sleeps == [2.0]
 
 

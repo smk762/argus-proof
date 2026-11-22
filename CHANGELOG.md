@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-22
+
+### Fixed
+
+- Speech runs work against a real argus-echo 0.2.0 engine. Two assumptions only the fake echo shared broke every run:
+  echo's `/health` names its engines `xtts-v2` and `qwen-tts` (proof expected `xtts` / `qwen`), and a clone is spoken by
+  the `voice_clone_id` `/clone-voice` answers with (`voice_clones/<id>/prompt.pt`), not by its bare `companion_id`.
+  Checked against dragon's XTTS 0.2.0: the weights fingerprint recomputes from `/health`, the same seed gives
+  byte-identical audio, another seed differs, and the clone is deleted.
+
 ## [0.7.0] - 2026-11-22
 
 ### Added
