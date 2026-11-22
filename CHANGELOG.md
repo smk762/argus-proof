@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- argus-cortex `>=0.13,<0.14` (was `>=0.9,<0.10`), for the speech taxonomy (`TargetProfile.modality`,
+  `SpeechCategory`) and `limits.open_audio` that speech evaluation (#118) builds on. Nothing proof uses changed.
+
 ## [0.6.0] - 2026-11-22
 
 ### Added
