@@ -32,7 +32,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -250,18 +250,9 @@ def _float_env(name: str, default: float) -> float:
 def puppet_origin(url: str) -> tuple[str, str]:
     """``(base, host:port)`` of a configured puppet URL; :class:`ValueError` for anything but a plain http(s) origin
     (optionally with a path prefix): no credentials, query or fragment."""
-    parts = urlsplit(url.strip())
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ValueError(f"{ENV_PUPPET_URL} must be an http(s) URL, not {url!r}")
-    if "@" in parts.netloc or parts.query or parts.fragment:
-        raise ValueError(f"{ENV_PUPPET_URL} must be a plain origin (no credentials, query or fragment)")
-    try:
-        port = parts.port or (443 if parts.scheme == "https" else 80)
-    except ValueError as exc:
-        raise ValueError(f"{ENV_PUPPET_URL} has an invalid port") from exc
-    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
-    base = f"{parts.scheme}://{parts.netloc}{parts.path.rstrip('/')}"
-    return base, f"{host}:{port}"
+    from argus_proof.service_origin import service_origin
+
+    return service_origin(url, ENV_PUPPET_URL)
 
 
 class PuppetClient:
