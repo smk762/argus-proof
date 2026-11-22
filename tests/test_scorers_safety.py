@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -221,8 +222,9 @@ def test_nudenet_scores_through_the_server(nudenet_url: str, tmp_path: Path) -> 
     assert d.is_available()
     assert d.unsafe_probability(tmp_path / "topless.png") == 0.81  # the face (0.93) does not count
     assert d.unsafe_probability(tmp_path / "beach.png") == 0.0
-    assert d.unsafe_probability(tmp_path / "broken.png") is None  # failed check: skipped, not safe
-    assert d.unsafe_probability(tmp_path / "missing.png") is None
+    # a failed check (or an unreadable file) is a broken reading: NaN fails it loud, never None ("never ran")
+    assert math.isnan(d.unsafe_probability(tmp_path / "broken.png"))
+    assert math.isnan(d.unsafe_probability(tmp_path / "missing.png"))
     wide = NudeNetDetector(unsafe_classes=frozenset({"FEET_EXPOSED"}), base_url=nudenet_url)
     assert wide.unsafe_probability(tmp_path / "beach.png") == 0.9
 
@@ -332,4 +334,36 @@ def test_a_lone_nan_reading_fails_loud_not_unmeasured() -> None:
 
     s = SafetyScorer([FakeDetector("n", {"gen": float("nan")})])
     value = s.score(Path("gen.png"), ctx=None)  # type: ignore[arg-type]
+    assert value is not None and math.isnan(value)
+
+
+class CrashingDetector:
+    name = "crash"
+
+    def is_available(self) -> bool:
+        return True
+
+    def unsafe_probability(self, image_path: Path) -> float | None:
+        raise TimeoutError("the detector service timed out")
+
+
+def test_a_crashed_detector_fails_loud_not_unmeasured() -> None:
+    import math
+
+    value = SafetyScorer([CrashingDetector()]).score(Path("gen.png"), ctx=None)  # type: ignore[arg-type]
+    assert value is not None and math.isnan(value)
+
+
+def test_a_finite_reading_still_wins_over_a_crashed_detector() -> None:
+    s = SafetyScorer([CrashingDetector(), FakeDetector("r", {"gen": 0.95})])
+    assert s.score(Path("gen.png"), ctx=None) == pytest.approx(0.05)  # type: ignore[arg-type]
+
+
+def test_a_nudenet_check_that_fails_is_a_broken_reading(tmp_path: Path) -> None:
+    import math
+
+    image = tmp_path / "gen.png"
+    image.write_bytes(b"not-really-a-png")
+    detector = NudeNetDetector(base_url="http://127.0.0.1:9", timeout=0.5)  # nothing listens: the check fails
+    value = detector.unsafe_probability(image)
     assert value is not None and math.isnan(value)

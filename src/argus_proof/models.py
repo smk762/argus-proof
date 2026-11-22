@@ -76,11 +76,15 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #      .max_pose_cluster_share gate the pose block, and GateCheck.code carries a
 #      run-level reason code (pose_collapse, pose_copying) without widening the
 #      per-image RejectReasonCode, which a 1.10 reader would refuse (#122).
+# 1.12: additive — PoseComparison.close_excess accepts [-1, 1]: it is a
+#      difference of two shares, negative when outputs sit near training frames
+#      less often than the training frames sit near each other. A 1.11 reader
+#      refuses only that negative value.
 # Since 1.7, GateConfig rejects ``weights`` / ``hard_gates`` keys that aren't a
 # MetricScores field. Such a key never matched a score, so its weight or gate
 # silently never applied; a payload that used one now fails validation instead.
 # Treated as a bug fix, not a wire break, so no major bump.
-PROOF_VERSION = "1.11"
+PROOF_VERSION = "1.12"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -669,8 +673,9 @@ class PoseComparison(BaseModel):
 
     ``close_share`` is the share of eligible outputs within ``threshold`` of a
     training frame; ``baseline_close_share`` is the same statistic inside the
-    training set (leave-one-out), and ``close_excess`` the difference: the
-    run-level copying signal. A pose-conditioned generator shows a high excess by
+    training set (leave-one-out), and ``close_excess`` the signed difference
+    (in [-1, 1]; negative when outputs are close to training frames less often
+    than the training frames are to each other): the run-level copying signal. A pose-conditioned generator shows a high excess by
     design, so it is evidence for review, never a reject. ``training_diversity``
     and ``training_largest_cluster_share`` describe the training set itself, so a
     collapse onto a pose the training set is dominated by reads as a dataset
@@ -687,7 +692,7 @@ class PoseComparison(BaseModel):
     close_share: float | None = Field(default=None, ge=0.0, le=1.0)
     baseline_eligible: int = Field(ge=0)
     baseline_close_share: float | None = Field(default=None, ge=0.0, le=1.0)
-    close_excess: float | None = Field(default=None, ge=0.0, le=1.0)
+    close_excess: float | None = Field(default=None, ge=-1.0, le=1.0)
     output_nn_distance: PoseDistanceQuantiles | None = None
     reference_nn_distance: PoseDistanceQuantiles | None = None
     coverage_divergence: float | None = Field(default=None, ge=0.0, le=1.0)

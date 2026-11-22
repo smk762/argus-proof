@@ -286,3 +286,10 @@ def test_alpha_unanimous_single_value_is_perfect_agreement_not_a_crash() -> None
     # krippendorff itself raises on a one-value domain ("everyone approved").
     units = [{"r1": 1.0, "r2": 1.0}, {"r1": 1.0, "r2": 1.0, "r3": 1.0}]
     assert krippendorff_alpha(units) == 1.0
+
+
+def test_alpha_ignores_unpairable_ratings() -> None:
+    # the singleton 5 has no partner, so it can't count as disagreement: the one pairable unit agrees perfectly
+    assert krippendorff_alpha([{"a": 1.0, "b": 1.0}, {"a": 5.0}]) == 1.0
+    # a NaN rating doesn't make a unit pairable: nothing here is, so alpha is undefined
+    assert math.isnan(krippendorff_alpha([{"a": float("nan"), "b": 3.0}]))

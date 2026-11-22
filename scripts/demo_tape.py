@@ -29,6 +29,10 @@ import sys
 import tomllib
 from collections import defaultdict
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 FORMAT = "argus-proof-tape"
 VERSION = 1
@@ -145,11 +149,13 @@ def summarise(runs: list[dict]) -> dict:
         values = [im["metrics"][k] for im in images if im["metrics"][k] is not None]
         means[k] = round(statistics.mean(values), 4) if values else None
     verdicts = [im["passed"] for im in images]
+    pass_rates = [r["pass_rate"] for r in runs]
+    diversities = [r["diversity"] for r in runs if r["diversity"] is not None]
     return {
         "n_images": len(images),
         "means": means,
-        "pass_rate": round(statistics.mean(r["pass_rate"] for r in runs), 4),
-        "diversity": round(statistics.mean(r["diversity"] for r in runs if r["diversity"] is not None), 4),
+        "pass_rate": round(statistics.mean(pass_rates), 4) if pass_rates else None,
+        "diversity": round(statistics.mean(diversities), 4) if diversities else None,
         "passed": verdicts.count(True),
         "review": verdicts.count(None),
         "failed": verdicts.count(False),
@@ -184,13 +190,27 @@ def build(runs_by_variant: dict[str, list[dict]], prompts: list[str], extra: dic
 # ── I/O ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
+def _rgb(im: Image.Image) -> Image.Image:
+    """``im`` as RGB, upright and flattened: the EXIF orientation applied to the pixels (the tag itself is not
+    carried over), and any transparency composited onto white rather than dropped to whatever lies beneath it."""
+    from PIL import Image, ImageOps
+
+    im = ImageOps.exif_transpose(im)
+    if im.mode in ("RGBA", "LA", "PA") or (im.mode == "P" and "transparency" in im.info):
+        rgba = im.convert("RGBA")
+        flat = Image.new("RGB", rgba.size, (255, 255, 255))
+        flat.paste(rgba, mask=rgba.getchannel("A"))
+        return flat
+    return im.convert("RGB")
+
+
 def webp(src: Path, dest: Path, size: int, quality: int) -> dict:
     """Re-encode ``src`` to fit ``size``x``size`` as WebP, with no EXIF, XMP, ICC or text chunks."""
     from PIL import Image
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(src) as im:
-        im = im.convert("RGB")
+        im = _rgb(im)
         im.thumbnail((size, size), Image.Resampling.LANCZOS)
         im.save(dest, "WEBP", quality=quality, method=6)
         return {"w": im.width, "h": im.height}
@@ -208,14 +228,28 @@ def load_runs(root: Path, prompts: dict[str, int]) -> dict[str, list[dict]]:
     return by_variant
 
 
+def _scorers(report: dict) -> list[dict]:
+    return [{"metric": s["metric"], "name": s["name"], "model": s["model"]} for s in report["scorers"]]
+
+
 def recording(root: Path) -> dict:
-    """What the evaluation ran with, from one manifest and one report (identical across runs; checked)."""
+    """What the evaluation ran with, from the first manifest and report (identical across runs; checked)."""
     manifests = [json.loads(p.read_text()) for p in sorted((root / "eval" / "runs").glob("*/manifest.json"))]
+    if not manifests:
+        raise TapeError(f"no run manifest under {root / 'eval' / 'runs'}")
+    reports = [json.loads(p.read_text()) for p in sorted((root / "eval" / "reports").glob("*.json"))]
+    if not reports:
+        raise TapeError(f"no report under {root / 'eval' / 'reports'}")
     first = manifests[0]
     for m in manifests:
         if m["sampling"] != first["sampling"] or m["base_checkpoint"] != first["base_checkpoint"]:
             raise TapeError(f"run {m['run_id']} sampled differently from {first['run_id']}")
-    report = json.loads(next((root / "eval" / "reports").glob("*.json")).read_text())
+        if m["seeds"] != first["seeds"]:
+            raise TapeError(f"run {m['run_id']} used seeds {m['seeds']}, {first['run_id']} used {first['seeds']}")
+    scorers = _scorers(reports[0])
+    for r in reports:
+        if _scorers(r) != scorers:
+            raise TapeError(f"report {r['run_id']} was scored differently from {reports[0]['run_id']}")
     return {
         "proof_version": "0.4.0",
         "wire_version": first["proof_version"],
@@ -227,7 +261,7 @@ def recording(root: Path) -> dict:
         "sampling": {k: first["sampling"][k] for k in ("sampler", "scheduler", "steps", "cfg", "width", "height")},
         "seeds": first["seeds"],
         "pass_threshold": 0.75,
-        "scorers": [{"metric": s["metric"], "name": s["name"], "model": s["model"]} for s in report["scorers"]],
+        "scorers": scorers,
     }
 
 
@@ -256,8 +290,29 @@ def main(argv: list[str] | None = None) -> int:
     by_text = {p: i for i, p in enumerate(prompt_list)}
     runs = load_runs(root, by_text)
 
+    # Build beside the published tape and swap it in only once tape.json is written: a build that fails partway
+    # (a missing caption, probe or run image) leaves the last good tape in place.
+    final, out = out, out.with_name(out.name + ".tmp")
     if out.exists():
         shutil.rmtree(out)
+    try:
+        tape_size = _write_tape(root, out, runs, prompt_list)
+    except BaseException:
+        shutil.rmtree(out, ignore_errors=True)
+        raise
+    old = final.with_name(final.name + ".old")
+    if old.exists():
+        shutil.rmtree(old)
+    if final.exists():
+        final.rename(old)
+    out.rename(final)
+    shutil.rmtree(old, ignore_errors=True)
+    print(tape_size, file=sys.stderr)
+    return 0
+
+
+def _write_tape(root: Path, out: Path, runs: dict[str, list[dict]], prompt_list: list[str]) -> str:
+    """Write every image and tape.json under ``out``; returns the summary line."""
     for v, vruns in runs.items():
         for run in vruns:
             for im in run["images"]:
@@ -300,11 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     tape = build(runs, prompt_list, extra)
     (out / "tape.json").write_text(json.dumps(tape, indent=1) + "\n")
     total = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
-    print(
-        f"tape: {sum(len(r) for r in runs.values())} runs, {len(refs)} refs, {len(train)} train, {total / 2**20:.1f} MiB",
-        file=sys.stderr,
-    )
-    return 0
+    return f"tape: {sum(len(r) for r in runs.values())} runs, {len(refs)} refs, {len(train)} train, {total / 2**20:.1f} MiB"
 
 
 if __name__ == "__main__":

@@ -24,7 +24,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `recommend` routes a pose collapse to **curator** (narrow training poses, or outputs matching their mix) or the
   **grid** (`RecommendConfig.min_pose_diversity`, `argus-proof recommend --min-pose-diversity`; off by default).
 - Wire `PROOF_VERSION` 1.10 (additive: `EvalReport.pose` and its models), then 1.11 (additive: the two pose
-  thresholds and `GateCheck.code`).
+  thresholds and `GateCheck.code`), then 1.12 (additive: `PoseComparison.close_excess` accepts `[-1, 1]`).
+
+### Fixed
+
+- `PoseComparison.close_excess` is a signed difference: a negative value (outputs closer to training frames less
+  often than the frames are to each other, the healthy case) no longer fails to parse.
+- Safety fails loud when a detector crashes or the NudeNet check fails (timeout, 5xx, unreadable image): the image
+  reads NaN and is rejected by a `safety` hard gate, instead of `None` ("never ran"). A finite reading from another
+  detector still wins.
+- Re-archiving a run reconciles `passing_images.zip` with the current verdicts: an image rejected after it was
+  zipped leaves the zip, and one sent back to pending is restored to the run directory.
+- A HITL batch's own gate decides only that batch's images; the run's aggregate and verdict stay under the stored
+  gate, so the stored verdict matches the stored gate.
+- The A1111 backend always pins `sd_vae` (`"None"` without a VAE), so a run can't inherit an earlier run's VAE.
+- Only a failed GPU lease acquisition reads as "GPU unavailable"; errors from the scoring work propagate as raised.
+- ComfyUI asks each host its version once per run, so a host switch can't add a spurious `unknown`.
+- The remote backend writes images only after the whole response validates: a failed run leaves no orphan files.
+- Krippendorff's alpha ignores unpairable ratings: perfect agreement no longer reads `nan`, and a unit with one real
+  rating no longer counts as scorable.
+- InsightFace reports itself unavailable without `onnxruntime`.
+- A pose pass that can't reach puppet no longer reports the previous pass's puppet models in provenance.
+- Demo: the tape builder applies EXIF orientation, composites transparency onto white, checks seeds and scorers
+  across runs, handles empty runs/reports/diversity, and swaps in a new tape only once it is fully built. The
+  grid's column count follows the tape's prompt count, and the score chart handles empty and out-of-`[0, 1]` series.
 
 ## [0.5.2] - 2026-11-19
 

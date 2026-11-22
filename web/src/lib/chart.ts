@@ -11,13 +11,21 @@ export interface Panel {
 
 export const PANEL: Panel = { width: 300, height: 176, left: 34, right: 12, top: 16, bottom: 26 };
 
-/** A y-range that holds every value and the baseline, padded and snapped to 0.05, inside [0, 1]. */
+/**
+ * A y-range that holds every value and the baseline, padded and snapped to 0.05. Clamped to [0, 1] when the
+ * values lie inside it (clamping data outside would invert or collapse the range); [0, 1] for a panel with no
+ * values yet.
+ */
 export function yRange(values: number[]): [number, number] {
-  const lo = Math.min(...values);
-  const hi = Math.max(...values);
+  const finite = values.filter(Number.isFinite);
+  if (finite.length === 0) return [0, 1];
+  const lo = Math.min(...finite);
+  const hi = Math.max(...finite);
   const pad = Math.max((hi - lo) * 0.12, 0.02);
   const snap = (x: number, f: (n: number) => number) => f(x / 0.05) * 0.05;
-  return [Math.max(0, snap(lo - pad, Math.floor)), Math.min(1, snap(hi + pad, Math.ceil))];
+  const padded: [number, number] = [snap(lo - pad, Math.floor), snap(hi + pad, Math.ceil)];
+  if (lo < 0 || hi > 1) return padded;
+  return [Math.max(0, padded[0]), Math.min(1, padded[1])];
 }
 
 /** Gridline values: every 0.05, 0.1 or 0.2, whichever gives at most five lines. */

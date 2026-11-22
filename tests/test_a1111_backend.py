@@ -85,6 +85,15 @@ def test_payload_carries_lora_syntax_seed_and_checkpoint_override(models: Path, 
     assert payload["negative_prompt"] == "blurry"
 
 
+def test_a_run_without_a_vae_pins_the_checkpoints_own(models: Path, tmp_path: Path) -> None:
+    # settings persist across requests (restore_afterwards=False), so leaving sd_vae out would keep whatever VAE an
+    # earlier run pinned while the manifest records none
+    transport = FakeTransport(make_png())
+    result = _backend(models, transport).generate(_spec([7]), tmp_path / "run")
+    assert result.manifest.vae is None
+    assert transport.payloads[0]["override_settings"]["sd_vae"] == "None"
+
+
 def test_payload_pins_vae_and_keeps_lora_subdirectory(tmp_path: Path) -> None:
     (tmp_path / "base.safetensors").write_bytes(b"base")
     (tmp_path / "char").mkdir()

@@ -217,3 +217,32 @@ def test_the_result_reports_what_the_zip_holds(tmp_path: Path) -> None:
     again = archive_run(run_dir, [], report([image_scores(1, True), image_scores(2, True)]), manifest())
     assert again.passing_zip == run_dir / "passing_images.zip"
     assert again.n_passing == 1
+
+
+def test_rearchive_drops_an_image_whose_verdict_flipped_to_rejected(tmp_path: Path) -> None:
+    """The zip is the hand-off to training: an image rejected after it was zipped must leave it."""
+    images = gen_images(tmp_path, [1, 2])
+    archive_run(tmp_path, images, report([image_scores(1, True), image_scores(2, True)]), manifest())
+
+    again = archive_run(tmp_path, images, report([image_scores(1, True), image_scores(2, False)]), manifest())
+    with zipfile.ZipFile(tmp_path / PASSING_ZIP_NAME) as zf:
+        assert zf.namelist() == ["run-1-1.png"]
+    assert (again.n_passing, again.n_rejected) == (1, 1)
+    assert not (tmp_path / f"{PASSING_ZIP_NAME}.tmp").exists()
+
+    # every passing image rejected: no zip is left behind
+    last = archive_run(tmp_path, images, report([image_scores(1, False), image_scores(2, False)]), manifest())
+    assert last.passing_zip is None and last.n_passing == 0
+    assert not (tmp_path / PASSING_ZIP_NAME).exists()
+
+
+def test_rearchive_restores_an_image_sent_back_to_pending(tmp_path: Path) -> None:
+    images = gen_images(tmp_path, [1, 2])
+    archive_run(tmp_path, images, report([image_scores(1, True), image_scores(2, True)]), manifest())
+    assert not (tmp_path / "run-1-2.png").exists()  # zipped, then blank-slated
+
+    again = archive_run(tmp_path, images, report([image_scores(1, True), image_scores(2, None)]), manifest())
+    with zipfile.ZipFile(tmp_path / PASSING_ZIP_NAME) as zf:
+        assert zf.namelist() == ["run-1-1.png"]
+    assert (tmp_path / "run-1-2.png").read_bytes() == b"fake-png-bytes"
+    assert (again.n_passing, again.n_pending) == (1, 1)

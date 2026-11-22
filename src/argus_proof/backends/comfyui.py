@@ -146,14 +146,17 @@ class ComfyUIBackend:
                 # the broker can move seeds between hosts, and a run split across two
                 # versions must say so rather than credit only the last host.
                 versions: list[str] = []
+                # Each host is asked once per run: a later failed /system_stats on a host that already answered
+                # (it may be busy loading a checkpoint) must not add a spurious "unknown".
+                host_versions: dict[int, str] = {id(self.transport): manifest.engine_version}
                 with gpu.SeedLeases(self.gpu, gpu.GENERATE, caller=spec.run_id, priority=self.priority) as leases:
                     for done, seed in enumerate(spec.seeds, start=1):
                         transport = self._transport_for(leases.current().base_url)
                         if transport is not placed or not versions:
                             placed = transport
-                            version = (
-                                manifest.engine_version if transport is self.transport else self._version_of(transport)
-                            )
+                            if id(transport) not in host_versions:
+                                host_versions[id(transport)] = self._version_of(transport)
+                            version = host_versions[id(transport)]
                             if version not in versions:
                                 versions.append(version)
                         images.extend(self._generate_seed(spec, seed, out_dir, emit, transport))

@@ -22,6 +22,7 @@ krippendorff); the pass-rate CIs themselves use the dependency-free
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import tempfile
@@ -346,14 +347,18 @@ def krippendorff_alpha(units: Sequence[dict[str, float]], *, level: str = "inter
     import krippendorff
     import numpy as np
 
-    raters = sorted({rater for unit in units for rater in unit})
-    scorable = sum(1 for unit in units if len(unit) >= 2)
-    if len(raters) < 2 or scorable == 0:
+    # Only a unit with >= 2 real ratings is pairable; alpha ignores the rest entirely (observed and expected
+    # disagreement alike), so drop them first: a singleton must not widen the domain below, nor a NaN make a unit
+    # look scorable.
+    pairable = [{r: v for r, v in unit.items() if not math.isnan(v)} for unit in units]
+    pairable = [unit for unit in pairable if len(unit) >= 2]
+    if not pairable:
         return float("nan")
-    matrix = [[unit.get(rater, np.nan) for unit in units] for rater in raters]
+    raters = sorted({rater for unit in pairable for rater in unit})
+    matrix = [[unit.get(rater, np.nan) for unit in pairable] for rater in raters]
     # Every rating the same value: krippendorff raises (a one-value domain has no
     # expected disagreement), but raters who all agree are in perfect agreement.
-    domain = {value for row in matrix for value in row if not np.isnan(value)}
+    domain = {value for unit in pairable for value in unit.values()}
     if len(domain) < 2:
         return 1.0
     try:

@@ -26,6 +26,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+import structlog
 from argus_cortex.moderation import (
     DEFAULT_EXPOSED_LABELS,
     CheckFailed,
@@ -37,6 +38,8 @@ from argus_cortex.moderation import (
 from argus_proof.models import ScorerProvenance
 from argus_proof.scoring.scorers._util import clamp01
 from argus_proof.scoring.scorers._util import percentile as _percentile
+
+logger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from argus_proof.models import EvalReport
@@ -77,7 +80,10 @@ class SafetyScorer:
 
     Combining detectors by the **max** unsafe probability is deliberately
     conservative: if any detector thinks an image is risky, the safety score
-    drops. Returns ``None`` only if no detector could score the image.
+    drops. Returns ``None`` only if no detector could score the image (none
+    available, or every one answered ``None``). A detector that raised or read
+    non-finite is a broken reading: with no finite reading from another detector
+    the score is NaN, so the orchestrator's guard fails the image loud.
     """
 
     metric = "safety"
@@ -108,7 +114,12 @@ class SafetyScorer:
                 continue
             try:
                 prob = detector.unsafe_probability(image_path)
-            except Exception:  # noqa: BLE001 - one flaky detector must not abort the whole run
+            except Exception as exc:  # noqa: BLE001 - one flaky detector must not abort the whole run
+                # ...but a crashed check is a broken reading, not "never ran": treat it like a non-finite one.
+                logger.warning(
+                    "safety.detector_failed", detector=detector.name, image=Path(image_path).name, error=str(exc)
+                )
+                non_finite = True
                 continue
             if prob is None:
                 continue
@@ -120,8 +131,8 @@ class SafetyScorer:
                 non_finite = True
 
         if not unsafe:
-            # Only a broken reading: hand it to the orchestrator's guard (fail loud)
-            # rather than None, which would read as "safety never ran".
+            # Only broken readings (raised or non-finite): hand them to the orchestrator's
+            # guard (fail loud) rather than None, which would read as "safety never ran".
             return float("nan") if non_finite else None
         return clamp01(1.0 - max(unsafe))  # most-unsafe detector wins; non-finite -> rejected by orchestrator
 
@@ -202,8 +213,13 @@ class NudeNetDetector:
     def unsafe_probability(self, image_path: Path) -> float | None:
         try:
             result = self._load().check(Path(image_path).read_bytes(), Path(image_path).name)
-        except (CheckFailed, ModerationConfigError, OSError):  # one bad image must not abort the run
+        except ModerationConfigError:  # no server configured: this detector can't score, it didn't fail
             return None
+        except (CheckFailed, OSError) as exc:
+            # The server timed out, errored or refused the image: a broken reading, never "safe" or "never ran".
+            # NaN rejects this image through the orchestrator's guard without aborting the run.
+            logger.warning("safety.nudenet_check_failed", image=Path(image_path).name, error=str(exc))
+            return float("nan")
         return exposed_score(result.labels, sorted(self._unsafe_classes))  # no exposed detection -> 0.0 (safe)
 
 

@@ -11,6 +11,20 @@ describe("score chart geometry", () => {
     expect(yRange([0.99, 1.0])[1]).toBe(1);
   });
 
+  it("falls back to [0, 1] for a panel with no values", () => {
+    expect(yRange([])).toEqual([0, 1]);
+    expect(yRange([Number.NaN])).toEqual([0, 1]);
+  });
+
+  it("keeps a metric outside [0, 1] in an ordered range that holds it", () => {
+    for (const values of [[1.5, 1.6], [-0.4, -0.2], [-0.1, 0.5], [0.8, 1.3]]) {
+      const [lo, hi] = yRange(values);
+      expect(lo).toBeLessThan(hi);
+      expect(lo).toBeLessThanOrEqual(Math.min(...values));
+      expect(hi).toBeGreaterThanOrEqual(Math.max(...values));
+    }
+  });
+
   it("draws at most five gridlines, inside the range", () => {
     for (const r of [yRange([0.11, 0.47]), yRange([0.76, 0.86]), yRange([0.21, 0.88])]) {
       const t = ticks(r);

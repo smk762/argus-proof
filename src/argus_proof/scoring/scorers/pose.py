@@ -483,6 +483,7 @@ class PoseScorer:
         client = self.client(priority)
         prov = PoseProvenance(training=training_note)
         report = PoseReport(count=len(images), posed=0, provenance=prov)
+        self._health = None  # a pass that can't reach puppet must not report the previous pass's models
         try:
             self._health = health = client.health()
         except PuppetError as exc:

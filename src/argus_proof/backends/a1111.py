@@ -34,6 +34,8 @@ logger = structlog.get_logger()
 
 BACKEND_NAME = "a1111"
 DEFAULT_BASE_URL = "http://127.0.0.1:7860"
+# A1111's sd_vae for "use the checkpoint's own VAE" ("Automatic" may load an unpinned sidecar <ckpt>.vae.pt).
+A1111_NO_VAE = "None"
 
 # A1111 loads extra networks from these prompt tags; a prompt carrying one would
 # load weights the manifest never pinned.
@@ -162,13 +164,15 @@ class A1111Backend:
 
         # Pin the checkpoint, VAE, and clip-skip via override_settings so the run
         # matches the manifest; restore_afterwards=False keeps the checkpoint loaded
-        # across the run's seeds instead of reloading it per request.
+        # across the run's seeds instead of reloading it per request. Because the
+        # settings persist, sd_vae is always sent: a run without a VAE asks for
+        # "None" (the checkpoint's baked-in VAE, which is what its manifest records),
+        # never inheriting an earlier run's VAE or an "Automatic" sidecar file.
         override: dict = {
             "sd_model_checkpoint": spec.base_checkpoint,
             "CLIP_stop_at_last_layers": spec.sampling.clip_skip,
+            "sd_vae": spec.vae or A1111_NO_VAE,
         }
-        if spec.vae:
-            override["sd_vae"] = spec.vae
         return {
             "prompt": spec.prompt + lora_tags,
             "negative_prompt": spec.negative_prompt,

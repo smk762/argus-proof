@@ -282,6 +282,7 @@ def test_unknown_puppet_fields_are_ignored_and_forwarded_untouched(tmp_path: Pat
     fake = FakePuppet()
     fake.health["gpu_tenants"] = ["pose"]
     fake.pose["future"] = {"x": 1}
+    assert fake.pose["primary"] == 1  # the fixture's primary person is the second one
     fake.pose["people"][1]["mesh"] = [1, 2, 3]
     fake.stats["entropy"] = 0.7
     fake.stats["clusters"][0]["spread"] = 0.1
@@ -290,7 +291,10 @@ def test_unknown_puppet_fields_are_ignored_and_forwarded_untouched(tmp_path: Pat
     pose = PoseScorer(fake.client()).score(_images(tmp_path), training=frames, export_dir=export)
     assert pose.diversity == 0.62 and pose.comparison is not None and pose.comparison.n_close == 2
     forwarded = fake.bodies("/stats")[0]["results"][0]
-    assert forwarded["future"] == {"x": 1} and forwarded["people"][0]["mesh"] == [1, 2, 3]
+    assert forwarded["future"] == {"x": 1}
+    # primary_only forwards just the primary person (re-indexed to 0), its unknown fields intact
+    assert forwarded["primary"] == 0 and len(forwarded["people"]) == 1
+    assert forwarded["people"][0]["mesh"] == [1, 2, 3]
 
 
 def test_a_puppet_1_0_answer_is_read(tmp_path: Path) -> None:
@@ -399,3 +403,24 @@ def test_fixtures_are_tiny_and_hold_no_images() -> None:
         raw = (Path(__file__).parent / "fixtures" / "puppet" / f"{name}.json").read_text(encoding="utf-8")
         assert len(raw) < 20_000 and "base64" not in raw
         assert json.loads(raw)["puppet_version"].startswith("1.")
+
+
+def test_a_negative_close_excess_is_kept_not_refused(tmp_path: Path) -> None:
+    # close_excess is close_share - baseline_close_share: a run near training frames less often than the training
+    # frames are near each other reads negative, and that's the healthy case, not a malformed payload.
+    fake = FakePuppet()
+    fake.compare.update(close_share=0.1, baseline_close_share=0.4, close_excess=-0.3)
+    export, frames = _training(tmp_path)
+    pose = PoseScorer(fake.client()).score(_images(tmp_path), training=frames, export_dir=export)
+    assert pose.comparison is not None and pose.comparison.close_excess == pytest.approx(-0.3)
+
+
+def test_a_pass_that_cannot_reach_puppet_drops_the_previous_pass_models(tmp_path: Path) -> None:
+    fake = FakePuppet()
+    scorer = PoseScorer(fake.client())
+    scorer.score(_images(tmp_path))
+    assert scorer.provenance().version is not None
+    fake.down = True
+    pose = scorer.score(_images(tmp_path))
+    assert any(n.startswith("pose:") for n in pose.provenance.not_checked)
+    assert (scorer.provenance().version, scorer.provenance().model) == (None, None)

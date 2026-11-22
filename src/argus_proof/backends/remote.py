@@ -77,13 +77,21 @@ class RemoteBackend:
         try:
             resp = self.transport.post_json("/generate", {"spec": spec.model_dump(mode="json")})
             manifest = self._parse_manifest(resp, spec)
-            images = self._collect_images(resp, spec, out_dir, emit)
+            decoded = self._collect_images(resp, spec, out_dir)
+            images = [img for img, _ in decoded]
             if not images:
                 raise BackendError(f"remote service returned no images for run {spec.run_id!r}")
             missing = sorted(set(spec.seeds) - {img.seed for img in images})
             if missing:
                 # The manifest claims these seeds; with no image for them it would misdescribe the run.
                 raise BackendError(f"remote service returned no image for requested seed(s) {missing}")
+            # Only a fully validated response touches out_dir: a failed run leaves no orphan image behind.
+            for img, data in decoded:
+                try:
+                    Path(img.path).write_bytes(data)
+                except OSError as exc:
+                    raise BackendError(f"could not write remote image {img.image_id!r}: {exc}") from exc
+                emit(ProgressEvent(run_id=spec.run_id, type="image", seed=img.seed, image_id=img.image_id))
             write_manifest(out_dir, manifest)
         except BackendError as exc:
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
@@ -132,8 +140,10 @@ class RemoteBackend:
         if mismatches:
             raise BackendError(f"remote manifest does not match the requested spec: {mismatches}")
 
-    def _collect_images(self, resp: dict, spec: RunSpec, out_dir: Path, emit: ProgressSink) -> list[GeneratedImage]:
-        produced: list[GeneratedImage] = []
+    def _collect_images(self, resp: dict, spec: RunSpec, out_dir: Path) -> list[tuple[GeneratedImage, bytes]]:
+        """Decode and validate every returned image → ``(image, bytes)`` pairs. Writes nothing: the caller does,
+        once the whole response has passed."""
+        produced: list[tuple[GeneratedImage, bytes]] = []
         seen: set[str] = set()
         requested = set(spec.seeds)
         for index, item in enumerate(resp.get("images") or []):
@@ -156,12 +166,9 @@ class RemoteBackend:
             seen.add(image_id)
 
             path = out_dir / f"{image_id}.png"
-            path.write_bytes(data)
             dims = read_dimensions(data) or (spec.sampling.width, spec.sampling.height)
-            produced.append(
-                GeneratedImage(
-                    image_id=image_id, run_id=spec.run_id, seed=seed, path=str(path), width=dims[0], height=dims[1]
-                )
+            image = GeneratedImage(
+                image_id=image_id, run_id=spec.run_id, seed=seed, path=str(path), width=dims[0], height=dims[1]
             )
-            emit(ProgressEvent(run_id=spec.run_id, type="image", seed=seed, image_id=image_id))
+            produced.append((image, data))
         return produced
