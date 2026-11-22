@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-22
+
+### Added
+
+- A speech run's manifest records echo's `/health` `image.runtime` (`EchoImage.runtime`: python, torch, CUDA, cuDNN and
+  the engine's libraries, from echo 0.3.0), so two runs can be compared on the stack that spoke them as well as on
+  the release. Missing before echo 0.3.0 (`None`); a malformed entry is dropped rather than failing the run.
+  Wire `PROOF_VERSION` 1.16 (additive).
+
 ## [0.7.1] - 2026-11-22
 
 ### Fixed

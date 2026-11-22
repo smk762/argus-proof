@@ -41,6 +41,7 @@ class FakeEcho:
         if engine == "qwen":  # the other slot, always stock
             for files in self.checkpoints.values():
                 files.append({"name": "custom_voice/model.safetensors", "sha256": _sha("custom")})
+        self.runtime: dict | None = {"python": "3.11.11", "torch": "2.6.0+cu124", "cuda": "12.4", "coqui-tts": "0.28.0"}
         self.selected: str | None = None
         self.loaded = False  # files are null until the first synthesis (lazy load)
         self.clones: dict[str, dict] = {}
@@ -129,7 +130,7 @@ class FakeEcho:
             "model": "xtts_v2" if self.engine == "xtts" else "1.7b",
             "device": "cuda:0",
             "capabilities": ["tts"],
-            "image": {"version": "0.2.0", "revision": "abc1234"},
+            "image": {"version": "0.3.0", "revision": "abc1234", "runtime": self.runtime},
             "weights": weights,
         }
 

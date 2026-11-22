@@ -88,11 +88,13 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #      EchoImage, SpeechWeights, GeneratedClip) out.
 # 1.15: additive — GeneratedFrame, a speech run's last /run/stream frame (type
 #      "generated"; its clips and manifest are written, nothing is scored yet).
+# 1.16: additive — EchoImage.runtime: the library versions echo's /health reports
+#      (echo 0.3.0+), so a speech run records the stack that spoke it.
 # Since 1.7, GateConfig rejects ``weights`` / ``hard_gates`` keys that aren't a
 # MetricScores field. Such a key never matched a score, so its weight or gate
 # silently never applied; a payload that used one now fails validation instead.
 # Treated as a bug fix, not a wire break, so no major bump.
-PROOF_VERSION = "1.15"
+PROOF_VERSION = "1.16"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -1138,7 +1140,8 @@ class EchoImage(BaseModel):
 
     ``version`` and ``revision`` are what echo's ``/health`` ``image`` reports (``None`` for a
     local build); ``tag`` is the image reference proof was configured with (``PROOF_ECHO_IMAGE``),
-    since a running container can't report its own digest.
+    since a running container can't report its own digest. ``runtime`` is what to compare before claiming two runs
+    should give the same audio.
     """
 
     model_config = RESPONSE_ONLY
@@ -1146,6 +1149,10 @@ class EchoImage(BaseModel):
     tag: str | None = None
     version: str | None = None
     revision: str | None = None
+    # The library versions that shape the audio, as echo's /health ``image.runtime`` reports them (echo 0.3.0+):
+    # ``python``, ``torch``, ``cuda``, ``cudnn`` and the engine's own (``coqui-tts``, ``qwen-tts``, ``transformers`` …),
+    # ``None`` for one that isn't installed. Two builds of one revision can differ here; ``None`` before echo 0.3.0.
+    runtime: dict[str, str | None] | None = None
 
 
 class SpeechWeights(BaseModel):
