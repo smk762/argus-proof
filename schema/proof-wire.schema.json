@@ -278,7 +278,7 @@
       "type": "object"
     },
     "EchoImage": {
-      "description": "The echo engine image a speech run generated on.\n\n``version`` and ``revision`` are what echo's ``/health`` ``image`` reports (``None`` for a\nlocal build); ``tag`` is the image reference proof was configured with (``PROOF_ECHO_IMAGE``),\nsince a running container can't report its own digest.",
+      "description": "The echo engine image a speech run generated on.\n\n``version`` and ``revision`` are what echo's ``/health`` ``image`` reports (``None`` for a\nlocal build); ``tag`` is the image reference proof was configured with (``PROOF_ECHO_IMAGE``),\nsince a running container can't report its own digest. ``runtime`` is what to compare before claiming two runs\nshould give the same audio.",
       "properties": {
         "revision": {
           "anyOf": [
@@ -291,6 +291,28 @@
           ],
           "default": null,
           "title": "Revision"
+        },
+        "runtime": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Runtime"
         },
         "tag": {
           "anyOf": [
@@ -320,7 +342,8 @@
       "required": [
         "tag",
         "version",
-        "revision"
+        "revision",
+        "runtime"
       ],
       "title": "EchoImage",
       "type": "object"
@@ -373,7 +396,7 @@
           "default": null
         },
         "proof_version": {
-          "default": "1.15",
+          "default": "1.16",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1876,7 +1899,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.15",
+          "default": "1.16",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2119,7 +2142,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.15",
+          "default": "1.16",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2490,7 +2513,7 @@
           "type": "integer"
         },
         "proof_version": {
-          "default": "1.15",
+          "default": "1.16",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2876,7 +2899,7 @@
           "type": "array"
         },
         "proof_version": {
-          "default": "1.15",
+          "default": "1.16",
           "title": "Proof Version",
           "type": "string"
         },

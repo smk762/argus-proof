@@ -325,7 +325,9 @@ plus a `SpeechRunManifest` (`manifest.json`) into the run dir.
   checkpoint another client loaded mid-run) fails the run. On Qwen only the `base` slot that speaks clones is pinned.
 - **Reproducibility:** the same seed gave byte-identical audio on an RTX 3090 for XTTS-v2 and Qwen3-TTS 0.6B,
   built-in voices and clones, on both routes (echo's docs/api.md, Reproducibility). It also needs the same GPU model
-  and library versions, which echo's 0.2.0 images don't pin (echo#32): hash two runs on the image you use first.
+  and library versions. Echo 0.3.0 pins its images' packages (echo#32), and the manifest records the versions
+  echo reports (`image.runtime`: python, torch, CUDA, cuDNN, the engine's libraries). Still hash two runs on the
+  image you use before relying on it.
 - **GPU:** one preemptible `batch` lease per run on the engine (`speak-xtts` on `xtts`, `speak-qwen` on `tts`),
   yielding between utterances on the node it started on.
 
