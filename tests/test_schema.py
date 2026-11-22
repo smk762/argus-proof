@@ -56,6 +56,7 @@ def test_only_models_no_client_authors_list_their_defaults_as_required() -> None
         RefinementRequest,
         RunRequest,
         models.ScoreRequest,
+        models.SpeechRunSpec,
     )
     sent = _reachable(
         models.EvalReport,
@@ -67,6 +68,7 @@ def test_only_models_no_client_authors_list_their_defaults_as_required() -> None
         models.GridPlan,
         models.GridEstimate,
         models.ScoreResult,
+        models.SpeechRunManifest,
     )
     # A RootModel (the frame union) has no fields of its own to require.
     ours = {m for m in sent - received if m.__module__ == models.__name__ and not issubclass(m, RootModel)}
@@ -244,6 +246,7 @@ SCHEMA_DIGESTS = {
     "1.11": "5e7b0363319b7aec626e8c9700490755740d7ccf8135b7d26122098a81f88838",
     "1.12": "ce5eaaea3115c6e00c20119bedda9ce5e02c9f6bf29303440ea9490b7fb90a13",
     "1.13": "29f1c8f1fc68a7ea0ed07c15aad42a270e2a074ec2ef7912f052f04851ba3255",
+    "1.14": "5748f8c6bb8d258bbec99ab4f7c753a8c7b500b654824b8868998c7ad01cc125",
 }
 
 

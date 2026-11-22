@@ -77,13 +77,14 @@ def test_the_manifest_validates_and_matches_the_lease_figures() -> None:
     manifest = load_tenant_manifest(MANIFEST)
     assert manifest.tenant == gpu.TENANT
     assert manifest.residents == ()  # the scorers free their models inside the lease: nothing stays loaded
-    assert {k.kind for k in manifest.kinds} == {gpu.GENERATE.kind, gpu.GENERATE_LOCAL.kind, gpu.SCORE.kind}
-    for footprint in (gpu.GENERATE, gpu.GENERATE_LOCAL, gpu.SCORE):
+    footprints = (gpu.GENERATE, gpu.GENERATE_LOCAL, gpu.SCORE, gpu.SPEAK_XTTS, gpu.SPEAK_QWEN)
+    assert {k.kind for k in manifest.kinds} == {f.kind for f in footprints}
+    for footprint in footprints:
         kind = manifest.kind_for(footprint.kind)
         assert kind is not None, footprint.kind
         assert (kind.target, kind.vram_mb, kind.model_mb) == (footprint.target, footprint.vram_mb, footprint.model_mb)
         assert kind.preemptible is footprint.preemptible
-    for footprint in (gpu.GENERATE, gpu.GENERATE_LOCAL):
+    for footprint in (gpu.GENERATE, gpu.GENERATE_LOCAL, gpu.SPEAK_XTTS, gpu.SPEAK_QWEN):
         assert manifest.kind_for(footprint.kind).priority == gpu.DEFAULT_PRIORITY == "batch"
         assert footprint.preemptible is True
     score = manifest.kind_for(gpu.SCORE.kind)

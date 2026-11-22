@@ -83,11 +83,14 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 # 1.13: additive — ScorerProvenance.extra_files pins the weights files a scorer
 #      loaded beside model_file (InsightFace's face detector, CLIP-IQA+'s learned
 #      prompts). Identity, CLIPScore and CLIP-IQA now fill model_file too (#105).
+# 1.14: additive — speech runs through argus-echo (#118): SpeechRunSpec (with
+#      SpeechReferenceSpec) in, SpeechRunManifest (SpeechPrompt, SpeechReference,
+#      EchoImage, SpeechWeights, GeneratedClip) out.
 # Since 1.7, GateConfig rejects ``weights`` / ``hard_gates`` keys that aren't a
 # MetricScores field. Such a key never matched a score, so its weight or gate
 # silently never applied; a payload that used one now fails validation instead.
 # Treated as a bug fix, not a wire break, so no major bump.
-PROOF_VERSION = "1.13"
+PROOF_VERSION = "1.14"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -1020,6 +1023,174 @@ class RejectArchive(_Versioned):
     records: list[RejectRecord] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# Speech — sample grids of utterances generated through argus-echo (#118)
+# ---------------------------------------------------------------------------
+
+# Ceilings on one speech run: every item is one synthesis (prompt x reference x seed).
+MAX_SPEECH_PROMPTS = 64
+MAX_SPEECH_REFERENCES = 32
+MAX_SPEECH_ITEMS = 512
+# echo's seed range (numpy's legacy seed range).
+MAX_SPEECH_SEED = 2**32 - 1
+SpeechSeed = Annotated[int, Field(ge=0, le=MAX_SPEECH_SEED)]
+EchoEngine = Literal["xtts", "qwen"]
+
+
+class SpeechReferenceSpec(BaseModel):
+    """One held-out reference clip a speech run clones a voice from, as requested.
+
+    Read from the held-out curator speech export (its ``speech_manifest.jsonl`` row):
+    ``path`` is where the clip is readable on this host, ``rel_path`` its path inside
+    that export. The backend hashes the clip into the manifest's :class:`SpeechReference`.
+    """
+
+    ref_id: str = Field(pattern=r"^r[0-9]{1,3}$")
+    path: str
+    rel_path: str
+    transcript: str = ""
+    speaker_label: str | None = None
+    speaker_cluster: str | None = None
+    language: str | None = None
+    accent: str | None = None
+
+
+class SpeechRunSpec(BaseModel):
+    """A speech generation request: every prompt in every reference voice, at every seed.
+
+    ``checkpoint`` names the fine-tune echo loads (``POST /admin/load``) from its checkpoint
+    root; ``None`` is the engine's stock weights, which is also how a baseline run is asked
+    for. ``source_manifest`` is the training export's ``speech_manifest.jsonl`` and
+    ``references_manifest`` the held-out export's.
+    """
+
+    run_id: str
+    engine: EchoEngine
+    checkpoint: str | None = None
+    language: str = Field(default="en", min_length=2, max_length=16)
+    prompts: list[str] = Field(min_length=1, max_length=MAX_SPEECH_PROMPTS)
+    references: list[SpeechReferenceSpec] = Field(min_length=1, max_length=MAX_SPEECH_REFERENCES)
+    seeds: list[SpeechSeed] = Field(min_length=1)
+    source_manifest: str | None = None
+    references_manifest: str | None = None
+    training_run_id: str | None = None
+
+    @model_validator(mode="after")
+    def _grid_fits(self) -> SpeechRunSpec:
+        n = len(self.prompts) * len(self.references) * len(self.seeds)
+        if n > MAX_SPEECH_ITEMS:
+            raise ValueError(f"{n} utterances (prompts x references x seeds) is over the {MAX_SPEECH_ITEMS} cap")
+        if len({r.ref_id for r in self.references}) != len(self.references):
+            raise ValueError("references repeat a ref_id")
+        if any(not p.strip() for p in self.prompts):
+            raise ValueError("a prompt is empty")
+        return self
+
+
+class SpeechPrompt(BaseModel):
+    """One prompt of a speech run, by position: ``index`` is what each clip's ``prompt_index`` points at."""
+
+    model_config = RESPONSE_ONLY
+
+    index: int = Field(ge=0)
+    text: str
+
+
+class SpeechReference(BaseModel):
+    """A reference clip as a speech run used it: where it sits in the held-out export, pinned by SHA256."""
+
+    model_config = RESPONSE_ONLY
+
+    ref_id: str
+    rel_path: str
+    sha256: Sha256
+    transcript: str = ""
+    speaker_label: str | None = None
+    speaker_cluster: str | None = None
+    language: str | None = None
+    accent: str | None = None
+
+
+class EchoImage(BaseModel):
+    """The echo engine image a speech run generated on.
+
+    ``version`` and ``revision`` are what echo's ``/health`` ``image`` reports (``None`` for a
+    local build); ``tag`` is the image reference proof was configured with (``PROOF_ECHO_IMAGE``),
+    since a running container can't report its own digest.
+    """
+
+    model_config = RESPONSE_ONLY
+
+    tag: str | None = None
+    version: str | None = None
+    revision: str | None = None
+
+
+class SpeechWeights(BaseModel):
+    """The weights every clip of a speech run was generated with, pinned by SHA256.
+
+    ``fingerprint`` is echo's weights fingerprint over ``files`` (sha256 of the sorted
+    ``name:sha256`` lines; echo's docs/api.md), checked against every clip's response.
+    ``model`` is Qwen's slot (``base`` speaks clones); ``None`` on XTTS.
+    """
+
+    model_config = RESPONSE_ONLY
+
+    checkpoint: str | None = None
+    model: str | None = None
+    fingerprint: Sha256
+    files: list[ModelRef] = Field(min_length=1)
+
+
+class GeneratedClip(BaseModel):
+    """One utterance a speech run produced: prompt ``prompt_index`` in reference ``ref_id``'s voice at ``seed``.
+
+    ``item_id`` is the clip's handle (its WAV is ``<item_id>.wav`` in the run dir, never a
+    client-supplied path); ``sha256`` pins the audio, so a re-run's clip can be compared byte for
+    byte. ``device`` is where XTTS ran it (``cpu`` or its GPU device; ``None`` on Qwen).
+    """
+
+    model_config = RESPONSE_ONLY
+
+    item_id: str
+    run_id: str
+    prompt_index: int = Field(ge=0)
+    ref_id: str
+    seed: int
+    path: str
+    sha256: Sha256
+    sample_rate: int = Field(gt=0)
+    duration_s: float = Field(ge=0)
+    device: str | None = None
+
+
+class SpeechRunManifest(_Versioned):
+    """A fully reproducible speech run: the engine, its weights, the prompts, the references and the seeds.
+
+    Every clip is ``(prompt_index, ref_id, seed)``, generated through echo's
+    ``/synthesise/stream`` (``route``). Reproducing a clip byte for byte also needs the same GPU
+    model and the same torch/engine library versions (echo's docs/api.md, Reproducibility).
+    """
+
+    model_config = RESPONSE_ONLY
+
+    run_id: str
+    modality: Literal["speech"] = "speech"
+    engine: str
+    image: EchoImage
+    weights: SpeechWeights
+    route: Literal["/synthesise/stream"] = "/synthesise/stream"
+    language: str
+    prompts: list[SpeechPrompt] = Field(min_length=1)
+    references: list[SpeechReference] = Field(min_length=1)
+    seeds: list[int] = Field(min_length=1)
+    clips: list[GeneratedClip] = Field(default_factory=list)
+    source_manifest: str | None = None
+    references_manifest: str | None = None
+    training_run_id: str | None = None
+    created_at: str | None = None
+
+
 # Models that make up the HTTP/CLI wire contract, in schema order. Consumers
 # (argus-studio) codegen against the emitted schema/proof-wire.schema.json.
 WIRE_MODELS: tuple[type[BaseModel], ...] = (
@@ -1063,6 +1234,14 @@ WIRE_MODELS: tuple[type[BaseModel], ...] = (
     GateResult,
     RejectRecord,
     RejectArchive,
+    SpeechReferenceSpec,
+    SpeechRunSpec,
+    SpeechPrompt,
+    SpeechReference,
+    EchoImage,
+    SpeechWeights,
+    GeneratedClip,
+    SpeechRunManifest,
 )
 
 

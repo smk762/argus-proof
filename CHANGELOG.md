@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Speech sample grids through argus-echo** (#118, part 1): `EchoBackend` and `EchoClient` (`backends/echo.py`)
+  generate every prompt in every held-out reference voice at every seed on echo's XTTS-v2 or Qwen3-TTS engine
+  (`PROOF_ECHO_URL`, `PROOF_ECHO_ADMIN_TOKEN`, `PROOF_ECHO_IMAGE`, `PROOF_ECHO_TIMEOUT`). One clone per reference per run,
+  deleted afterwards; the run's checkpoint loaded and the previous one restored; each clip a float WAV pinned by
+  SHA256; echo's weights fingerprint checked on every clip. GPU kinds `speak-xtts` and `speak-qwen`.
+- Wire `PROOF_VERSION` 1.14 (additive): `SpeechRunSpec` / `SpeechReferenceSpec` in, `SpeechRunManifest` (`SpeechPrompt`,
+  `SpeechReference`, `EchoImage`, `SpeechWeights`, `GeneratedClip`) out.
+
 ### Changed
 
 - argus-cortex `>=0.13,<0.14` (was `>=0.9,<0.10`), for the speech taxonomy (`TargetProfile.modality`,
