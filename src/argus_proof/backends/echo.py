@@ -9,8 +9,9 @@ One run, on one engine (XTTS-v2 or Qwen3-TTS):
 1. ``GET /health``: the engine, its image identity and the selected checkpoint.
 2. ``POST /admin/load`` (``PROOF_ECHO_ADMIN_TOKEN``) when the run's checkpoint isn't the selected one; the
    previous selection is restored when the run ends.
-3. ``POST /clone-voice`` once per reference clip, under an id derived from the run (``proof-<hash>-r<n>``); every
-   clone is deleted when the run ends, failed runs included, so no reference voice stays stored in echo.
+3. ``POST /clone-voice`` once per reference clip, under an id derived from the run (``proof-<hash>-r<n>``), speaking
+   it by the ``voice_clone_id`` echo answers with; every clone is deleted when the run ends, failed runs included,
+   so no reference voice stays stored in echo.
 4. ``POST /synthesise/stream`` per utterance, with the run's ``seed``. The stream is raw PCM from echo itself (the
    non-streaming route hands back a storage URL on another host). Each clip is written as ``<item_id>.wav``.
 
@@ -72,6 +73,8 @@ MAX_REPLY_BYTES = 64 * 1024 * 1024  # 64 MiB of float32 PCM is about 11 minutes 
 MAX_CLIP_BYTES = 32 * 1024 * 1024  # one reference clip sent to /clone-voice
 STREAM_FORMAT = "pcm_f32le"
 STREAM_ROUTE = "/synthesise/stream"
+# What each engine's /health reports as ``engine`` (echo's engines/*/ servers), by the name a SpeechRunSpec uses.
+ECHO_ENGINE_NAMES: dict[str, str] = {"xtts": "xtts-v2", "qwen": "qwen-tts"}
 
 
 class EchoError(BackendError):
@@ -297,12 +300,20 @@ class EchoClient:
         body = json.dumps({"checkpoint": checkpoint}).encode()
         return self._json(self._call("POST", "/admin/load", content=body, content_type="application/json", admin=True))
 
-    def clone(self, companion_id: str, audio: bytes, filename: str, reference_text: str) -> None:
-        """``POST /clone-voice``: store *audio* as clone *companion_id*."""
+    def clone(self, companion_id: str, audio: bytes, filename: str, reference_text: str) -> str:
+        """``POST /clone-voice``: store *audio* as clone *companion_id*; returns the ``voice_clone_id`` to speak it with.
+
+        Echo answers with the clone's ``voice_clone_id`` (``voice_clones/<companion_id>/prompt.pt`` on 0.2.0), which is
+        what ``/synthesise`` takes; the bare ``companion_id`` is only how the clone is named and deleted.
+        """
         body, ctype = multipart(
             {"companion_id": companion_id, "reference_text": reference_text}, [("audio", filename, audio)]
         )
-        self._call("POST", "/clone-voice", content=body, content_type=ctype)
+        reply = self._json(self._call("POST", "/clone-voice", content=body, content_type=ctype))
+        voice = reply.get("voice_clone_id") if isinstance(reply, dict) else None
+        if not isinstance(voice, str) or not voice:
+            raise EchoError(f"echo's /clone-voice didn't say how to speak clone {companion_id} (no voice_clone_id)")
+        return voice
 
     def delete_clone(self, companion_id: str) -> None:
         """``DELETE /clones/{id}``; a clone that is already gone is fine."""
@@ -385,8 +396,10 @@ class EchoBackend:
     def _run(self, spec: SpeechRunSpec, out_dir: Path, emit: ProgressSink, total: int) -> SpeechRunManifest:
         health = self.client.health()
         engine = str(health.get("engine") or "")
-        if engine != spec.engine:
-            raise EchoError(f"{ENV_ECHO_URL} is echo's {engine or 'unknown'} engine, not {spec.engine}")
+        if engine != ECHO_ENGINE_NAMES[spec.engine]:
+            raise EchoError(
+                f"{ENV_ECHO_URL} is echo's {engine or 'unknown'} engine, not {ECHO_ENGINE_NAMES[spec.engine]}"
+            )
         if "tts" not in (health.get("capabilities") or ["tts"]):
             raise EchoError(f"echo's {engine} engine doesn't serve text to speech")
         image = health.get("image") if isinstance(health.get("image"), dict) else {}
@@ -394,6 +407,7 @@ class EchoBackend:
         references = [self._reference(ref) for ref in spec.references]
 
         cloned: list[str] = []
+        voices: dict[str, str] = {}  # ref_id -> the voice_clone_id echo answered with
         loaded = False
         try:
             if previous != spec.checkpoint:
@@ -403,15 +417,16 @@ class EchoBackend:
                 cid = clone_id(spec.run_id, ref.ref_id)
                 audio = Path(ref.path).read_bytes()
                 try:
-                    self.client.clone(cid, audio, Path(ref.path).name, ref.transcript)
+                    voice = self.client.clone(cid, audio, Path(ref.path).name, ref.transcript)
                 except EchoError as exc:
                     if exc.status != 409:  # left over from an earlier run with this run_id
                         raise
                     self.client.delete_clone(cid)
-                    self.client.clone(cid, audio, Path(ref.path).name, ref.transcript)
+                    voice = self.client.clone(cid, audio, Path(ref.path).name, ref.transcript)
                 cloned.append(cid)
+                voices[ref.ref_id] = voice
                 logger.info("echo.cloned", run_id=spec.run_id, ref_id=ref.ref_id, sha256=pinned.sha256)
-            clips, weights = self._speak_all(spec, out_dir, emit, total)
+            clips, weights = self._speak_all(spec, voices, out_dir, emit, total)
         finally:
             for cid in cloned:
                 try:
@@ -426,7 +441,7 @@ class EchoBackend:
 
         return SpeechRunManifest(
             run_id=spec.run_id,
-            engine=f"argus-echo-{engine}",
+            engine=f"argus-echo-{spec.engine}",
             image=EchoImage(tag=self.image, version=image.get("version"), revision=image.get("revision")),
             weights=weights,
             language=spec.language,
@@ -459,7 +474,7 @@ class EchoBackend:
         )
 
     def _speak_all(
-        self, spec: SpeechRunSpec, out_dir: Path, emit: ProgressSink, total: int
+        self, spec: SpeechRunSpec, voices: Mapping[str, str], out_dir: Path, emit: ProgressSink, total: int
     ) -> tuple[list[GeneratedClip], SpeechWeights]:
         clips: list[GeneratedClip] = []
         weights: SpeechWeights | None = None
@@ -471,7 +486,9 @@ class EchoBackend:
                     for ref in spec.references:
                         for seed in spec.seeds:
                             leases.current()  # yields between utterances when the broker asks
-                            clip, fingerprint, headers = self._speak(spec, pi, ref.ref_id, seed, out_dir)
+                            clip, fingerprint, headers = self._speak(
+                                spec, pi, ref.ref_id, voices[ref.ref_id], seed, out_dir
+                            )
                             if weights is None:
                                 weights = self._pin(fingerprint, headers)
                             elif fingerprint != weights.fingerprint:
@@ -488,11 +505,11 @@ class EchoBackend:
         return clips, weights
 
     def _speak(
-        self, spec: SpeechRunSpec, prompt_index: int, ref_id: str, seed: int, out_dir: Path
+        self, spec: SpeechRunSpec, prompt_index: int, ref_id: str, voice: str, seed: int, out_dir: Path
     ) -> tuple[GeneratedClip, str, dict[str, str]]:
         request = {
             "text": spec.prompts[prompt_index],
-            "voice_clone_id": clone_id(spec.run_id, ref_id),
+            "voice_clone_id": voice,
             "language": spec.language,
             "seed": seed,
         }
@@ -553,6 +570,7 @@ class EchoBackend:
 
 
 __all__ = [
+    "ECHO_ENGINE_NAMES",
     "ENV_ECHO_ADMIN_TOKEN",
     "ENV_ECHO_IMAGE",
     "ENV_ECHO_URL",

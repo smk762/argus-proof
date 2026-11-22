@@ -102,7 +102,8 @@ class FakeEcho:
             if cid in self.clones:
                 return httpx.Response(409, json={"error": "exists"})
             self.clones[cid] = {"bytes": len(body)}
-            return httpx.Response(200, json={"companion_id": cid})
+            # echo 0.2.0 answers with the storage key, which is what /synthesise takes (not the bare companion_id)
+            return httpx.Response(200, json={"voice_clone_id": f"voice_clones/{cid}/prompt.pt", "companion_id": cid})
         if path.startswith("/clones/") and request.method == "DELETE":
             cid = path.removeprefix("/clones/")
             if cid not in self.clones:
@@ -124,7 +125,7 @@ class FakeEcho:
         }
         return {
             "status": "ok",
-            "engine": self.engine,
+            "engine": {"xtts": "xtts-v2", "qwen": "qwen-tts"}[self.engine],  # what echo's servers report
             "model": "xtts_v2" if self.engine == "xtts" else "1.7b",
             "device": "cuda:0",
             "capabilities": ["tts"],
@@ -133,8 +134,9 @@ class FakeEcho:
         }
 
     def speak(self, req: dict) -> httpx.Response:
-        clone = req.get("voice_clone_id")
-        if clone not in self.clones:
+        voice = str(req.get("voice_clone_id") or "")
+        clone = voice.removeprefix("voice_clones/").removesuffix("/prompt.pt")
+        if not voice.startswith("voice_clones/") or clone not in self.clones:
             return httpx.Response(404, json={"error": f"no clone {clone}"})
         if self.swap_after is not None and self.spoken == self.swap_after:
             self.selected = self.swap_to  # another client's /admin/load, between two of proof's utterances
