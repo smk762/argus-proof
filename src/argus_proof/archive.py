@@ -15,13 +15,16 @@ With ``blank_slate=True`` the loose per-image files that were archived (passing 
 zipped, rejected → recorded) are deleted, leaving only the artifacts above.
 Images still awaiting review (``passed is None``) are left untouched; archiving
 the run again once they are reviewed adds to ``passing_images.zip`` rather than
-replacing it. Every
+replacing it, and reconciles it with the current verdicts: an image whose verdict
+changed from passed to rejected leaves the zip (it is the hand-off to training),
+and one sent back to pending is restored to the run directory for review. Every
 record joins back to its run by ``run_id``, so a reject is traceable to its exact
 config without the pixels.
 """
 
 from __future__ import annotations
 
+import os
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,6 +86,68 @@ def build_reject_archive(report: EvalReport, manifest: RunManifest, *, rater_id:
     return RejectArchive(manifests={manifest.run_id: manifest}, records=records)
 
 
+def _entry_image_id(arcname: str) -> str:
+    """The image_id an arcname (``<image_id><suffix>``) was written for."""
+    suffix = Path(arcname).suffix
+    return arcname[: -len(suffix)] if suffix else arcname
+
+
+def _write_passing_zip(
+    zip_path: Path,
+    passing: list[GeneratedImage],
+    verdict_by_id: dict[str, bool | None],
+    by_id: dict[str, GeneratedImage],
+    run_dir: Path,
+    run_id: str,
+) -> None:
+    """Rebuild *zip_path* to hold exactly the images now passing, then swap it into place atomically.
+
+    Arcname is the unique image_id (+ suffix) so two passing images that share a basename in different dirs don't
+    collide. A run is archived again after more review, by which time blank_slate deleted the images zipped last
+    time, so an existing entry still passing is carried over rather than lost. An entry whose verdict changed is not
+    carried: a rejected one is dropped (the zip is the hand-off to training), and a pending one is restored to the
+    run directory for review. No zip is left behind when nothing passes.
+    """
+    tmp = zip_path.with_name(zip_path.name + ".tmp")
+    written: set[str] = set()
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as out:
+        if zip_path.is_file():
+            with zipfile.ZipFile(zip_path) as old:
+                for info in old.infolist():
+                    image_id = _entry_image_id(info.filename)
+                    verdict = verdict_by_id.get(image_id)
+                    if verdict is True:
+                        out.writestr(info, old.read(info))
+                        written.add(info.filename)
+                    elif verdict is None and image_id in verdict_by_id:
+                        _restore_pending(old, info, by_id.get(image_id), run_dir, run_id)
+                    else:
+                        logger.warning("archive.drop_stale_passing", run_id=run_id, image_id=image_id)
+        for img in passing:
+            src = Path(img.path)
+            arcname = f"{img.image_id}{src.suffix}"
+            if src.is_file() and arcname not in written:
+                out.write(src, arcname=arcname)
+                written.add(arcname)
+    if written:
+        os.replace(tmp, zip_path)
+    else:
+        tmp.unlink()
+        zip_path.unlink(missing_ok=True)
+
+
+def _restore_pending(
+    zf: zipfile.ZipFile, info: zipfile.ZipInfo, img: GeneratedImage | None, run_dir: Path, run_id: str
+) -> None:
+    """Put a zipped image whose verdict went back to pending on disk again, so it can be reviewed."""
+    dest = Path(img.path) if img is not None else run_dir / info.filename
+    if not dest.resolve().is_relative_to(run_dir.resolve()):
+        dest = run_dir / info.filename
+    if not dest.exists():
+        dest.write_bytes(zf.read(info))
+    logger.info("archive.restore_pending", run_id=run_id, image=dest.name)
+
+
 def archive_run(
     run_dir: Path,
     images: list[GeneratedImage],
@@ -115,24 +180,10 @@ def archive_run(
     if missing:
         logger.warning("archive.missing_images", run_id=report.run_id, image_ids=missing)
 
-    # Zip the passing images (that still exist on disk). Arcname is the unique
-    # image_id (+ suffix) so two passing images that share a basename in
-    # different dirs don't collide and silently drop one. A run is archived again
-    # after more review, by which time blank_slate deleted the images zipped last
-    # time: append to an existing zip (skipping what it already holds) rather
-    # than truncate it, or those images would be lost from both zip and disk.
     passing = [img for img in images if verdict_by_id.get(img.image_id) is True]
     zip_path = run_dir / PASSING_ZIP_NAME
-    if passing:
-        mode = "a" if zip_path.is_file() else "w"
-        with zipfile.ZipFile(zip_path, mode, zipfile.ZIP_DEFLATED) as zf:
-            archived = set(zf.namelist())
-            for img in passing:
-                src = Path(img.path)
-                arcname = f"{img.image_id}{src.suffix}"
-                if src.is_file() and arcname not in archived:
-                    zf.write(src, arcname=arcname)
-                    archived.add(arcname)
+    if passing or zip_path.is_file():
+        _write_passing_zip(zip_path, passing, verdict_by_id, by_id, run_dir, report.run_id)
     # Report what is archived, not what this call was handed: a zip from an
     # earlier call still counts, and a passing image whose file was missing does not.
     passing_zip = zip_path if zip_path.is_file() else None

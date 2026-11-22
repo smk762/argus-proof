@@ -60,9 +60,10 @@ class HitlRequest(BaseModel):
     """A batch of HITL updates from one rater against a run's images.
 
     ``rater`` is stamped onto every image the batch touches (for later
-    inter-rater reliability). ``gate`` re-rolls the verdict under other
-    thresholds; omit it to keep the gate the run was scored with
-    (``EvalReport.gate``, or the defaults for a report that predates it).
+    inter-rater reliability). ``gate`` re-judges this batch's images under other
+    thresholds when no human verdict decides them; the run's aggregate and verdict
+    stay under the gate the run was scored with (``EvalReport.gate``, or the
+    defaults for a report that predates it), which is also the default for the batch.
     """
 
     rater: str | None = None
@@ -118,11 +119,13 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
     pass-rate and pending/passed status reflect the review. Untouched images (not
     in the batch) are carried through unchanged.
 
-    A ``request.gate`` applies to this batch only and is not saved as the report's
-    gate: the untouched images were judged under the report's own gate, so
-    recording the request's would claim a gate most rows were never judged with.
+    A ``request.gate`` applies to this batch's images only (their auto fallback)
+    and is neither saved as the report's gate nor used for the run's aggregate and
+    verdict: the untouched images were judged under the report's own gate, and the
+    stored verdict must be the one re-summarising under the stored gate gives.
     """
-    gate = request.gate or report.gate or GateConfig()
+    stored_gate = report.gate or GateConfig()  # the default a pre-1.7 report was scored with
+    gate = request.gate or stored_gate
     by_id = {u.image_id: u for u in request.updates}
     rows = list(report.images)
     for i, row in enumerate(rows):
@@ -146,11 +149,8 @@ def apply_hitl(report: EvalReport, request: HitlRequest) -> EvalReport:
             update["refinement"] = None
         rows[i] = row.model_copy(update=update)
     aggregate, verdict = summarise(
-        rows, gate=gate, diversity=report.aggregate.diversity, n_images=report.aggregate.n_images
+        rows, gate=stored_gate, diversity=report.aggregate.diversity, n_images=report.aggregate.n_images
     )
-    # A batch's own gate is not persisted (see above); without one, ``gate`` is the
-    # report's gate, or the default a pre-1.7 report was scored with.
-    stored_gate = report.gate if request.gate is not None else gate
     return report.model_copy(update={"images": rows, "aggregate": aggregate, "verdict": verdict, "gate": stored_gate})
 
 

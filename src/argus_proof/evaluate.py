@@ -549,14 +549,18 @@ def _score_leased(
         if needs_gpu
         else contextlib.nullcontext()
     )
+    # Only acquiring the lease is translated: an error from the work itself (a scorer's own broker call included)
+    # propagates as raised, never read as "GPU unavailable".
+    stack = contextlib.ExitStack()
     try:
-        with lease:
-            try:
-                return work()
-            finally:
-                release_models(scorers)  # inside the lease: the GPU goes back clean
+        stack.enter_context(lease)
     except gpu.LEASE_ERRORS as exc:
         raise GpuUnavailable(gpu.lease_failure(exc)) from exc
+    with stack:
+        try:
+            return work()
+        finally:
+            release_models(scorers)  # inside the lease: the GPU goes back clean
 
 
 # ---------------------------------------------------------------------------

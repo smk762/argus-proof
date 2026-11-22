@@ -196,3 +196,18 @@ def test_insightface_embedder_honours_exif_orientation(tmp_path: Path, monkeypat
     monkeypatch.setattr(embedder, "_load", lambda: App())
     assert embedder.embed(path) is None
     assert shapes == [(40, 20, 3)]  # upright: stored 40x20, displayed 20 wide x 40 tall
+
+
+def test_insightface_without_onnxruntime_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    # _load() imports onnxruntime, which the insightface package doesn't depend on: availability must check it too
+    from argus_proof.scoring.scorers import identity
+
+    checked: list[tuple[str, ...]] = []
+
+    def fake(*names: str) -> bool:
+        checked.append(names)
+        return "onnxruntime" not in names
+
+    monkeypatch.setattr(identity, "module_available", fake)
+    assert identity.InsightFaceEmbedder().is_available() is False
+    assert "onnxruntime" in checked[0]

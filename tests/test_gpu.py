@@ -224,6 +224,29 @@ def test_a_run_split_across_comfyui_versions_records_both(models: Path, tmp_path
     assert result.manifest.engine_version == "0.9.0 + 0.9.9"  # not just the last host's
 
 
+def test_a_host_is_asked_its_version_once_per_run(models: Path, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    class Flaky(FakeTransport):
+        """Answers /system_stats once, then fails (as a host busy loading a checkpoint might)."""
+
+        stats_calls = 0
+
+        def get_json(self, path: str) -> dict:
+            if path == "/system_stats":
+                self.stats_calls += 1
+                if self.stats_calls > 1:
+                    raise BackendError("/system_stats timed out")
+            return super().get_json(path)
+
+    a = Flaky(make_png(), version="0.9.0")
+    b = FakeTransport(make_png(), version="0.9.9")
+    backend = comfyui(models, FakeTransport(make_png()), Recording())
+    hosts = iter([a, b, a])
+    monkeypatch.setattr(backend, "_transport_for", lambda base_url: next(hosts))
+    result = backend.generate(make_spec([1, 2, 3]), tmp_path)
+    assert result.manifest.engine_version == "0.9.0 + 0.9.9"  # no spurious "unknown" for a's second turn
+    assert a.stats_calls == 1
+
+
 # --- scoring -------------------------------------------------------------------------------------------------
 
 
@@ -357,6 +380,31 @@ def test_a_failed_scoring_pass_frees_the_models_and_reports_the_lease_failed(
         evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest), gpu_coordinator=coordinator)
     assert scorer.unloaded_under_lease == [True]
     assert coordinator.exits == [RuntimeError]  # the broker sees a failed lease, not ok
+
+
+def test_an_error_inside_the_scoring_work_is_not_read_as_a_lease_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from argus_cortex.gpu_broker import BrokerError
+    from test_evaluate import _generated_run
+
+    import argus_proof.evaluate as evaluate
+
+    coordinator = Recording()
+    scorer = GpuScorer(coordinator)
+
+    def boom(image_path: Path, ctx) -> float:  # noqa: ANN001
+        raise BrokerError("a scorer's own service call failed")  # a LEASE_ERRORS type, but not from the lease
+
+    scorer.score = boom  # type: ignore[method-assign]
+    monkeypatch.setattr(evaluate, "default_scorers", lambda: [scorer])
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    with pytest.raises(BrokerError, match="own service call") as info:
+        evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest), gpu_coordinator=coordinator)
+    assert not isinstance(info.value, evaluate.GpuUnavailable)
+    assert scorer.unloaded_under_lease == [True]
+    assert coordinator.exits == [BrokerError]
 
 
 def test_run_stream_scores_under_a_batch_lease(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

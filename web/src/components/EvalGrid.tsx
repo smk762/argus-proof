@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
+import { gridCols, refLines } from "@/lib/grid";
 import { fmt, type Metric, type Passed, VERDICT, verdictKey } from "@/lib/tape";
 
 import { VerdictBadge } from "./ui";
@@ -43,8 +44,8 @@ const METRIC_ROWS: { key: Metric; label: string }[] = [
 ];
 
 // Fixed columns on a phone (the box scrolls); shared-out columns from sm up. Never `1fr` under min-w-max: it would
-// resolve to the images' intrinsic 512 px.
-const COLS = "grid-cols-[5.25rem_repeat(8,5.25rem)] sm:grid-cols-[6.5rem_repeat(8,minmax(0,1fr))]";
+// resolve to the images' intrinsic 512 px. The column count is the tape's prompt count, set as --cols on the grid.
+const COLS = "grid-cols-[5.25rem_repeat(var(--cols),5.25rem)] sm:grid-cols-[6.5rem_repeat(var(--cols),minmax(0,1fr))]";
 const TILE_BTN =
   "group relative block w-full overflow-hidden rounded-md border border-base-600/60 bg-base-900 focus-visible:outline-offset-1 hover:border-interactive";
 
@@ -110,7 +111,7 @@ export function EvalGrid({ prompts, rows, refs, seeds }: { prompts: string[]; ro
       </div>
 
       <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0" tabIndex={0} aria-label="Evaluation grid, scrolls sideways">
-        <div className={`grid min-w-max gap-1.5 sm:min-w-0 ${COLS}`}>
+        <div className={`grid min-w-max gap-1.5 sm:min-w-0 ${COLS}`} style={{ "--cols": gridCols(prompts.length) } as React.CSSProperties}>
           <div className="sticky left-0 z-10 bg-base-900" />
           {prompts.map((p, i) => (
             <div key={i} className="min-w-0 px-0.5 pb-1 text-caption leading-tight text-text-muted" title={p}>
@@ -118,11 +119,19 @@ export function EvalGrid({ prompts, rows, refs, seeds }: { prompts: string[]; ro
             </div>
           ))}
 
-          <RowLabel label="Held-out refs" note="never trained on" />
-          {refs.map((r, i) => (
-            <button key={r.id} type="button" className={TILE_BTN} onClick={() => setOpen({ kind: "ref", index: i })} aria-label={`Held-out reference ${i + 1}`}>
-              <img src={r.tile} alt="" width={r.w} height={r.h} loading="lazy" decoding="async" className="aspect-square h-auto w-full object-cover" />
-            </button>
+          {refLines(refs, gridCols(prompts.length)).map((line, li) => (
+            <Fragment key={`refs-${li}`}>
+              {li === 0 ? <RowLabel label="Held-out refs" note="never trained on" /> : <div className="sticky left-0 z-10 bg-base-900" />}
+              {line.items.map(({ ref: r, index: i }) => (
+                <button key={r.id} type="button" className={TILE_BTN} onClick={() => setOpen({ kind: "ref", index: i })} aria-label={`Held-out reference ${i + 1}`}>
+                  <img src={r.tile} alt="" width={r.w} height={r.h} loading="lazy" decoding="async" className="aspect-square h-auto w-full object-cover" />
+                </button>
+              ))}
+              {/* pad a short line so the variant rows below start in the label column */}
+              {Array.from({ length: line.pad }, (_, k) => (
+                <div key={`pad-${k}`} aria-hidden="true" />
+              ))}
+            </Fragment>
           ))}
 
           {rows.map((row, ri) => (
@@ -206,10 +215,10 @@ function LightboxBody({
           <img src={r.full} alt={`Held-out reference ${open.index + 1}`} width={r.w * 2} height={r.h * 2} className="h-auto max-h-[78dvh] w-full bg-base-900 object-contain" />
           <div className="space-y-3 p-4 text-small text-text-secondary">
             <p>
-              One of the eight held-out references. None was trained on: they share no prompt with the training set, and the closest train/ref pair is 16 of 64
+              One of the {refs.length} held-out references. None was trained on: they share no prompt with the training set, and the closest train/ref pair is 16 of 64
               bits apart by perceptual hash.
             </p>
-            <p>Every generated image&apos;s identity score is its ArcFace similarity to these eight.</p>
+            <p>Every generated image&apos;s identity score is its ArcFace similarity to these {refs.length}.</p>
             <div className="flex gap-2">
               <button type="button" className={navBtn} onClick={() => onMove(-1, 0)}>
                 ← Prev

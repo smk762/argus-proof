@@ -21,6 +21,7 @@ from test_gpu import Recording  # noqa: E402
 
 import argus_proof.evaluate as evaluate  # noqa: E402
 from argus_proof import gpu  # noqa: E402
+from argus_proof.evaluate import HELD_OUT_CHECK  # noqa: E402
 from argus_proof.models import PROOF_VERSION, ModelRef, ScoreResult  # noqa: E402
 from argus_proof.scoring.scorers import IdentityScorer, LikenessScorer  # noqa: E402
 from argus_proof.server import create_app  # noqa: E402
@@ -126,7 +127,7 @@ def test_score_returns_per_image_metrics_means_and_pinned_provenance(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     ScoreResult.model_validate(body)
-    assert body["proof_version"] == PROOF_VERSION == "1.11"
+    assert body["proof_version"] == PROOF_VERSION == "1.12"
     assert body["n_images"] == 2
     [same, other] = body["images"]
     assert (same["index"], same["filename"], same["crop"]) == (0, "teaser-1.png", None)
@@ -172,7 +173,12 @@ def test_identity_and_likeness_together_and_identity_needs_an_identity_run(
         [image] = resp.json()["images"]
         assert (image["metrics"]["identity"] is not None) is identity_measured
         assert image["metrics"]["likeness"] == pytest.approx(1.0)
-        assert [s["metric"] for s in resp.json()["scorers"]] == ["identity", "likeness", "identity"]
+        # one entry per requested scorer, then the held-out reference check's provenance (filed under identity,
+        # whose references it vets): not a second identity scorer
+        scorers = [s["metric"] for s in resp.json()["scorers"] if s["name"] != HELD_OUT_CHECK]
+        assert scorers == ["identity", "likeness"]
+        [check] = [s for s in resp.json()["scorers"] if s["name"] == HELD_OUT_CHECK]
+        assert check["metric"] == "identity"
 
 
 # --------------------------------------------------------------------------

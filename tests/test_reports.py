@@ -216,6 +216,22 @@ def test_a_review_with_its_own_gate_does_not_replace_the_reports_gate() -> None:
     assert updated.images[0].passed is None  # but the batch itself used it
 
 
+def test_a_batch_gate_does_not_re_roll_the_runs_verdict() -> None:
+    # 1 of 2 groups passes: the run passes at run_pass_rate 0.5, fails at 0.9. The stored verdict must be the one
+    # the stored gate gives, or the next batch without a gate silently flips it.
+    original = GateConfig(run_pass_rate=0.5)
+    report = _report(rows=[_row("a", 1, passed=True), _row("b", 2, passed=False)], gate=original).model_copy(
+        update={"gate": original}
+    )
+    strict_batch = apply_hitl(
+        report, HitlRequest(updates=[HitlImageUpdate(image_id="a", hitl_rating=5)], gate=GateConfig(run_pass_rate=0.9))
+    )
+    assert strict_batch.gate == original
+    assert strict_batch.verdict.passed is True
+    expected = summarise(strict_batch.images, gate=original, n_images=2)
+    assert (strict_batch.aggregate, strict_batch.verdict) == expected
+
+
 def test_save_takes_the_run_lock(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     from contextlib import contextmanager
 

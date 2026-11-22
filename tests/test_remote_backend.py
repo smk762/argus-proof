@@ -176,6 +176,18 @@ def test_a_requested_seed_without_an_image_is_refused(tmp_path: Path) -> None:
     with pytest.raises(BackendError, match=r"no image for requested seed\(s\) \[2\]"):
         RemoteBackend("http://svc", transport=transport).generate(_spec([1, 2]), tmp_path / "run")
     assert not (tmp_path / "run" / "manifest.json").exists()
+    assert list((tmp_path / "run").glob("*.png")) == []  # seed 1's image was valid, but the run failed: no orphan
+
+
+def test_a_bad_later_image_leaves_no_earlier_image_on_disk(tmp_path: Path) -> None:
+    images = [{"seed": 1, "content_base64": _png_b64()}, {"seed": 99, "content_base64": _png_b64()}]
+    events = []
+    with pytest.raises(BackendError, match="did not request"):
+        RemoteBackend("http://svc", transport=FakeTransport(images=images)).generate(
+            _spec([1]), tmp_path / "run", events.append
+        )
+    assert list((tmp_path / "run").glob("*.png")) == []
+    assert [e.type for e in events] == ["start", "error"]  # no "image" event for a file that was never kept
 
 
 def test_disambiguated_image_ids_never_collide(tmp_path: Path) -> None:

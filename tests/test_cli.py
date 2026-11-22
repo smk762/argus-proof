@@ -619,7 +619,10 @@ def test_report_digest_has_a_pose_line(tmp_path: Path) -> None:
 def test_recommend_routes_a_pose_collapse_when_asked(tmp_path: Path) -> None:
     path = tmp_path / "eval_report.json"
     _pose_report(path)
-    assert "pose collapse" not in runner.invoke(app, ["recommend", str(path)]).output  # off by default
+    default = runner.invoke(app, ["recommend", str(path)])
+    assert default.exit_code == 0, default.output
+    assert default.output.strip()  # a real recommendation, so the absence below is not just an empty or failed run
+    assert "pose collapse" not in default.output  # off by default
     result = runner.invoke(app, ["recommend", str(path), "--min-pose-diversity", "0.3"])
     assert result.exit_code == 0, result.output
     assert "[grid] pose collapse (largest cluster around run-1-4)" in result.output

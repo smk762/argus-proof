@@ -49,10 +49,11 @@ def _report(run_id: str) -> dict:
 
 
 def test_a_retried_run_maps_by_prompt_text_not_run_id() -> None:
-    rid = "synth-s00000960-retry-p007-l00-w00-p000"
+    # the run ids name a different prompt index (p000, p002) than the manifests' text: the text must win
+    rid = "synth-s00000960-retry-p000-l00-w00-p000"
     variant, run = demo_tape.run_entry(_manifest(rid, 7), _report(rid), PROMPTS)
     assert (variant, run["prompt"]) == ("960", 7)
-    rid = "baseline-rest-p004-l00-w00-p000"
+    rid = "baseline-rest-p002-l00-w00-p000"
     variant, run = demo_tape.run_entry(_manifest(rid, 4, lora=False), _report(rid), PROMPTS)
     assert (variant, run["prompt"], run["lora"]) == ("baseline", 4, None)
 
@@ -84,6 +85,100 @@ def test_a_leaked_path_fails_the_build() -> None:
     assert demo_tape.leaks("/" + "home/someone/x")
     assert demo_tape.leaks(".".join(["192", "168", "1", "20"]))
     assert not demo_tape.leaks("sd_xl_base_1.0.safetensors")
+
+
+def test_summarise_without_any_diversity_or_runs_reads_none() -> None:
+    rid = "synth-s00000960-l00-w00-p000"
+    _, run = demo_tape.run_entry(_manifest(rid, 0), _report(rid), PROMPTS)
+    run["diversity"] = None
+    assert demo_tape.summarise([run])["diversity"] is None
+    empty = demo_tape.summarise([])
+    assert (empty["pass_rate"], empty["diversity"], empty["n_images"]) == (None, None, 0)
+
+
+def _recording_dir(tmp_path: Path, manifests: list[dict], reports: list[dict]) -> Path:
+    for m in manifests:
+        run_dir = tmp_path / "eval" / "runs" / m["run_id"]
+        run_dir.mkdir(parents=True)
+        (run_dir / "manifest.json").write_text(json.dumps(m))
+    (tmp_path / "eval" / "reports").mkdir(parents=True, exist_ok=True)
+    for r in reports:
+        (tmp_path / "eval" / "reports" / f"{r['run_id']}.json").write_text(json.dumps(r))
+    return tmp_path
+
+
+def _recorded(run_id: str, seeds: list[int], scorer: str = "insightface") -> tuple[dict, dict]:
+    manifest = _manifest(run_id, 0) | {
+        "seeds": seeds,
+        "sampling": {"sampler": "euler", "scheduler": "normal", "steps": 30, "cfg": 6, "width": 1024, "height": 1024},
+        "base_checkpoint": {"name": "sd_xl_base_1.0.safetensors", "sha256": "cd" * 32},
+        "proof_version": "1.0",
+        "engine": "comfyui",
+        "engine_version": "0.3",
+    }
+    report = _report(run_id) | {"scorers": [{"metric": "identity", "name": scorer, "model": None}]}
+    return manifest, report
+
+
+def test_recording_with_no_runs_or_no_reports_is_a_tape_error(tmp_path: Path) -> None:
+    with pytest.raises(demo_tape.TapeError, match="no run manifest"):
+        demo_tape.recording(_recording_dir(tmp_path / "a", [], []))
+    m, _ = _recorded("synth-s00000320-l00-w00-p000", [1, 2, 3])
+    with pytest.raises(demo_tape.TapeError, match="no report"):
+        demo_tape.recording(_recording_dir(tmp_path / "b", [m], []))
+
+
+def test_recording_checks_seeds_and_scorers_across_runs(tmp_path: Path) -> None:
+    a = _recorded("synth-s00000320-l00-w00-p000", [1, 2, 3])
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 4])
+    with pytest.raises(demo_tape.TapeError, match="used seeds"):
+        demo_tape.recording(_recording_dir(tmp_path / "seeds", [a[0], b[0]], [a[1], b[1]]))
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 3], scorer="arcface")
+    with pytest.raises(demo_tape.TapeError, match="scored differently"):
+        demo_tape.recording(_recording_dir(tmp_path / "scorers", [a[0], b[0]], [a[1], b[1]]))
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 3])
+    rec = demo_tape.recording(_recording_dir(tmp_path / "ok", [a[0], b[0]], [a[1], b[1]]))
+    assert rec["seeds"] == [1, 2, 3] and rec["scorers"][0]["name"] == "insightface"
+
+
+def test_webp_applies_exif_orientation(tmp_path: Path) -> None:
+    from PIL import Image
+
+    src = tmp_path / "portrait.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = 6  # stored landscape, displayed rotated 90 degrees: a portrait
+    Image.new("RGB", (40, 20), (200, 10, 10)).save(src, exif=exif)
+    dims = demo_tape.webp(src, tmp_path / "out.webp", 512, 80)
+    assert (dims["w"], dims["h"]) == (20, 40)
+    with Image.open(tmp_path / "out.webp") as out:
+        assert out.size == (20, 40) and "exif" not in out.info
+
+
+def test_webp_composites_transparency_onto_white(tmp_path: Path) -> None:
+    from PIL import Image
+
+    src = tmp_path / "cutout.png"
+    Image.new("RGBA", (16, 16), (0, 0, 0, 0)).save(src)  # fully transparent black
+    demo_tape.webp(src, tmp_path / "out.webp", 512, 100)
+    with Image.open(tmp_path / "out.webp") as out:
+        assert out.mode == "RGB"
+        assert all(c > 240 for c in out.convert("RGB").getpixel((8, 8)))
+
+
+def test_a_failed_build_keeps_the_published_tape(tmp_path: Path) -> None:
+    root = tmp_path / "rec"
+    (root / "eval").mkdir(parents=True)
+    (root / "eval" / "prompts8.json").write_text(json.dumps({str(i): t for t, i in PROMPTS.items()}))
+    rid = "synth-s00000320-l00-w00-p000"
+    m, r = _recorded(rid, [1])
+    _recording_dir(root, [m], [r])  # no run image on disk: the build fails converting it
+    out = tmp_path / "tape"
+    out.mkdir()
+    (out / "tape.json").write_text("{}")
+    with pytest.raises(FileNotFoundError):
+        demo_tape.main([str(root), "--out", str(out)])
+    assert (out / "tape.json").read_text() == "{}"
+    assert not (tmp_path / "tape.tmp").exists()
 
 
 # ── the committed tape ──

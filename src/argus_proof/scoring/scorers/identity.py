@@ -146,7 +146,7 @@ class InsightFaceEmbedder:
         self._app = None
 
     def is_available(self) -> bool:
-        return module_available("insightface", "PIL", "numpy")
+        return module_available("insightface", "onnxruntime", "PIL", "numpy")  # insightface doesn't pull in onnxruntime
 
     def unload(self) -> None:
         self._app = None

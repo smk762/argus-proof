@@ -325,7 +325,7 @@
           "default": null
         },
         "proof_version": {
-          "default": "1.11",
+          "default": "1.12",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1046,7 +1046,7 @@
       "type": "object"
     },
     "PoseComparison": {
-      "description": "The run's poses against its training set's (argus-puppet ``POST /compare``).\n\n``close_share`` is the share of eligible outputs within ``threshold`` of a\ntraining frame; ``baseline_close_share`` is the same statistic inside the\ntraining set (leave-one-out), and ``close_excess`` the difference: the\nrun-level copying signal. A pose-conditioned generator shows a high excess by\ndesign, so it is evidence for review, never a reject. ``training_diversity``\nand ``training_largest_cluster_share`` describe the training set itself, so a\ncollapse onto a pose the training set is dominated by reads as a dataset\nproblem. Every statistic puppet could not define is ``None``.",
+      "description": "The run's poses against its training set's (argus-puppet ``POST /compare``).\n\n``close_share`` is the share of eligible outputs within ``threshold`` of a\ntraining frame; ``baseline_close_share`` is the same statistic inside the\ntraining set (leave-one-out), and ``close_excess`` the signed difference\n(in [-1, 1]; negative when outputs are close to training frames less often\nthan the training frames are to each other): the run-level copying signal. A pose-conditioned generator shows a high excess by\ndesign, so it is evidence for review, never a reject. ``training_diversity``\nand ``training_largest_cluster_share`` describe the training set itself, so a\ncollapse onto a pose the training set is dominated by reads as a dataset\nproblem. Every statistic puppet could not define is ``None``.",
       "properties": {
         "baseline_close_share": {
           "anyOf": [
@@ -1076,7 +1076,7 @@
           "anyOf": [
             {
               "maximum": 1.0,
-              "minimum": 0.0,
+              "minimum": -1.0,
               "type": "number"
             },
             {
@@ -1692,7 +1692,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.11",
+          "default": "1.12",
           "title": "Proof Version",
           "type": "string"
         },
@@ -1935,7 +1935,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.11",
+          "default": "1.12",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2302,7 +2302,7 @@
           "type": "integer"
         },
         "proof_version": {
-          "default": "1.11",
+          "default": "1.12",
           "title": "Proof Version",
           "type": "string"
         },
