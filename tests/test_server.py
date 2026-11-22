@@ -733,3 +733,74 @@ def test_an_unexpected_worker_failure_ends_the_stream_with_an_error_frame(
     )
     assert frames[-1]["type"] == "error"
     assert "CUDA out of memory" in frames[-1]["message"]
+
+
+# --------------------------------------------------------------------------
+# per-run scoring choices on /run/stream (#110, #106)
+# --------------------------------------------------------------------------
+
+
+def test_run_stream_passes_its_scoring_choices_and_training_run_id(suite_client, monkeypatch) -> None:  # noqa: ANN001
+    import argus_proof.evaluate as evaluate
+
+    _fake_backend(monkeypatch)
+    seen: dict = {}
+    real = evaluate.score_images
+
+    def recording(manifest, images, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        seen.update(kwargs, training_run_id=manifest.training_run_id)
+        return real(manifest, images, **kwargs)
+
+    monkeypatch.setattr(evaluate, "score_images", recording)
+    gate = {"weights": {"likeness": 1.0}, "hard_gates": {"likeness": 0.6}}
+    frames = _stream_frames(
+        suite_client,
+        {
+            "lora": "subject.safetensors",
+            "base_checkpoint": "sdxl.safetensors",
+            "prompt": "a chrome android",
+            "seeds": [1],
+            "training_run_id": "forge-run-7",
+            "scorers": ["likeness", "aesthetic"],
+            "gate": gate,
+            "target_category": "concept",
+        },
+    )
+    assert frames[-1]["type"] == "complete", frames[-1]
+    assert seen["training_run_id"] == "forge-run-7"  # recorded in the run's manifest
+    assert seen["scorers"] == ["likeness", "aesthetic"]
+    assert (seen["gate"].weights["likeness"], seen["gate"].hard_gates["likeness"]) == (1.0, 0.6)
+    assert seen["target_category"] == "concept"
+    report = suite_client.get(f"/report/{frames[-1]['run_id']}").json()
+    assert report["gate"]["hard_gates"] == {"likeness": 0.6}  # the run is judged under its own gate
+
+
+def test_run_stream_defaults_score_everything_under_the_default_gate(suite_client, monkeypatch) -> None:  # noqa: ANN001
+    import argus_proof.evaluate as evaluate
+
+    _fake_backend(monkeypatch)
+    seen: dict = {}
+    real = evaluate.score_images
+    monkeypatch.setattr(evaluate, "score_images", lambda m, i, **kw: seen.update(kw) or real(m, i, **kw))
+    frames = _stream_frames(
+        suite_client,
+        {"lora": "subject.safetensors", "base_checkpoint": "sdxl.safetensors", "prompt": "p", "seeds": [1]},
+    )
+    assert frames[-1]["type"] == "complete"
+    assert (seen["scorers"], seen["gate"], seen["target_category"]) == (None, None, "identity")
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"scorers": ["vibes"]},
+        {"scorers": []},
+        {"scorers": ["likeness", "likeness"]},
+        {"target_category": "vibes"},
+        {"training_run_id": ""},
+        {"gate": {"weights": {"vibes": 1.0}}},
+    ],
+)
+def test_run_stream_refuses_a_bad_scoring_choice(suite_client: TestClient, bad: dict) -> None:
+    payload = {"lora": "l", "base_checkpoint": "c", "prompt": "p", **bad}
+    assert suite_client.post("/run/stream", json=payload).status_code == 422

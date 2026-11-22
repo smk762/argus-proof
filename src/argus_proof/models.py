@@ -848,6 +848,10 @@ class RunStreamFrame(RootModel):
 MAX_SCORE_IMAGES = 16
 
 ReferenceScorerName = Literal["identity", "likeness"]
+# The scorers a run can pick (score_images(scorers=...), /run/stream's RunRequest.scorers): the
+# default per-image set plus run-level pose. Phash dedup and diversity always run: the pass rate
+# counts their groups.
+RunScorerName = Literal["identity", "likeness", "clip_score", "aesthetic", "safety", "pose"]
 
 
 class CropBox(BaseModel):

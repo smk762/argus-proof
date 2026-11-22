@@ -55,9 +55,13 @@ argus-proof run subject.safetensors ./curated_export \
 
 # Score a generated run into a stored EvalReport (identity and likeness need --references,
 # a held-out image dir that must NOT overlap the training set). A default scorer
-# this install can't run is warned about on stderr; --require-scorers makes it exit 2:
+# this install can't run is warned about on stderr; --require-scorers makes it exit 2.
+# --scorers runs only those metrics (phash dedup/diversity always run); --target-category
+# is the run's target profile (ArcFace identity scores only an identity run, so a scene or a
+# helmeted/non-human subject leaves identity empty instead of 0.0):
 argus-proof score runs/proof-l00-w00-p000 --references ./holdout \
-  [--require-scorers identity,likeness,clip_score,aesthetic,safety]
+  [--require-scorers identity,likeness,clip_score,aesthetic,safety] \
+  [--scorers likeness,aesthetic] [--target-category concept]
 
 # Browse stored reports / print one run's digest:
 argus-proof report
@@ -102,6 +106,16 @@ POST /report/{run_id}/refine            second-pass re-rank (rank: null retracts
 POST /purge/{run_id}                    devmode only: delete one run's report + run dir
 POST /purge                             devmode only: delete every report + run dir
 ```
+
+`/run/stream` takes the generation settings plus four optional scoring fields:
+`scorers` (a subset of `identity`, `likeness`, `clip_score`, `aesthetic`, `safety`,
+`pose`; all of them when left out, and phash dedup/diversity always run), `gate`
+(a full `GateConfig` the run is judged under and stored with, e.g.
+`{"hard_gates": {"likeness": 0.6}}` since `likeness` has weight 0 by default),
+`target_category` (default `identity`; ArcFace `identity` scores only an identity
+run), and `training_run_id` (argus-forge's `RunEvent.run_id`, recorded in the run's
+`RunManifest`). An unknown or repeated scorer, an unknown category or an unknown
+gate metric is a `422`.
 
 `/report/{run_id}/manifest` serves the SHA256-pinned setup (checkpoint, VAE,
 LoRAs, sampling, prompt, seeds) so a client can carry a passed run forward, e.g.

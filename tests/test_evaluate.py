@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from fakebackend import FakeBackend, save_png
 
+import argus_proof.evaluate as evaluate
 from argus_proof.backends import BackendError, ComfyUIBackend
 from argus_proof.evaluate import (
     EvaluateError,
@@ -303,3 +304,124 @@ def test_a_decompression_bomb_is_an_unreadable_image(tmp_path: Path, monkeypatch
     path = _photo(tmp_path / "big.png", seed=1)
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)  # 320x240 is now > 2x the limit
     assert _phash_bits(path) is None
+
+
+# --------------------------------------------------------------------------
+# per-run scorer selection and target category (#110, #106)
+# --------------------------------------------------------------------------
+
+
+class _MetricScorer:
+    """A CPU stub for one default metric that records the context it scored under."""
+
+    uses_gpu = False
+
+    def __init__(self, metric: str) -> None:
+        self.metric = metric
+        self.contexts: list = []
+
+    def is_available(self) -> bool:
+        return True
+
+    def score(self, image_path: Path, ctx) -> float:  # noqa: ANN001
+        self.contexts.append(ctx)
+        return 0.5
+
+    def provenance(self):  # noqa: ANN201
+        from argus_proof.models import ScorerProvenance
+
+        return ScorerProvenance(name=self.metric, metric=self.metric)
+
+
+class _PoseStub:
+    def __init__(self) -> None:
+        self.ran = False
+
+    def is_available(self) -> bool:
+        return True
+
+    def score(self, images, **kwargs):  # noqa: ANN001, ANN003, ANN201
+        self.ran = True
+        return None
+
+    def provenance(self):  # noqa: ANN201
+        from argus_proof.models import ScorerProvenance
+
+        return ScorerProvenance(name="pose", metric="pose")
+
+
+def _stub_default_scorers(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, _MetricScorer], _PoseStub]:
+    scorers = {m: _MetricScorer(m) for m in ("identity", "likeness", "clip_score", "aesthetic", "safety")}
+    pose = _PoseStub()
+    monkeypatch.setattr(evaluate, "default_scorers", lambda: list(scorers.values()))
+    monkeypatch.setattr(evaluate, "default_pose_scorer", lambda: pose)
+    return scorers, pose
+
+
+def test_run_scorer_names_are_the_default_scorers_plus_pose() -> None:
+    from typing import get_args
+
+    from argus_proof.models import RunScorerName
+
+    assert list(get_args(RunScorerName)) == [s.metric for s in evaluate.default_scorers()] + ["pose"]
+
+
+def test_score_images_runs_only_the_picked_scorers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scorers, pose = _stub_default_scorers(monkeypatch)
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    report = evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest), scorers=["aesthetic"])
+    assert [s.metric for s in report.scorers if s.metric in scorers] == ["aesthetic"]
+    assert scorers["aesthetic"].contexts and not scorers["clip_score"].contexts
+    assert {img.metrics.aesthetic for img in report.images} == {0.5}
+    assert {img.metrics.clip_score for img in report.images} == {None}  # not picked: not measured, not 0.0
+    assert pose.ran is False and report.pose is None
+
+
+def test_score_images_runs_everything_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scorers, pose = _stub_default_scorers(monkeypatch)
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest))
+    assert all(s.contexts for s in scorers.values())
+    assert pose.ran is True
+
+
+@pytest.mark.parametrize("bad", [["vibes"], []])
+def test_score_images_refuses_an_unknown_or_empty_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad: list[str]
+) -> None:
+    _stub_default_scorers(monkeypatch)
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    with pytest.raises(ValueError, match="scorer"):
+        evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest), scorers=bad)
+
+
+def test_score_images_scores_under_the_target_category(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    scorers, _ = _stub_default_scorers(monkeypatch)
+    run_dir = _generated_run(tmp_path)
+    manifest = evaluate.load_manifest(run_dir)
+    evaluate.score_images(manifest, evaluate.discover_images(run_dir, manifest), target_category="setting")
+    assert {c.profile.target_category for c in scorers["identity"].contexts} == {"setting"}
+
+
+def test_a_non_face_run_leaves_arcface_identity_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # #106: a helmeted or non-human subject whose references do show a face would read 0.0 on
+    # every output. Declaring the run's category leaves identity unmeasured instead.
+    from test_scorers_identity import FakeEmbedder
+
+    from argus_proof.scoring.scorers import IdentityScorer
+
+    run_dir = _generated_run(tmp_path)
+    refs = tmp_path / "refs"
+    refs.mkdir()
+    (refs / "ref.png").write_bytes(b"not decoded: the stub embeds by name")
+    identity = IdentityScorer(embedder=FakeEmbedder({"ref": [1.0, 0.0]}))  # outputs have no face
+    monkeypatch.setattr(evaluate, "default_scorers", lambda: [identity])
+    manifest = evaluate.load_manifest(run_dir)
+    images = evaluate.discover_images(run_dir, manifest)
+    as_identity = evaluate.score_images(manifest, images, references=[refs / "ref.png"])
+    assert {img.metrics.identity for img in as_identity.images} == {0.0}
+    as_concept = evaluate.score_images(manifest, images, references=[refs / "ref.png"], target_category="concept")
+    assert {img.metrics.identity for img in as_concept.images} == {None}

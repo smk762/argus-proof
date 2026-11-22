@@ -14,10 +14,13 @@ import contextlib
 import json
 import os
 import re
+from collections.abc import Collection
 from pathlib import Path
+from typing import get_args
 
 import structlog
 from argus_cortex.gpu import GpuCoordinator
+from argus_cortex.taxonomy import TargetCategory, TargetProfile
 
 from argus_proof import gpu
 from argus_proof.backends import GenBackend, get_backend
@@ -32,6 +35,7 @@ from argus_proof.models import (
     GeneratedImage,
     ProofError,
     RunManifest,
+    RunScorerName,
     ScoredImage,
     ScoreResult,
     ScorerProvenance,
@@ -463,10 +467,19 @@ def score_images(
     *,
     references: list[Path] | None = None,
     gate: GateConfig | None = None,
+    scorers: Collection[str] | None = None,
+    target_category: TargetCategory = "identity",
     gpu_coordinator: GpuCoordinator | None = None,
     priority: gpu.PriorityClass = gpu.SCORE_PRIORITY,
 ) -> EvalReport:
     """Score *images* with the default scorers + phash dedup/diversity.
+
+    *scorers* narrows the run to those metrics (:data:`~argus_proof.models.RunScorerName`:
+    the default per-image set plus ``pose``); ``None`` runs them all, and phash
+    dedup and diversity always run. An unknown name raises :class:`ValueError`.
+    *target_category* is the run's target profile: ArcFace ``identity`` scores
+    only an ``identity`` run, so a non-face subject (a scene, a helmeted or
+    non-human character) can say so and leave ``identity`` ``None`` (#106).
 
     The scoring pass holds one ``score`` GPU lease (:func:`gpu.score_lease`, from
     *gpu_coordinator*, default the ``ARGUS_GPU_*`` environment) at *priority*
@@ -486,18 +499,21 @@ def score_images(
     comparing against the training frames under the same readability rule; *priority*
     goes along as ``X-Argus-Priority``. Puppet being down never fails the run.
     """
+    picked = check_run_scorers(scorers)
     export_dir, unreadable = training_export(manifest)
     held_out: str | None = None
     if references:
         held_out = check_held_out(references, export_dir) if export_dir is not None else unreadable
     deduper, diversity = default_phash_scorers()
-    ctx = ScoreContext(prompt=manifest.prompt, reference_images=list(references or []))
-    scorers = default_scorers()
+    ctx = ScoreContext(
+        prompt=manifest.prompt,
+        profile=TargetProfile(target_category=target_category),
+        reference_images=list(references or []),
+    )
+    live = [s for s in default_scorers() if s.metric in picked]
     report = _score_leased(
-        scorers,
-        lambda: score_run(
-            manifest, images, scorers=scorers, deduper=deduper, diversity=diversity, context=ctx, gate=gate
-        ),
+        live,
+        lambda: score_run(manifest, images, scorers=live, deduper=deduper, diversity=diversity, context=ctx, gate=gate),
         caller=manifest.run_id,
         coordinator=gpu_coordinator,
         priority=priority,
@@ -505,7 +521,7 @@ def score_images(
     if held_out is not None:
         report.scorers.append(ScorerProvenance(name=HELD_OUT_CHECK, metric="identity", model=held_out))
     pose = default_pose_scorer()
-    if pose.is_available():
+    if "pose" in picked and pose.is_available():
         # After the lease: puppet takes its own. Never raises for a puppet failure; the block says what happened.
         report.pose = pose.score(
             images,
@@ -516,6 +532,22 @@ def score_images(
         )
         report.scorers.append(pose.provenance())
     return report
+
+
+def check_run_scorers(scorers: Collection[str] | None) -> set[str]:
+    """The metric names a run scores: every :data:`~argus_proof.models.RunScorerName` for ``None``.
+
+    Raises :class:`ValueError` on a name that isn't one, or an empty selection.
+    """
+    known = get_args(RunScorerName)
+    if scorers is None:
+        return set(known)
+    unknown = sorted(set(scorers) - set(known))
+    if unknown:
+        raise ValueError(f"unknown scorer(s): {', '.join(unknown)} (known: {', '.join(known)})")
+    if not scorers:
+        raise ValueError(f"pick at least one scorer (known: {', '.join(known)})")
+    return set(scorers)
 
 
 def training_export(manifest: RunManifest) -> tuple[Path | None, str | None]:
@@ -618,8 +650,6 @@ def score_files(
     with the models freed before it ends. Nothing is stored. *built* injects the
     scorer objects (tests); *filenames* and *crops* are echoed per image.
     """
-    from argus_cortex.taxonomy import TargetProfile
-
     from argus_proof.scoring.orchestrator import score_metrics
     from argus_proof.scoring.summary import metric_means
 
@@ -663,8 +693,12 @@ def score_run_dir(
     *,
     references: list[Path] | None = None,
     gate: GateConfig | None = None,
+    scorers: Collection[str] | None = None,
+    target_category: TargetCategory = "identity",
 ) -> EvalReport:
-    """Load *run_dir* (manifest + images) and score it into an :class:`EvalReport`."""
+    """Load *run_dir* (manifest + images) and score it into an :class:`EvalReport` (see :func:`score_images`)."""
     manifest = load_manifest(run_dir)
     images = discover_images(run_dir, manifest)
-    return score_images(manifest, images, references=references, gate=gate)
+    return score_images(
+        manifest, images, references=references, gate=gate, scorers=scorers, target_category=target_category
+    )

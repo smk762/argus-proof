@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
+from typing import get_args
 
 import structlog
 
@@ -307,6 +308,18 @@ def score(
         help="Metrics whose scorer must be available, else exit 2 (repeatable or comma-separated, e.g. "
         "identity,likeness,clip_score,aesthetic,safety,pose)",
     ),
+    scorers: list[str] | None = Option(
+        None,
+        "--scorers",
+        help="Score only these metrics (repeatable or comma-separated, same names as --require-scorers); "
+        "phash dedup and diversity always run. Default: all",
+    ),
+    target_category: str = Option(
+        "identity",
+        "--target-category",
+        help="The run's target category: ArcFace identity scores only an identity run, so a non-face subject "
+        "(a scene, a helmeted or non-human character) leaves identity empty",
+    ),
 ) -> None:
     """Score a generated run into an EvalReport: identity, likeness, quality, diversity, safety, pose.
 
@@ -314,15 +327,29 @@ def score(
     isn't configured) leaves its metric empty; that is warned about on stderr, and
     ``--require-scorers`` turns it into a refusal.
     """
+    from argus_cortex.taxonomy import TargetCategory
+
     from argus_proof.evaluate import (
         EvaluateError,
         all_reporting_scorers,
+        check_run_scorers,
         reference_images,
         score_run_dir,
         unavailable_metrics,
     )
-    from argus_proof.models import ProofError
+    from argus_proof.models import ProofError, RunScorerName
     from argus_proof.reports import ReportStore
+
+    categories = get_args(TargetCategory)
+    if target_category not in categories:
+        typer.echo(f"unknown --target-category {target_category!r} (known: {', '.join(categories)})", err=True)
+        raise typer.Exit(2)
+    picked = [m.strip() for item in scorers or [] for m in item.split(",") if m.strip()] or None
+    try:
+        selected = check_run_scorers(picked)
+    except ValueError as exc:
+        typer.echo(f"--scorers: {exc}", err=True)
+        raise typer.Exit(2) from exc
 
     required = [m.strip() for item in require_scorers or [] for m in item.split(",") if m.strip()]
     known = [sc.provenance().metric for sc in all_reporting_scorers()]
@@ -332,7 +359,8 @@ def score(
             f"unknown metric(s) for --require-scorers: {', '.join(unknown)} (known: {', '.join(known)})", err=True
         )
         raise typer.Exit(2)
-    missing = unavailable_metrics()
+    # A scorer the run didn't pick isn't missing; phash dedup/diversity always run, so theirs always counts.
+    missing = [m for m in unavailable_metrics() if m in selected or m not in get_args(RunScorerName)]
     missing_required = [m for m in required if m in missing]
     if missing_required:
         typer.echo(
@@ -351,7 +379,7 @@ def score(
 
     try:
         refs = reference_images(references) if references else []
-        rep = score_run_dir(run_dir, references=refs)
+        rep = score_run_dir(run_dir, references=refs, scorers=picked, target_category=target_category)
     except (EvaluateError, ProofError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
