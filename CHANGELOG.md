@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`PROOF_ECHO_URL`, `PROOF_ECHO_ADMIN_TOKEN`, `PROOF_ECHO_IMAGE`, `PROOF_ECHO_TIMEOUT`). One clone per reference per run,
   deleted afterwards; the run's checkpoint loaded and the previous one restored; each clip a float WAV pinned by
   SHA256; echo's weights fingerprint checked on every clip. GPU kinds `speak-xtts` and `speak-qwen`.
+- Curator speech exports (#118, part 2, `speech.py`): `read_speech_export` reads `speech_manifest.jsonl` (1.x),
+  `held_out_references` builds a run's reference voices from the held-out part, and `check_speakers_disjoint` refuses
+  a reference whose corpus speaker label or speaker cluster is in the training export, or whose clip is a training
+  clip by SHA256.
 - Wire `PROOF_VERSION` 1.14 (additive): `SpeechRunSpec` / `SpeechReferenceSpec` in, `SpeechRunManifest` (`SpeechPrompt`,
   `SpeechReference`, `EchoImage`, `SpeechWeights`, `GeneratedClip`) out.
 
