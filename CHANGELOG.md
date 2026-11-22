@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-22
+
 ### Added
+
+- **Every default scorer pins its loaded weights by SHA256** (#105): identity pins the ArcFace recogniser
+  (`model_file`) and the face detector (the new `ScorerProvenance.extra_files`) and loads only those two models;
+  CLIPScore pins its CLIP checkpoint's weights file; pyiqa pins every weights file it fetched or found cached
+  (CLIP-IQA's RN50, CLIP-IQA+'s prompts). Pins are taken only after a load. Wire `PROOF_VERSION` 1.13 (additive).
+- **Per-run scoring choices on `/run/stream`** (#110): `RunRequest.scorers` (a subset of `identity`, `likeness`,
+  `clip_score`, `aesthetic`, `safety`, `pose`; phash dedup/diversity always run), `gate` (a `GateConfig` the run is
+  judged and stored under), `target_category`, and `training_run_id` (forge's run, recorded in the `RunManifest`).
+  `argus-proof score` gains `--scorers` and `--target-category`.
 
 - **Run-level pose diversity and pose-copying evidence from argus-puppet** (#122, item 3): `PoseScorer` and
   `PuppetClient` (`scoring/scorers/pose.py`) post each output to argus-puppet's `/pose` over HTTP
@@ -28,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A non-face subject (a scene, a helmeted or non-human character) no longer scores ArcFace `identity` 0.0 on every
+  output: a run that declares its `target_category` leaves `identity` `None` (#106). An `identity` run with face
+  references still scores an output with no face 0.0.
 - `PoseComparison.close_excess` is a signed difference: a negative value (outputs closer to training frames less
   often than the frames are to each other, the healthy case) no longer fails to parse.
 - Safety fails loud when a detector crashes or the NudeNet check fails (timeout, 5xx, unreadable image): the image
