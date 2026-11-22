@@ -50,8 +50,8 @@ class ColourEmbedder:
             r, g, b = im.convert("RGB").resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
         return [float(r), float(g), float(b)]
 
-    def model_ref(self) -> ModelRef | None:
-        return ModelRef(name=self.name, sha256="cd" * 32) if self.loaded else None
+    def weight_refs(self) -> list[ModelRef]:
+        return [ModelRef(name=self.name, sha256="cd" * 32)] if self.loaded else []
 
     def unload(self) -> None:
         self.loaded = False
@@ -127,7 +127,7 @@ def test_score_returns_per_image_metrics_means_and_pinned_provenance(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     ScoreResult.model_validate(body)
-    assert body["proof_version"] == PROOF_VERSION == "1.12"
+    assert body["proof_version"] == PROOF_VERSION == "1.13"
     assert body["n_images"] == 2
     [same, other] = body["images"]
     assert (same["index"], same["filename"], same["crop"]) == (0, "teaser-1.png", None)

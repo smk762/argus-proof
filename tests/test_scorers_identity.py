@@ -211,3 +211,80 @@ def test_insightface_without_onnxruntime_is_unavailable(monkeypatch: pytest.Monk
     monkeypatch.setattr(identity, "module_available", fake)
     assert identity.InsightFaceEmbedder().is_available() is False
     assert "onnxruntime" in checked[0]
+
+
+# --------------------------------------------------------------------------
+# provenance: the ONNX files InsightFace ran, pinned by SHA256 (#105)
+# --------------------------------------------------------------------------
+
+
+def _loaded_insightface(tmp_path: Path, tasks: dict[str, str]):  # noqa: ANN202
+    """An InsightFaceEmbedder whose app stands in for a loaded FaceAnalysis: task -> ONNX file."""
+    from types import SimpleNamespace
+
+    from argus_proof.scoring.scorers.identity import InsightFaceEmbedder
+
+    models = {}
+    for task, filename in tasks.items():
+        path = tmp_path / filename
+        path.write_bytes(f"{task} weights".encode())
+        models[task] = SimpleNamespace(taskname=task, model_file=str(path))
+    embedder = InsightFaceEmbedder()
+    embedder._app = SimpleNamespace(models=models)
+    return embedder
+
+
+def test_insightface_pins_nothing_before_it_loads() -> None:
+    from argus_proof.scoring.scorers.identity import InsightFaceEmbedder
+
+    embedder = InsightFaceEmbedder()
+    assert embedder.weight_refs() == []  # a /scorers probe never hashes or downloads weights
+    prov = IdentityScorer(embedder=embedder).provenance()
+    assert (prov.model_file, prov.extra_files) == (None, [])
+
+
+def test_insightface_pins_the_recogniser_and_the_detector_it_loaded(tmp_path: Path) -> None:
+    from argus_proof.hashing import sha256_file
+    from argus_proof.models import ModelRef
+
+    embedder = _loaded_insightface(tmp_path, {"detection": "det_10g.onnx", "recognition": "w600k_r50.onnx"})
+    prov = IdentityScorer(embedder=embedder).provenance()
+    assert (prov.name, prov.metric, prov.model) == ("identity", "identity", "insightface-buffalo_l")
+    # The recogniser produces the embedding, so it is the model_file; the detector is the extra file.
+    assert prov.model_file == ModelRef(
+        name="insightface:buffalo_l/w600k_r50.onnx", sha256=sha256_file(tmp_path / "w600k_r50.onnx")
+    )
+    assert prov.extra_files == [
+        ModelRef(name="insightface:buffalo_l/det_10g.onnx", sha256=sha256_file(tmp_path / "det_10g.onnx"))
+    ]
+
+
+def test_insightface_skips_a_model_whose_file_is_gone(tmp_path: Path) -> None:
+    embedder = _loaded_insightface(tmp_path, {"detection": "det_10g.onnx", "recognition": "w600k_r50.onnx"})
+    (tmp_path / "w600k_r50.onnx").unlink()
+    [ref] = embedder.weight_refs()
+    assert ref.name == "insightface:buffalo_l/det_10g.onnx"
+
+
+def test_insightface_loads_only_the_detector_and_the_recogniser(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    from argus_proof.scoring.scorers.identity import InsightFaceEmbedder
+
+    seen: dict[str, object] = {}
+
+    class FaceAnalysis:
+        def __init__(self, name: str, allowed_modules: list[str] | None = None) -> None:
+            seen["allowed_modules"] = allowed_modules
+
+        def prepare(self, ctx_id: int, det_size: tuple[int, int]) -> None:
+            pass
+
+    app_module = ModuleType("insightface.app")
+    app_module.FaceAnalysis = FaceAnalysis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "insightface", ModuleType("insightface"))
+    monkeypatch.setitem(sys.modules, "insightface.app", app_module)
+    monkeypatch.setitem(sys.modules, "onnxruntime", SimpleNamespace())
+    InsightFaceEmbedder()._load()
+    assert sorted(seen["allowed_modules"]) == ["detection", "recognition"]  # type: ignore[arg-type]

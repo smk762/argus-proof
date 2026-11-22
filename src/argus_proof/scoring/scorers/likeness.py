@@ -32,8 +32,8 @@ from typing import TYPE_CHECKING, Literal
 
 import structlog
 
-from argus_proof.models import ModelRef, ScorerProvenance
-from argus_proof.scoring.scorers._util import module_available
+from argus_proof.models import ModelRef
+from argus_proof.scoring.scorers._util import hf_cached_file, module_available, pin_file
 from argus_proof.scoring.scorers.identity import Embedder, IdentityScorer
 
 if TYPE_CHECKING:
@@ -109,16 +109,7 @@ class Dinov2Embedder:
         A local directory's ``model.safetensors``; for a Hub id, the cached copy
         (no network). ``None`` when it isn't there, e.g. before the first load.
         """
-        local = Path(self.model).expanduser()
-        if local.is_dir():
-            path = local / WEIGHTS_FILE
-            return path if path.is_file() else None
-        if not module_available("huggingface_hub"):
-            return None
-        from huggingface_hub import try_to_load_from_cache
-
-        cached = try_to_load_from_cache(self.model, WEIGHTS_FILE, revision=self.revision)
-        return Path(cached) if isinstance(cached, str) else None
+        return hf_cached_file(self.model, (WEIGHTS_FILE,), self.revision)
 
     def model_ref(self) -> ModelRef | None:
         """The loaded weights pinned by SHA256, or ``None`` if nothing has been loaded.
@@ -132,9 +123,12 @@ class Dinov2Embedder:
         if path is None:
             logger.warning("likeness.weights_unpinned", model=self.model, reason=f"no {WEIGHTS_FILE} found")
             return None
-        from argus_proof.hashing import sha256_cached
+        return pin_file(self.name, path)
 
-        return ModelRef(name=self.name, sha256=sha256_cached(path))
+    def weight_refs(self) -> list[ModelRef]:
+        """:meth:`model_ref` as the list a scorer's provenance reads (empty when unpinned)."""
+        ref = self.model_ref()
+        return [ref] if ref is not None else []
 
 
 class LikenessScorer(IdentityScorer):
@@ -160,15 +154,6 @@ class LikenessScorer(IdentityScorer):
     def applies(self, ctx: ScoreContext) -> bool:
         """Every target category: the reference set (a character, a set) decides what is measured."""
         return True
-
-    def provenance(self) -> ScorerProvenance:
-        model_ref = getattr(self.embedder, "model_ref", None)
-        return ScorerProvenance(
-            name="likeness",
-            metric="likeness",
-            model=self.embedder.name,
-            model_file=model_ref() if callable(model_ref) else None,
-        )
 
 
 __all__ = ["DEFAULT_LIKENESS_MODEL", "Dinov2Embedder", "LikenessScorer"]

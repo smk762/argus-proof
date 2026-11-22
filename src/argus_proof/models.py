@@ -80,11 +80,14 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #      difference of two shares, negative when outputs sit near training frames
 #      less often than the training frames sit near each other. A 1.11 reader
 #      refuses only that negative value.
+# 1.13: additive — ScorerProvenance.extra_files pins the weights files a scorer
+#      loaded beside model_file (InsightFace's face detector, CLIP-IQA+'s learned
+#      prompts). Identity, CLIPScore and CLIP-IQA now fill model_file too (#105).
 # Since 1.7, GateConfig rejects ``weights`` / ``hard_gates`` keys that aren't a
 # MetricScores field. Such a key never matched a score, so its weight or gate
 # silently never applied; a payload that used one now fails validation instead.
 # Treated as a bug fix, not a wire break, so no major bump.
-PROOF_VERSION = "1.12"
+PROOF_VERSION = "1.13"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -556,6 +559,9 @@ class ScorerProvenance(BaseModel):
     # The weights file the scorer loaded, pinned by SHA256 as a RunManifest pins its
     # models. None when the scorer has none it can pin, or never loaded it this run.
     model_file: ModelRef | None = None
+    # Any further weights files it loaded, pinned the same way: InsightFace's face
+    # detector beside its ArcFace recogniser, CLIP-IQA+'s prompts beside its CLIP.
+    extra_files: list[ModelRef] = Field(default_factory=list)
 
 
 class Verdict(BaseModel):
