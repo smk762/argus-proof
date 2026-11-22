@@ -627,3 +627,40 @@ def test_recommend_routes_a_pose_collapse_when_asked(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "[grid] pose collapse (largest cluster around run-1-4)" in result.output
     assert "[pose_diversity 0.20 vs 0.30]" in result.output
+
+
+# --------------------------------------------------------------------------
+# score --scorers / --target-category (#110, #106)
+# --------------------------------------------------------------------------
+
+
+def test_score_passes_its_scorer_selection_and_target_category(tmp_path: Path, fake_backend, monkeypatch) -> None:  # noqa: ANN001
+    import argus_proof.evaluate as evaluate
+
+    _, run_dir = _run_grid(tmp_path)
+    seen: dict = {}
+    real = evaluate.score_run_dir
+    monkeypatch.setattr(evaluate, "score_run_dir", lambda d, **kw: seen.update(kw) or real(d, **kw))
+    monkeypatch.setattr(evaluate, "unavailable_metrics", lambda: ["identity", "aesthetic", "duplicate"])
+
+    result = runner.invoke(
+        app,
+        ["score", str(run_dir), "--no-save", "--scorers", "likeness,aesthetic", "--target-category", "concept"],
+    )
+    assert result.exit_code == 0, result.output
+    assert (seen["scorers"], seen["target_category"]) == (["likeness", "aesthetic"], "concept")
+    # identity wasn't picked, so it isn't missing; phash dedup always runs, so it still is.
+    assert "warning: no scorer available for aesthetic, duplicate" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--scorers", "vibes"], "--scorers: unknown scorer(s): vibes"),
+        (["--target-category", "vibes"], "unknown --target-category 'vibes'"),
+    ],
+)
+def test_score_refuses_a_bad_scorer_or_category(tmp_path: Path, args: list[str], message: str) -> None:
+    result = runner.invoke(app, ["score", str(tmp_path), *args])
+    assert result.exit_code == 2
+    assert message in result.output

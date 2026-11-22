@@ -64,17 +64,20 @@ except ImportError as exc:  # pragma: no cover
 
 from argus_cortex.fs import PathRefused, safe_name
 from argus_cortex.server import WriteGuard, constant_refuse, env_flag
-from pydantic import BaseModel, Field, model_validator
+from argus_cortex.taxonomy import TargetCategory
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from argus_proof import __version__
 from argus_proof.models import (
     MAX_SCORE_IMAGES,
     CompleteFrame,
     EvalReport,
+    GateConfig,
     LoRASpec,
     ProgressEvent,
     ProofError,
     RunManifest,
+    RunScorerName,
     RunSpec,
     SamplingParams,
     ScoreRequest,
@@ -166,6 +169,14 @@ class RunRequest(BaseModel):
     ``vae`` / ``text_encoders`` left out take its model defaults
     (``workflow.model_defaults``): none for SDXL, Flux's ``ae`` VAE and T5 +
     CLIP-L encoders. An explicit ``null`` VAE or ``[]`` keeps them off.
+
+    Scoring: ``scorers`` narrows the pass to those metrics (all of them when
+    left out; phash dedup and diversity always run), ``gate`` replaces the
+    default :class:`GateConfig` (e.g. to weight or hard-gate ``likeness``, which
+    has weight 0 by default), and ``target_category`` is the run's target
+    profile: ArcFace ``identity`` scores only an ``identity`` run. ``training_run_id``
+    links the report to the training run that produced the LoRA (argus-forge's
+    ``RunEvent.run_id``) and is recorded in the run's manifest.
     """
 
     lora: str
@@ -186,6 +197,17 @@ class RunRequest(BaseModel):
     vae: str | None = None
     text_encoders: list[str] | None = None
     run_id: str | None = None
+    training_run_id: str | None = Field(default=None, min_length=1, max_length=200)
+    scorers: list[RunScorerName] | None = Field(default=None, min_length=1)
+    gate: GateConfig | None = None
+    target_category: TargetCategory = "identity"
+
+    @field_validator("scorers")
+    @classmethod
+    def _unique_scorers(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None and len(set(v)) != len(v):
+            raise ValueError(f"scorers repeats a name: {v}")
+        return v
 
     @model_validator(mode="after")
     def _family_defaults(self) -> RunRequest:
@@ -483,6 +505,7 @@ def create_app(
             negative_prompt=request.negative_prompt,
             seeds=request.seeds,
             source_manifest=source_manifest,
+            training_run_id=request.training_run_id,
         )
         run_dir = _runs_root() / run_id
         _claim_run(run_id)  # 409 if this run_id is already generating or being purged
@@ -518,7 +541,15 @@ def create_app(
                     clear_failed(run_dir)
                 emit(ScoringFrame(run_id=run_id, n_images=len(result.images)).model_dump(mode="json"))
                 # Scoring is part of this batch run, so its lease is batch too.
-                report = score_images(result.manifest, result.images, references=references, priority="batch")
+                report = score_images(
+                    result.manifest,
+                    result.images,
+                    references=references,
+                    gate=request.gate,
+                    scorers=request.scorers,
+                    target_category=request.target_category,
+                    priority="batch",
+                )
                 store.save(report)
                 emit(CompleteFrame(run_id=run_id, report=summarise_report(report)).model_dump(mode="json"))
             except (EvaluateError, ProofError, ValueError) as exc:

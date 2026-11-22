@@ -57,6 +57,7 @@ class FakeBackend:
             engine="fake",
             engine_version="0.0",
             source_manifest=spec.source_manifest,
+            training_run_id=spec.training_run_id,
         )
         images: list[GeneratedImage] = []
         for done, seed in enumerate(spec.seeds, start=1):
