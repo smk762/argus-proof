@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The `speak-qwen` lease asks for 5800 MiB (was 5200): Qwen3-TTS 0.6B with Base and CustomVoice loaded peaked at 5692 MiB
+  speaking 27 s cloned utterances on dragon's RTX 4060 (5178 was a short utterance), and keeps that reserved while loaded.
+
 ## [0.8.0] - 2026-11-22
 
 ### Added
