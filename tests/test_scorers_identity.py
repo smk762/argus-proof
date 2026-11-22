@@ -87,6 +87,13 @@ def test_no_face_scores_zero() -> None:
     assert IdentityScorer(embedder=emb).score(Path("gen.png"), identity_ctx(["ref"])) == 0.0
 
 
+def test_references_without_a_face_return_none_not_zero() -> None:
+    # #106: a helmeted or non-human subject's references have no face either, so identity
+    # isn't measurable: None, never the 0.0 a lost face scores.
+    emb = FakeEmbedder({"ref": None, "gen": None})
+    assert IdentityScorer(embedder=emb).score(Path("gen.png"), identity_ctx(["ref"])) is None
+
+
 def test_no_references_returns_none() -> None:
     emb = FakeEmbedder({"gen": [1.0, 0.0]})
     assert IdentityScorer(embedder=emb).score(Path("gen.png"), identity_ctx([])) is None
