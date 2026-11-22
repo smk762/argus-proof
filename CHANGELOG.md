@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the release. Missing before echo 0.3.0 (`None`); a malformed entry is dropped rather than failing the run.
   Wire `PROOF_VERSION` 1.16 (additive).
 
+### Fixed
+
+- The `speak-qwen` lease asks for 5200 MiB (was 4800): Qwen3-TTS speaks clones only with its Base model loaded beside
+  CustomVoice, measured at 5178 MiB peak on the 0.6B models (echo#6). Checked against dragon's echo Qwen 0.3.0: a clone
+  is spoken on `base`, the slot fingerprint recomputes, and the same seed gives byte-identical audio.
+
 ## [0.7.1] - 2026-11-22
 
 ### Fixed
