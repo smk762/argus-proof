@@ -329,8 +329,22 @@ plus a `SpeechRunManifest` (`manifest.json`) into the run dir.
 - **GPU:** one preemptible `batch` lease per run on the engine (`speak-xtts` on `xtts`, `speak-qwen` on `tts`),
   yielding between utterances on the node it started on.
 
-Still to come: the speaker-disjoint reference check against the training export, and `/run/stream` with
-`modality: speech`. Speech scorers are #119.
+**References** come from curator's speech exports (`speech.py`). Each export holds one split part, so the training
+part and the held-out part are two exports. `read_speech_export` reads an export's `speech_manifest.jsonl` (curator's
+`SpeechManifestRow`, `speech_manifest_version` 1.x; other majors are refused), resolving every clip inside the export.
+`held_out_references` turns a held-out export into the run's reference voices (`r0` …, at most 32; a `train` row is
+refused). `check_speakers_disjoint` refuses a reference whose speaker is in the training export:
+
+- its corpus `speaker_label` is a training clip's label;
+- its `speaker_cluster` is a training clip's cluster. Curator numbers clusters per scan (`spk_1` …), so the ids
+  compare only between two parts exported from one scan, curator's documented flow. Exports from different scans
+  can collide and be refused falsely;
+- its audio is a training clip byte for byte (SHA256), under any name.
+
+A different recording of a training speaker that shares no label or cluster isn't caught yet: speaker-embedding
+similarity is the follow-up.
+
+Still to come: `/run/stream` with `modality: speech`. Speech scorers are #119.
 
 ## Scoring
 
