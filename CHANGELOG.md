@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-22
+
 ### Added
 
 - A speech run's manifest records echo's `/health` `image.runtime` (`EchoImage.runtime`: python, torch, CUDA, cuDNN and
