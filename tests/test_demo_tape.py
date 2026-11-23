@@ -157,6 +157,24 @@ def test_recording_refuses_a_different_engine_or_proof_version(tmp_path: Path) -
         demo_tape.recording(_recording_dir(tmp_path / "wire", [a[0], b[0]], [a[1], b[1]]))
 
 
+def test_recording_still_runs_when_the_distribution_is_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The auditor runs tests from PYTHONPATH and does not install the distribution."""
+    import importlib.metadata as metadata
+
+    from argus_proof import __version__
+
+    def missing(name: str) -> str:
+        raise metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(metadata, "version", missing)
+    a = _recorded("synth-s00000320-l00-w00-p000", [1, 2, 3])
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 3])
+    rec = demo_tape.recording(_recording_dir(tmp_path / "ok", [a[0], b[0]], [a[1], b[1]]))
+    assert rec["proof_version"] == __version__
+
+
 def test_recording_reads_the_threshold_and_the_package_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(demo_tape, "package_version", lambda: "9.9.9")
     a = _recorded("synth-s00000320-l00-w00-p000", [1, 2, 3])

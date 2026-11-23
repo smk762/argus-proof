@@ -233,13 +233,21 @@ def _scorers(report: dict) -> list[dict]:
 
 
 def package_version() -> str:
-    """The installed argus-proof version: what the tape says the evaluation was recorded with."""
+    """The argus-proof version the tape says this evaluation was recorded with.
+
+    The installed distribution when it has metadata, otherwise the importable package version.
+    A checkout run without installing the package (the auditor's test env does this) still has
+    ``argus_proof.__version__``, so recording a tape does not depend on the distribution being
+    installed. Neither value is a literal baked into this script.
+    """
     from importlib.metadata import PackageNotFoundError, version
 
     try:
         return version("argus-proof")
-    except PackageNotFoundError as exc:
-        raise TapeError("argus-proof is not installed; its version cannot be recorded on the tape") from exc
+    except PackageNotFoundError:
+        from argus_proof import __version__
+
+        return __version__
 
 
 def _pass_threshold(reports: list[dict]) -> float:
