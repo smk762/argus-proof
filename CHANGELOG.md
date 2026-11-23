@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`ARGUS_GPU_BROKER_URL` and `ARGUS_GPU_BROKER_TOKEN` are all the GPU broker needs** (argus-cortex 0.15,
+  argus-cortex#204, argus-iris#47). The URL alone selects argus-iris; the tenant comes from `gpu-tenant.yaml`, which
+  the image ships at `/app/gpu-tenant.yaml`, where cortex looks for it. `ARGUS_GPU_COORDINATOR` and
+  `ARGUS_GPU_TENANT_MANIFEST` are gone from `.env.example` and the README. An explicit `ARGUS_GPU_COORDINATOR` still
+  wins.
+- **`argus-proof serve` registers with iris at startup** (`argus_cortex.gpu.aregistered` in its lifespan), keeps it
+  registered and signs off at shutdown, so the broker knows proof's kinds before its first lease. It never holds up
+  startup; a read-only server stays off the broker. The CLI still registers with its first lease.
+- argus-cortex is pinned `>=0.15,<0.16`.
+
 ### Fixed
 
 - The `speak-qwen` lease asks for 5800 MiB (was 5200): Qwen3-TTS 0.6B with Base and CustomVoice loaded peaked at 5692 MiB

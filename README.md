@@ -270,7 +270,7 @@ shared manifest + transport helpers and are unit-tested with fakes.
 
 **GPU leases (argus-iris).** The `comfyui` and `diffusers` backends hold a GPU lease
 for each run from the suite's coordinator, set host-wide by `ARGUS_GPU_*` (unset:
-no gating, as before). With `ARGUS_GPU_COORDINATOR=broker`, a run asks
+no gating, as before). With `ARGUS_GPU_BROKER_URL` set, a run asks
 [argus-iris](https://github.com/smk762/argus-iris) for a `batch` lease, on
 `comfyui` (kind `generate`) or `in-process` (kind `generate-local`), declared in
 [`gpu-tenant.yaml`](gpu-tenant.yaml). The work goes to the ComfyUI the grant
@@ -296,11 +296,17 @@ breakdown.
 
 | Variable | Value |
 |---|---|
-| `ARGUS_GPU_COORDINATOR` | `broker` (or `lease`, `none`) |
 | `ARGUS_GPU_BROKER_URL` | `http://<GPU_HOST>:8120` |
 | `ARGUS_GPU_BROKER_TOKEN` | the shared caller token (secret: the host's `.env`, never a repo) |
-| `ARGUS_GPU_TENANT_MANIFEST` | `gpu-tenant.yaml` (the image ships it at `/app/gpu-tenant.yaml`) |
 | `ARGUS_GPU_BROKER_FALLBACK` | `lease` (default) or `none` |
+
+The URL and the token are all it takes. The tenant and its kinds come from
+`gpu-tenant.yaml`, found in the working directory or at `/app/gpu-tenant.yaml`,
+where the image ships it. `argus-proof serve` registers it with iris at startup
+(unless read-only), keeps it registered and signs off at shutdown, so the broker
+knows proof before its first lease; registration never holds up startup. The CLI
+registers with its first lease. `ARGUS_GPU_COORDINATOR=lease` or `none` overrides
+the choice.
 
 ## Speech generation (argus-echo)
 
