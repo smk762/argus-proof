@@ -136,13 +136,48 @@ def _write_passing_zip(
         zip_path.unlink(missing_ok=True)
 
 
+def _contained(path: Path, run_dir: Path) -> Path | None:
+    """*path* when it is a file location inside *run_dir*, else None.
+
+    ``resolve`` follows ``..`` and symlinks, so a zip member or a stored image path
+    that climbs out of the run (or is absolute — ``run_dir / "/tmp/x"`` drops
+    *run_dir*) does not come back as contained. The run directory itself is not a
+    file destination.
+    """
+    try:
+        resolved = path.resolve()
+        run_resolved = run_dir.resolve()
+    except OSError:
+        return None
+    if resolved == run_resolved or not resolved.is_relative_to(run_resolved):
+        return None
+    return path
+
+
+def _restore_dest(img: GeneratedImage | None, info: zipfile.ZipInfo, run_dir: Path) -> Path | None:
+    """Where to put *info* back: the image's own path, or the member's basename under *run_dir*.
+
+    The basename is the fallback when the image has no path here or that path escapes the run.
+    It is checked again: a member named ``..`` or an absolute path still does not get written.
+    """
+    if img is not None:
+        inside = _contained(Path(img.path), run_dir)
+        if inside is not None:
+            return inside
+    name = Path(info.filename).name
+    if not name or name in {".", ".."}:
+        return None
+    return _contained(run_dir / name, run_dir)
+
+
 def _restore_pending(
     zf: zipfile.ZipFile, info: zipfile.ZipInfo, img: GeneratedImage | None, run_dir: Path, run_id: str
 ) -> None:
     """Put a zipped image whose verdict went back to pending on disk again, so it can be reviewed."""
-    dest = Path(img.path) if img is not None else run_dir / info.filename
-    if not dest.resolve().is_relative_to(run_dir.resolve()):
-        dest = run_dir / info.filename
+    dest = _restore_dest(img, info, run_dir)
+    if dest is None:
+        logger.warning("archive.skip_restore_outside_run_dir", run_id=run_id, filename=info.filename)
+        return
     if not dest.exists():
         dest.write_bytes(zf.read(info))
     logger.info("archive.restore_pending", run_id=run_id, image=dest.name)

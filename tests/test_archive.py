@@ -236,6 +236,33 @@ def test_rearchive_drops_an_image_whose_verdict_flipped_to_rejected(tmp_path: Pa
     assert not (tmp_path / PASSING_ZIP_NAME).exists()
 
 
+def test_a_zip_member_that_escapes_the_run_dir_is_not_written_there(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    outside = tmp_path / "escaped.png"
+    absolute = tmp_path / "abs.png"
+    zip_path = run_dir / PASSING_ZIP_NAME
+    payload = b"zip-slip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("../escaped.png", payload)
+        zf.writestr(str(absolute), payload)
+        zf.writestr("..", payload)
+    with zipfile.ZipFile(zip_path) as zf:
+        assert "../escaped.png" in zf.namelist()
+
+    escaped = image_scores(1, None).model_copy(update={"image_id": "../escaped"})
+    absolute_id = image_scores(2, None).model_copy(update={"image_id": str(absolute)[: -len(".png")]})
+    dotdot = image_scores(3, None).model_copy(update={"image_id": ".."})
+    outside_path = GeneratedImage(image_id="../escaped", run_id="run-1", seed=1, path=str(outside), width=1, height=1)
+    archive_run(run_dir, [outside_path], report([escaped, absolute_id, dotdot]), manifest(), blank_slate=False)
+
+    assert not outside.exists()
+    assert not absolute.exists()
+    assert not (run_dir / "..").is_file()
+    assert (run_dir / "escaped.png").read_bytes() == payload
+    assert (run_dir / "abs.png").read_bytes() == payload
+
+
 def test_rearchive_restores_an_image_sent_back_to_pending(tmp_path: Path) -> None:
     images = gen_images(tmp_path, [1, 2])
     archive_run(tmp_path, images, report([image_scores(1, True), image_scores(2, True)]), manifest())

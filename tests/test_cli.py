@@ -516,6 +516,14 @@ def test_require_scorers_refuses_a_run_missing_one(tmp_path: Path, fake_backend,
     assert allowed.exit_code == 0, allowed.output
 
 
+def test_require_scorers_refuses_a_metric_that_scorers_left_out(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app, ["score", str(tmp_path), "--no-save", "--require-scorers", "identity", "--scorers", "likeness"]
+    )
+    assert result.exit_code == 2
+    assert "required scorer(s) not selected: identity" in result.output
+
+
 def test_require_scorers_rejects_an_unknown_metric(tmp_path: Path) -> None:
     result = runner.invoke(app, ["score", str(tmp_path), "--require-scorers", "vibes"])
     assert result.exit_code == 2

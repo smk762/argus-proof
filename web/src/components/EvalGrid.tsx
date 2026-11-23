@@ -36,6 +36,16 @@ export interface GridRef {
 
 type Open = { kind: "eval"; row: number; prompt: number } | { kind: "ref"; index: number };
 
+/** The prompt the lightbox shows: the one the tape recorded, trigger included when the run used one. */
+export function lightboxPrompt(prompts: readonly string[], index: number): string {
+  return prompts[index] ?? "";
+}
+
+/** Index keeps two identical reason strings from colliding as React keys. The lists are static per render. */
+export function reasonKey(index: number, reason: string): string {
+  return `${index}-${reason}`;
+}
+
 const METRIC_ROWS: { key: Metric; label: string }[] = [
   { key: "identity", label: "Identity (ArcFace)" },
   { key: "clip_score", label: "Prompt match (CLIPScore)" },
@@ -54,9 +64,24 @@ const TILE_BTN =
  * Each tile opens a lightbox with the 1024 px image, its four scores and proof's verdict. The grid scrolls sideways
  * inside its own box on a phone, so the page never does.
  */
-export function EvalGrid({ prompts, rows, refs, seeds }: { prompts: string[]; rows: GridRow[]; refs: GridRef[]; seeds: number[] }) {
+export function EvalGrid({
+  prompts,
+  fullPrompts,
+  rows,
+  refs,
+  seeds,
+  initialOpen = null,
+}: {
+  prompts: string[];
+  /** Prompt text the run actually used, one per column. Column headers keep the short `prompts`. */
+  fullPrompts: readonly string[];
+  rows: GridRow[];
+  refs: GridRef[];
+  seeds: number[];
+  initialOpen?: Open | null;
+}) {
   const [seed, setSeed] = useState(0);
-  const [open, setOpen] = useState<Open | null>(null);
+  const [open, setOpen] = useState<Open | null>(initialOpen);
   const dialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -141,7 +166,18 @@ export function EvalGrid({ prompts, rows, refs, seeds }: { prompts: string[]; ro
       </div>
 
       <dialog ref={dialog} className="lightbox" onClose={() => setOpen(null)} onKeyDown={onKey} aria-labelledby="lightbox-title">
-        {open ? <LightboxBody open={open} seed={seed} seeds={seeds} rows={rows} refs={refs} prompts={prompts} onMove={move} onClose={() => setOpen(null)} /> : null}
+        {open ? (
+          <LightboxBody
+            open={open}
+            seed={seed}
+            seeds={seeds}
+            rows={rows}
+            refs={refs}
+            fullPrompts={fullPrompts}
+            onMove={move}
+            onClose={() => setOpen(null)}
+          />
+        ) : null}
       </dialog>
     </div>
   );
@@ -192,7 +228,7 @@ function LightboxBody({
   seeds,
   rows,
   refs,
-  prompts,
+  fullPrompts,
   onMove,
   onClose,
 }: {
@@ -201,7 +237,7 @@ function LightboxBody({
   seeds: number[];
   rows: GridRow[];
   refs: GridRef[];
-  prompts: string[];
+  fullPrompts: readonly string[];
   onMove: (dPrompt: number, dRow: number) => void;
   onClose: () => void;
 }) {
@@ -241,7 +277,7 @@ function LightboxBody({
       <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto md:grid-cols-[minmax(0,1fr)_21rem]">
         <img
           src={im.full}
-          alt={`${row.label}, seed ${seeds[seed]}: ${prompts[open.prompt]}`}
+          alt={`${row.label}, seed ${seeds[seed]}: ${lightboxPrompt(fullPrompts, open.prompt)}`}
           width={1024}
           height={1024}
           className="aspect-square h-auto max-h-[78dvh] w-full bg-base-900 object-contain"
@@ -250,7 +286,7 @@ function LightboxBody({
           <div>
             <p className="text-caption uppercase tracking-wide text-text-muted">Prompt</p>
             <p className="font-mono text-small text-text-primary [overflow-wrap:anywhere]">
-              ohwx woman, {prompts[open.prompt]}
+              {lightboxPrompt(fullPrompts, open.prompt)}
               {row.id === "baseline" ? <span className="block font-sans text-caption text-text-muted">Same prompt, base SDXL, no LoRA.</span> : null}
             </p>
           </div>
@@ -268,8 +304,8 @@ function LightboxBody({
           </dl>
           {im.reasons.length ? (
             <ul className="list-disc pl-5 text-small text-error">
-              {im.reasons.map((r) => (
-                <li key={r}>{r}</li>
+              {im.reasons.map((r, i) => (
+                <li key={reasonKey(i, r)}>{r}</li>
               ))}
             </ul>
           ) : im.passed === null ? (
@@ -277,8 +313,8 @@ function LightboxBody({
           ) : null}
           <div className="rounded-md bg-base-700 p-2 text-caption text-text-secondary">
             <p className="font-semibold text-text-primary">This prompt&apos;s run ({seeds.length} seeds)</p>
-            {run.reasons.map((r) => (
-              <p key={r} className="[overflow-wrap:anywhere]">
+            {run.reasons.map((r, i) => (
+              <p key={reasonKey(i, r)} className="[overflow-wrap:anywhere]">
                 {r}
               </p>
             ))}

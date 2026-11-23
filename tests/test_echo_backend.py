@@ -21,6 +21,7 @@ from argus_proof.backends.echo import (
     EchoClient,
     EchoError,
     clone_id,
+    multipart,
     wav_float32,
     weights_fingerprint,
 )
@@ -299,6 +300,40 @@ def test_a_busy_engine_is_retried_honouring_retry_after(tmp_path: Path) -> None:
     echo.script["/health"] = [httpx.Response(503, json={"error": "busy"}, headers={"Retry-After": "2"})]
     assert echo.client().health()["engine"] == "xtts-v2"
     assert echo.sleeps == [2.0]
+
+
+def test_health_does_not_retry_a_permanent_gpu_error() -> None:
+    echo = FakeEcho()
+    echo.script["/health"] = [httpx.Response(503, json={"error": "gpu_error"})]
+    with pytest.raises(EchoError, match="gpu_error"):
+        echo.client().health()
+    assert echo.sleeps == []
+    assert len(echo.requests) == 1
+
+
+def test_multipart_escapes_quotes_and_rejects_header_injection() -> None:
+    with pytest.raises(EchoError, match="control character"):
+        multipart({}, [("audio", "clip\r\nX-Injected: 1.wav", b"pcm")])
+    body, _ctype = multipart({'a"b': "value"}, [("audio", 'say "hi".wav', b"pcm")])
+    assert b'name="a\\"b"' in body
+    assert b'filename="say \\"hi\\".wav"' in body
+    body, _ctype = multipart({}, [("audio", "voz café.wav", b"pcm")])
+    assert b"filename*=UTF-8''" in body
+    assert "voz caf" in body.decode()
+
+
+def test_a_filesystem_error_marks_the_run_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def unreadable(_path: Path) -> str:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr("argus_proof.backends.echo.sha256_cached", unreadable)
+    events: list = []
+    out = tmp_path / "run"
+    with pytest.raises(BackendError, match="permission denied"):
+        _backend(FakeEcho()).generate(_spec(tmp_path), out, progress=events.append)
+    assert (out / FAILURE_NAME).is_file()
+    assert events[-1].type == "error"
+    assert not (out / MANIFEST_NAME).exists()
 
 
 def test_a_non_oom_cuda_error_is_not_retried() -> None:

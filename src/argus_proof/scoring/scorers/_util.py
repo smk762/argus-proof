@@ -59,8 +59,18 @@ def hf_cached_file(model: str, filenames: Iterable[str], revision: str | None = 
         return None
     from huggingface_hub import try_to_load_from_cache
 
+    try:
+        from huggingface_hub.errors import HFValidationError
+    except ImportError:  # huggingface_hub < 0.25 kept it in utils
+        from huggingface_hub.utils import HFValidationError
+
     for filename in filenames:
-        cached = try_to_load_from_cache(model, filename, revision=revision)
+        try:
+            cached = try_to_load_from_cache(model, filename, revision=revision)
+        except HFValidationError:
+            # A missing directory, a relative path, or anything else that is not a
+            # Hub repo id. Callers treat None as "not on this host".
+            return None
         if isinstance(cached, str):
             return Path(cached)
     return None

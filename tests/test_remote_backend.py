@@ -209,3 +209,31 @@ def test_a_failed_manifest_write_emits_an_error_event(tmp_path: Path, monkeypatc
     with pytest.raises(BackendError, match="disk full"):
         RemoteBackend("http://svc", transport=FakeTransport()).generate(_spec([1]), tmp_path / "run", events.append)
     assert events[-1].type == "error"
+    assert list((tmp_path / "run").glob("*.png")) == []
+    assert not (tmp_path / "run" / "manifest.json").exists()
+
+
+def test_a_failed_image_write_removes_the_images_already_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = Path.write_bytes
+    calls = {"n": 0}
+
+    def flaky(self: Path, data: bytes) -> int:
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            raise OSError("disk full")
+        return real(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", flaky)
+    manifest = _manifest_json()
+    manifest["seeds"] = [1, 2]
+    images = [{"seed": 1, "content_base64": _png_b64()}, {"seed": 2, "content_base64": _png_b64()}]
+    events: list = []
+    with pytest.raises(BackendError, match="disk full"):
+        RemoteBackend("http://svc", transport=FakeTransport(manifest=manifest, images=images)).generate(
+            _spec([1, 2]), tmp_path / "run", events.append
+        )
+    assert list((tmp_path / "run").glob("*.png")) == []
+    assert not (tmp_path / "run" / "manifest.json").exists()
+    assert events[-1].type == "error"

@@ -36,15 +36,16 @@ def models(tmp_path: Path) -> Path:
 class FakeTransport:
     """Records txt2img payloads and returns a base64 PNG per request."""
 
-    def __init__(self, png: bytes, *, data_uri: bool = False) -> None:
+    def __init__(self, png: bytes, *, data_uri: bool = False, n_images: int = 1) -> None:
         b64 = base64.b64encode(png).decode()
         self._encoded = f"data:image/png;base64,{b64}" if data_uri else b64
+        self._n_images = n_images
         self.payloads: list[dict] = []
 
     def post_json(self, path: str, payload: dict) -> dict:
         assert path == "/sdapi/v1/txt2img"
         self.payloads.append(payload)
-        return {"images": [self._encoded]}
+        return {"images": [self._encoded] * self._n_images}
 
     def get_json(self, path: str) -> dict:  # pragma: no cover - unused
         return {}
@@ -157,6 +158,23 @@ def test_repeated_seeds_are_refused_before_generating(models: Path, tmp_path: Pa
     with pytest.raises(BackendError, match="distinct seeds"):
         _backend(models, transport).generate(_spec([3, 3]), tmp_path / "run")
     assert transport.payloads == []
+
+
+def test_a_negative_seed_is_rejected_before_a1111_can_randomise_it(models: Path, tmp_path: Path) -> None:
+    transport = FakeTransport(make_png())
+    events: list = []
+    with pytest.raises(BackendError, match="negative seed"):
+        _backend(models, transport).generate(_spec([-1, 2]), tmp_path / "run", events.append)
+    assert transport.payloads == []
+    assert events[-1].type == "error"
+    assert list((tmp_path / "run").glob("*.png")) == []
+
+
+def test_auxiliary_images_are_not_stored_as_samples(models: Path, tmp_path: Path) -> None:
+    transport = FakeTransport(make_png(), n_images=3)
+    result = _backend(models, transport).generate(_spec([7]), tmp_path / "run")
+    assert [image.image_id for image in result.images] == ["run-1-7"]
+    assert [path.name for path in (tmp_path / "run").glob("*.png")] == ["run-1-7.png"]
 
 
 @pytest.mark.parametrize(

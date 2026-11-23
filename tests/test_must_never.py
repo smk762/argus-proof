@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -81,16 +83,68 @@ def test_argus_puppet_is_reached_over_http_only() -> None:
     assert "argus-puppet" not in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
+def _requirement_name(requirement: str) -> str | None:
+    """The distribution name of a PEP 508 requirement, normalised the way pip compares names (PEP 503)."""
+    token = requirement.split(";", 1)[0].strip()
+    token = re.split(r"\s+", token, maxsplit=1)[0]
+    token = token.split("[", 1)[0]
+    token = re.split(r"[<>=!~]", token, maxsplit=1)[0].strip().strip("'\"")
+    if not token:
+        return None
+    return re.sub(r"[-_.]+", "-", token).lower()
+
+
+def _pyproject_dependency_names(pyproject: Path) -> set[str]:
+    """Dependency names from project tables, dependency-groups and uv sources."""
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    raw: list[str] = []
+    project = data.get("project") or {}
+    raw.extend(spec for spec in project.get("dependencies") or [] if isinstance(spec, str))
+    for group in (project.get("optional-dependencies") or {}).values():
+        raw.extend(spec for spec in group if isinstance(spec, str))
+    for group in (data.get("dependency-groups") or {}).values():
+        if isinstance(group, list):
+            raw.extend(spec for spec in group if isinstance(spec, str))
+    sources = ((data.get("tool") or {}).get("uv") or {}).get("sources") or {}
+    if isinstance(sources, dict):
+        raw.extend(name for name in sources if isinstance(name, str))
+    return {name for spec in raw if (name := _requirement_name(spec))}
+
+
 def test_argus_echo_is_reached_over_http_only() -> None:
     # Proof speaks echo's wire (backends/echo.py): the package pins an argus-cortex proof can't share, and its engines
-    # belong in their own images.
+    # belong in their own images. PEP 503 folds argus_echo, Argus-Echo and argus.echo into the same name.
     importers = [
         str(path.relative_to(ROOT))
         for path in [*SRC.rglob("*.py"), *(ROOT / "tests").rglob("*.py")]
         if "argus_echo" in _imported_roots(ast.parse(path.read_text(encoding="utf-8")))
     ]
     assert importers == []
-    assert "argus-echo" not in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "argus-echo" not in _pyproject_dependency_names(ROOT / "pyproject.toml")
+
+
+def test_echo_dependency_spellings_normalise_to_one_name(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        "\n".join(
+            [
+                "[project]",
+                'dependencies = ["Argus_Echo >= 1"]',
+                "",
+                "[project.optional-dependencies]",
+                'extra = ["argus.echo[cpu]"]',
+                "",
+                "[dependency-groups]",
+                'dev = ["argus-echo"]',
+                "",
+                "[tool.uv.sources]",
+                'argus_echo = { path = "../argus-echo" }',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert _pyproject_dependency_names(pyproject) == {"argus-echo"}
 
 
 def test_the_import_scan_sees_every_form() -> None:

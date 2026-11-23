@@ -232,6 +232,37 @@ def _scorers(report: dict) -> list[dict]:
     return [{"metric": s["metric"], "name": s["name"], "model": s["model"]} for s in report["scorers"]]
 
 
+def package_version() -> str:
+    """The installed argus-proof version: what the tape says the evaluation was recorded with."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("argus-proof")
+    except PackageNotFoundError as exc:
+        raise TapeError("argus-proof is not installed; its version cannot be recorded on the tape") from exc
+
+
+def _pass_threshold(reports: list[dict]) -> float:
+    """The run pass-rate threshold the reports were scored with, one value for the whole tape.
+
+    A report from before the gate was stored has no ``gate``; it was scored with
+    :class:`~argus_proof.models.GateConfig`'s default. Reports that disagree are refused.
+    """
+    from argus_proof.models import GateConfig
+
+    default = GateConfig().run_pass_rate
+    values: list[float] = []
+    for report in reports:
+        gate = report.get("gate")
+        raw = gate.get("run_pass_rate", default) if isinstance(gate, dict) else default
+        if isinstance(raw, bool) or not isinstance(raw, int | float):
+            raise TapeError(f"report {report.get('run_id')}: gate.run_pass_rate {raw!r} is not a number")
+        values.append(float(raw))
+    if any(value != values[0] for value in values):
+        raise TapeError(f"reports were scored at different pass thresholds: {sorted(set(values))}")
+    return values[0]
+
+
 def recording(root: Path) -> dict:
     """What the evaluation ran with, from the first manifest and report (identical across runs; checked)."""
     manifests = [json.loads(p.read_text()) for p in sorted((root / "eval" / "runs").glob("*/manifest.json"))]
@@ -246,12 +277,22 @@ def recording(root: Path) -> dict:
             raise TapeError(f"run {m['run_id']} sampled differently from {first['run_id']}")
         if m["seeds"] != first["seeds"]:
             raise TapeError(f"run {m['run_id']} used seeds {m['seeds']}, {first['run_id']} used {first['seeds']}")
+        if (m.get("engine"), m.get("engine_version")) != (first.get("engine"), first.get("engine_version")):
+            raise TapeError(
+                f"run {m['run_id']} used engine {m.get('engine')} {m.get('engine_version')}, "
+                f"{first['run_id']} used {first.get('engine')} {first.get('engine_version')}"
+            )
+        if m.get("proof_version") != first.get("proof_version"):
+            raise TapeError(
+                f"run {m['run_id']} recorded proof_version {m.get('proof_version')}, "
+                f"{first['run_id']} recorded {first.get('proof_version')}"
+            )
     scorers = _scorers(reports[0])
     for r in reports:
         if _scorers(r) != scorers:
             raise TapeError(f"report {r['run_id']} was scored differently from {reports[0]['run_id']}")
     return {
-        "proof_version": "0.4.0",
+        "proof_version": package_version(),
         "wire_version": first["proof_version"],
         "engine": f"{first['engine']} {first['engine_version']}",
         "base_checkpoint": {
@@ -260,7 +301,7 @@ def recording(root: Path) -> dict:
         },
         "sampling": {k: first["sampling"][k] for k in ("sampler", "scheduler", "steps", "cfg", "width", "height")},
         "seeds": first["seeds"],
-        "pass_threshold": 0.75,
+        "pass_threshold": _pass_threshold(reports),
         "scorers": scorers,
     }
 
