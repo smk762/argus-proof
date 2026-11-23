@@ -38,7 +38,9 @@ def speech(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
     )
     _export(exports / "overlapping", [_row("a9.wav", split="held_out", speaker="ana", cluster="spk_9")])
     fake = FakeEcho()
-    monkeypatch.setattr(echo_mod.EchoClient, "from_env", classmethod(lambda cls, **kw: fake.client(**kw)))
+    monkeypatch.setattr(
+        echo_mod.EchoClient, "from_env", classmethod(lambda cls, engine="xtts", **kw: fake.client(**kw))
+    )
     client = TestClient(
         create_app(reports_dir=str(tmp_path / "reports"), runs_dir=str(tmp_path / "runs"), exports_dir=str(exports))
     )

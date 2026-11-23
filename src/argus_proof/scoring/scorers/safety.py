@@ -34,6 +34,7 @@ from argus_cortex.moderation import (
     NudeNetClient,
     exposed_score,
 )
+from argus_cortex.peers import peer_url
 
 from argus_proof.models import ScorerProvenance
 from argus_proof.scoring.scorers._util import clamp01
@@ -61,6 +62,8 @@ def is_unsafe(safety: float, floor: float = UNSAFE_SAFETY_FLOOR) -> bool:
 
 # The NudeNet server (its origin) and per-image timeout, kept in lock-step with .env.example.
 ENV_NUDENET_URL = "PROOF_NUDENET_URL"
+# The suite's name for it: with PROOF_NUDENET_URL unset, argus-cortex reads the suite-wide ARGUS_NUDENET_URL.
+NUDENET_PEER = "nudenet"
 ENV_NUDENET_TIMEOUT = "PROOF_NUDENET_TIMEOUT"
 DEFAULT_NUDENET_TIMEOUT = 30.0
 
@@ -142,9 +145,11 @@ class NudeNetDetector:
 
     Proof never imports NudeNet (AGPL-3.0): it posts each image to a NudeNet
     server through argus-cortex's :class:`~argus_cortex.moderation.NudeNetClient`.
-    The server is ``PROOF_NUDENET_URL`` (its origin, e.g. ``http://nudenet:8080``)
-    unless *base_url* is given; without one the detector is unavailable and the
-    orchestrator skips it.
+    The server is ``PROOF_NUDENET_URL`` (its origin, e.g. ``http://nudenet:8080``),
+    else the suite-wide ``ARGUS_NUDENET_URL`` (argus-cortex's ``peers``), unless
+    *base_url* is given; without one the detector is unavailable and the
+    orchestrator skips it. A URL that is set but malformed is refused
+    (``PeerRefused``), not skipped.
 
     The unsafe score is the highest score among the suite's exposed-nudity
     classes (:data:`~argus_cortex.moderation.DEFAULT_EXPOSED_LABELS`: exposed
@@ -170,7 +175,14 @@ class NudeNetDetector:
         self._asked = False
 
     def _url(self) -> str:
-        return (self._base_url if self._base_url is not None else os.environ.get(ENV_NUDENET_URL, "")).strip()
+        """The server's URL, or ``""`` when none is configured (the detector is then unavailable).
+
+        A URL that is set but malformed raises :class:`~argus_cortex.peers.PeerRefused`: a typo must not read as
+        "no safety scorer configured".
+        """
+        if self._base_url is not None:
+            return self._base_url.strip()
+        return peer_url(NUDENET_PEER, ENV_NUDENET_URL) or ""
 
     def is_available(self) -> bool:
         if not self._url():

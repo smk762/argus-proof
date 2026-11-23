@@ -2,7 +2,7 @@
 
 Routes:
 
-    GET  /health                          -> {status, service, version, read_only, capabilities}
+    GET  /health                          -> ServiceHealth (status, service, version, read_only, capabilities, ...) + devmode
     GET  /exports                         -> {exports: [...]}  (curator export dirs to evaluate against)
     GET  /models                          -> {checkpoints: [...], loras: [...]}  (engine-loadable names)
     GET  /scorers                         -> {scorers: [{metric, name, available}]}  (installed-scorer probe)
@@ -67,6 +67,7 @@ except ImportError as exc:  # pragma: no cover
 from argus_cortex.fs import PathRefused, safe_name
 from argus_cortex.gpu import aregistered
 from argus_cortex.server import WriteGuard, constant_refuse, env_flag
+from argus_cortex.service import install_health
 from argus_cortex.taxonomy import TargetCategory
 from pydantic import BaseModel, Discriminator, Field, Tag, field_validator, model_validator
 
@@ -74,6 +75,7 @@ from argus_proof import __version__, gpu
 from argus_proof.models import (
     MAX_SCORE_IMAGES,
     MAX_SPEECH_PROMPTS,
+    PROOF_VERSION,
     CompleteFrame,
     EchoEngine,
     EvalReport,
@@ -147,6 +149,9 @@ def _require_safe(value: str, label: str) -> str:
         raise HTTPException(status_code=400, detail=f"invalid {label} {value!r}")
     return value
 
+
+# What ``GET /health`` reports as ``service``: the package name, and the ``argus.service`` compose label.
+SERVICE_NAME = "argus-proof"
 
 # Optional routes a client can't infer from ``version`` alone, advertised on
 # ``GET /health`` so a consumer (argus-studio) can tell an older proof that
@@ -298,8 +303,11 @@ def create_app(
     on and not read-only).
     """
     from argus_proof.backends.base import MANIFEST_NAME, BackendError, clear_failed, mark_failed
-    from argus_proof.evaluate import EvaluateError, load_manifest, runs_root
+    from argus_proof.evaluate import EvaluateError, check_peer_urls, load_manifest, runs_root
 
+    # A malformed service URL (PROOF_NUDENET_URL, ARGUS_PUPPET_URL, ...) stops the server here, naming the variable:
+    # found only at the first run, a typo would read as "that scorer is not configured".
+    check_peer_urls()
     read_only = env_flag(ENV_READ_ONLY) if read_only is None else read_only
     devmode = env_flag(ENV_DEVMODE) if devmode is None else devmode
 
@@ -411,23 +419,24 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no export named {name!r}")
         return path
 
-    @app.get("/health")
-    async def health() -> dict[str, str | bool | list[str]]:
-        """Liveness + capability probe. ``read_only`` tells the UI whether live
-        evaluation is available — a replay/demo host reports ``True`` and the
-        frontend hides the "run evaluation" action (argus-studio#59).
-        ``capabilities`` lists optional routes (see :data:`CAPABILITIES`);
-        ``purge`` appears only when devmode is on and the host isn't read-only."""
-        return {
-            "status": "ok",
-            "service": "argus-proof",
-            "version": __version__,
-            "read_only": read_only,
-            "devmode": devmode,
-            "capabilities": list(CAPABILITIES)
-            + ([] if read_only else list(WRITE_CAPABILITIES))
-            + (list(DEVMODE_CAPABILITIES) if devmode and not read_only else []),
-        }
+    # GET /health: argus-cortex's ServiceHealth (the suite's one health body), with proof's own ``devmode`` beside
+    # it. ``read_only`` tells the UI whether live evaluation is available: a replay/demo host reports ``True`` and
+    # the frontend hides the "run evaluation" action (argus-studio#59). ``capabilities`` lists optional routes (see
+    # CAPABILITIES); ``purge`` appears only when devmode is on and the host isn't read-only. Proof has no loading
+    # phase and probes no dependency here, so ``status`` is always ``ok`` and ``checks`` is empty.
+    install_health(
+        app,
+        service=SERVICE_NAME,
+        version=__version__,
+        wire={"proof_version": PROOF_VERSION},
+        capabilities=[
+            *CAPABILITIES,
+            *([] if read_only else WRITE_CAPABILITIES),
+            *(DEVMODE_CAPABILITIES if devmode and not read_only else []),
+        ],
+        read_only=read_only,
+        extra=lambda: {"devmode": devmode},
+    )
 
     @app.get("/exports")
     async def list_exports() -> dict[str, list[dict]]:
@@ -694,7 +703,7 @@ def create_app(
                 )
             language = found.pop()
         try:
-            client = EchoClient.from_env(priority="batch")
+            client = EchoClient.from_env(engine=request.engine, priority="batch")
         except EchoError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 

@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **One suite-wide name per service URL** (argus-cortex 0.16 `peers`, argus-cortex#209). Each URL is read from
+  proof's own variable, then the suite-wide one: `PROOF_NUDENET_URL` then `ARGUS_NUDENET_URL`, `PROOF_PUPPET_URL` then
+  `ARGUS_PUPPET_URL`, `COMFYUI_BASE_URL` then `ARGUS_COMFYUI_URL` (then loopback), and `PROOF_ECHO_URL` then
+  `ARGUS_XTTS_URL` for an XTTS-v2 run or `ARGUS_TTS_URL` for a Qwen3-TTS run. Proof's own variables still win, and
+  `off` in one turns that service off for proof. With none set, nothing changes: no safety scorer, no pose block.
+- **The suite settings file** (`argus_cortex.settings`): the CLI and server copy `~/.config/argus/suite.env` (or
+  `/etc/argus/suite.env`) into the environment at startup for variables that are unset, so `HF_TOKEN`, the broker URL
+  and token and the `ARGUS_<PEER>_URL` names can be set once per host.
+- `GET /health` is argus-cortex's `ServiceHealth` (argus-cortex#212): it adds `service_version`, `started_at`, `wire`
+  (`proof_version`), `checks`, `build` and `peer` (from `ARGUS_BUILD` and `ARGUS_PEER`). `status`, `service`,
+  `version`, `read_only`, `devmode` and `capabilities` are unchanged. The README has the compose labels
+  (`argus.peer: proof`) for a stack that runs proof.
+
 ### Changed
+
+- **A service URL that is set but malformed is an error, not a skipped scorer.** `PROOF_NUDENET_URL=ftp://...` used to
+  leave the safety scorer off without a word, and a bad `PROOF_PUPPET_URL` left pose off with a warning. A value that
+  is not an absolute `http(s)` URL now raises `PeerRefused`, naming the variable and never the value:
+  `argus-proof serve` refuses to start, and a CLI run stops. An unset URL behaves as before.
+- argus-cortex is pinned `>=0.16,<0.17`. `ARGUS_GPU_BROKER_FALLBACK` is gone from `.env.example` (it still works).
 
 - **`ARGUS_GPU_BROKER_URL` and `ARGUS_GPU_BROKER_TOKEN` are all the GPU broker needs** (argus-cortex 0.15,
   argus-cortex#204, argus-iris#47). The URL alone selects argus-iris; the tenant comes from `gpu-tenant.yaml`, which
@@ -17,7 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`argus-proof serve` registers with iris at startup** (`argus_cortex.gpu.aregistered` in its lifespan), keeps it
   registered and signs off at shutdown, so the broker knows proof's kinds before its first lease. It never holds up
   startup; a read-only server stays off the broker. The CLI still registers with its first lease.
-- argus-cortex is pinned `>=0.15,<0.16`.
 
 ### Fixed
 

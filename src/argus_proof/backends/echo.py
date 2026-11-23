@@ -37,6 +37,7 @@ from typing import Any
 from urllib.parse import quote, unquote
 
 import structlog
+from argus_cortex.peers import PeerRefused, peer_env, peer_url
 
 from argus_proof import gpu
 from argus_proof.backends.base import (
@@ -75,6 +76,10 @@ STREAM_FORMAT = "pcm_f32le"
 STREAM_ROUTE = "/synthesise/stream"
 # What each engine's /health reports as ``engine`` (echo's engines/*/ servers), by the name a SpeechRunSpec uses.
 ECHO_ENGINE_NAMES: dict[str, str] = {"xtts": "xtts-v2", "qwen": "qwen-tts"}
+# The peer name of each engine (argus-cortex's ``peers``; the ``argus.peer`` label its container carries), by the name
+# a SpeechRunSpec uses. They are argus-iris's names for the engines, the targets proof's speak-* leases name
+# (``gpu.SPEAK``, gpu-tenant.yaml): ``xtts``, and ``tts`` for Qwen3-TTS.
+ECHO_PEERS: dict[str, str] = {"xtts": "xtts", "qwen": "tts"}
 
 
 class EchoError(BackendError):
@@ -248,11 +253,21 @@ class EchoClient:
         self._sleep = sleep
 
     @classmethod
-    def from_env(cls, **kwargs: Any) -> EchoClient:
-        """The client for ``$PROOF_ECHO_URL`` (:class:`EchoError` when unset)."""
-        url = os.environ.get(ENV_ECHO_URL, "").strip()
+    def from_env(cls, *, engine: str = "xtts", **kwargs: Any) -> EchoClient:
+        """The client for the echo *engine* a run speaks through (:class:`EchoError` when no URL is set, or a bad one).
+
+        ``$PROOF_ECHO_URL`` wins; without it the engine's suite-wide variable is read through argus-cortex's
+        ``peers`` (``ARGUS_XTTS_URL`` for ``xtts``, ``ARGUS_TTS_URL`` for ``qwen``: see :data:`ECHO_PEERS`).
+        """
+        peer = ECHO_PEERS.get(engine, ECHO_PEERS["xtts"])
+        try:
+            url = peer_url(peer, ENV_ECHO_URL)
+        except PeerRefused as exc:  # set but malformed: a configuration error, never "not configured"
+            raise EchoError(str(exc)) from exc
         if not url:
-            raise EchoError(f"set {ENV_ECHO_URL} to the argus-echo engine to generate speech with")
+            raise EchoError(
+                f"set {ENV_ECHO_URL} (or the suite-wide {peer_env(peer)}) to the argus-echo engine to generate speech with"
+            )
         kwargs.setdefault("admin_token", os.environ.get(ENV_ECHO_ADMIN_TOKEN, "").strip() or None)
         kwargs.setdefault("timeout", _float_env(ENV_ECHO_TIMEOUT, DEFAULT_TIMEOUT))
         try:
@@ -630,6 +645,7 @@ __all__ = [
     "ECHO_ENGINE_NAMES",
     "ENV_ECHO_ADMIN_TOKEN",
     "ENV_ECHO_IMAGE",
+    "ECHO_PEERS",
     "ENV_ECHO_URL",
     "EchoBackend",
     "EchoClient",

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import get_args
 
 import structlog
+from argus_cortex import settings
 
 try:
     import typer
@@ -38,6 +39,9 @@ def _cli(verbose: bool = Option(False, "--verbose", "-v", help="Show info/debug 
     Logs go to stderr at every level: structlog's default factory prints to
     stdout, where a warning would corrupt a ``--json`` payload.
     """
+    # Shared values (HF_TOKEN, a peer's ARGUS_<PEER>_URL) may live in the suite file (argus_cortex.settings); copy
+    # them into the environment where a variable is unset, for the code and libraries that read os.environ.
+    settings.apply()
     level = logging.DEBUG if verbose else logging.WARNING
     structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(level), logger_factory=_stderr_logger)
 
