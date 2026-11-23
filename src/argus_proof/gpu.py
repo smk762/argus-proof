@@ -18,8 +18,10 @@ back it releases the lease and queues for a new one, **pinned to the node the ru
 the model files once, so the rest of the run must not move to a ComfyUI that may hold different ones.
 
 The coordinator comes from the host-wide ``ARGUS_GPU_*`` environment (:func:`argus_cortex.gpu.coordinator_from_env`):
-unset is ``none``, no gating, which is how proof ran before. ``broker`` falls back to ``ARGUS_GPU_BROKER_FALLBACK``
-(``lease`` by default) when iris cannot be reached.
+``ARGUS_GPU_BROKER_URL`` selects the broker, whose tenant comes from ``gpu-tenant.yaml`` (the working directory or
+``/app``); unset is ``none``, no gating, which is how proof ran before. ``broker`` falls back to
+``ARGUS_GPU_BROKER_FALLBACK`` (``lease`` by default) when iris cannot be reached. The server registers the manifest at
+startup (:func:`argus_cortex.gpu.aregistered` in its lifespan).
 
 The figures below are the ones declared in ``gpu-tenant.yaml``; ``tests/test_gpu.py`` keeps the two in step. The
 broker uses its learned p95 per kind when that is larger (a Flux checkpoint is caught after a few leases).

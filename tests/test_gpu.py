@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from argus_cortex.gpu import GpuLease, GpuLeaseRefused, GpuLeaseTimeout, NullCoordinator
+from argus_cortex.gpu_broker import BrokerCoordinator
 from argus_cortex.gpu_wire import load_tenant_manifest
 from pnghelpers import make_png
 from test_backends import FakeTransport, make_spec
@@ -94,7 +95,19 @@ def test_the_manifest_validates_and_matches_the_lease_figures() -> None:
 
 def test_no_coordinator_configured_means_no_gating(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ARGUS_GPU_COORDINATOR", raising=False)
+    monkeypatch.delenv("ARGUS_GPU_BROKER_URL", raising=False)
     assert isinstance(gpu.default_coordinator(), NullCoordinator)
+
+
+def test_a_broker_url_alone_selects_iris_with_the_manifests_tenant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No ARGUS_GPU_COORDINATOR, tenant or manifest path (argus-cortex 0.15): the URL picks the broker and the manifest
+    is found in the working directory, as the image's /app."""
+    monkeypatch.chdir(MANIFEST.parent)
+    monkeypatch.setenv("ARGUS_GPU_BROKER_URL", "http://127.0.0.1:1")
+    coordinator = gpu.default_coordinator()
+    assert isinstance(coordinator, BrokerCoordinator)
+    assert coordinator.tenant == gpu.TENANT
+    assert coordinator.manifest == load_tenant_manifest(MANIFEST)
 
 
 # --- comfyui -------------------------------------------------------------------------------------------------

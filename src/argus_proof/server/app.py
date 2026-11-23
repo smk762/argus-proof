@@ -50,7 +50,7 @@ import shutil
 import tempfile
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -65,11 +65,12 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("Server requires: pip install argus-proof[server]") from exc
 
 from argus_cortex.fs import PathRefused, safe_name
+from argus_cortex.gpu import aregistered
 from argus_cortex.server import WriteGuard, constant_refuse, env_flag
 from argus_cortex.taxonomy import TargetCategory
 from pydantic import BaseModel, Discriminator, Field, Tag, field_validator, model_validator
 
-from argus_proof import __version__
+from argus_proof import __version__, gpu
 from argus_proof.models import (
     MAX_SCORE_IMAGES,
     MAX_SPEECH_PROMPTS,
@@ -302,10 +303,22 @@ def create_app(
     read_only = env_flag(ENV_READ_ONLY) if read_only is None else read_only
     devmode = env_flag(ENV_DEVMODE) if devmode is None else devmode
 
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # With ARGUS_GPU_BROKER_URL set, proof is argus-iris's tenant from startup, not from its first lease, and
+        # signs off at shutdown. Never blocks or fails startup; a no-op for the local coordinators. A read-only server
+        # spends no GPU, so it stays off the broker.
+        if read_only:
+            yield
+            return
+        async with aregistered(gpu.default_coordinator()):
+            yield
+
     app = FastAPI(
         title="Argus Proof",
         description="Post-training LoRA evaluation: generated samples in, scored verdicts out.",
         version=__version__,
+        lifespan=lifespan,
     )
 
     if read_only:
