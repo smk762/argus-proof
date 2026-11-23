@@ -86,7 +86,7 @@ export default function Home() {
           The same eight prompts and seeds through every checkpoint. The held-out references on top are the real target: watch the no-LoRA row miss her, the
           early steps find her, and the late steps start ignoring the prompt.
         </Lead>
-        <EvalGrid prompts={tape.prompts.map(shortPrompt)} rows={rows} refs={refs} seeds={rec.seeds} />
+        <EvalGrid prompts={tape.prompts.map(shortPrompt)} fullPrompts={tape.prompts} rows={rows} refs={refs} seeds={rec.seeds} />
       </section>
 
       {/* 4. Per-checkpoint cards with proof's own verdict text. */}

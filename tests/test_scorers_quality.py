@@ -252,7 +252,9 @@ def _fake_pyiqa(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, ob
         # The arch module binds load_file_from_url at its import, inside create_metric.
         arch = ModuleType("pyiqa.archs.clipiqa_arch")
         arch.load_file_from_url = download_util.load_file_from_url  # type: ignore[attr-defined]
-        sys.modules["pyiqa.archs.clipiqa_arch"] = arch
+        # setitem records an undo even when the key is new. A bare sys.modules assignment
+        # survives the fixture: delitem(raising=False) on a missing key records nothing.
+        monkeypatch.setitem(sys.modules, "pyiqa.archs.clipiqa_arch", arch)
         clip_model.load()  # type: ignore[attr-defined]
         arch.load_file_from_url("https://x/prompts.pth")  # type: ignore[attr-defined]
         return object()
@@ -266,8 +268,19 @@ def _fake_pyiqa(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, ob
         "pyiqa.archs.clip_model": clip_model,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
-    monkeypatch.delitem(sys.modules, "pyiqa.archs.clipiqa_arch", raising=False)
     return {"load_file_from_url": load_file_from_url, "_download": _download}
+
+
+def test_fake_pyiqa_does_not_leave_clipiqa_arch_imported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from argus_proof.scoring.scorers.quality import PyiqaModel
+
+    _fake_pyiqa(monkeypatch, tmp_path)
+    PyiqaModel("clipiqa+")._load()
+    assert "pyiqa.archs.clipiqa_arch" in sys.modules
+    # undo drops a setitem, including a key that did not exist before. A direct
+    # sys.modules assignment is not recorded, so the fake would still be here.
+    monkeypatch.undo()
+    assert "pyiqa.archs.clipiqa_arch" not in sys.modules
 
 
 def test_pyiqa_pins_every_weights_file_it_fetched(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

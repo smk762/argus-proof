@@ -141,6 +141,37 @@ def test_recording_checks_seeds_and_scorers_across_runs(tmp_path: Path) -> None:
     assert rec["seeds"] == [1, 2, 3] and rec["scorers"][0]["name"] == "insightface"
 
 
+def test_recording_refuses_a_different_engine_or_proof_version(tmp_path: Path) -> None:
+    a = _recorded("synth-s00000320-l00-w00-p000", [1, 2, 3])
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 3])
+    b[0]["engine_version"] = "9.9.9"
+    with pytest.raises(demo_tape.TapeError, match="used engine"):
+        demo_tape.recording(_recording_dir(tmp_path / "engine", [a[0], b[0]], [a[1], b[1]]))
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 3])
+    b[0]["engine"] = "a1111"
+    with pytest.raises(demo_tape.TapeError, match="used engine"):
+        demo_tape.recording(_recording_dir(tmp_path / "name", [a[0], b[0]], [a[1], b[1]]))
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 3])
+    b[0]["proof_version"] = "9.9"
+    with pytest.raises(demo_tape.TapeError, match="proof_version"):
+        demo_tape.recording(_recording_dir(tmp_path / "wire", [a[0], b[0]], [a[1], b[1]]))
+
+
+def test_recording_reads_the_threshold_and_the_package_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(demo_tape, "package_version", lambda: "9.9.9")
+    a = _recorded("synth-s00000320-l00-w00-p000", [1, 2, 3])
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 3])
+    a[1]["gate"] = {"run_pass_rate": 0.6}
+    b[1]["gate"] = {"run_pass_rate": 0.6}
+    rec = demo_tape.recording(_recording_dir(tmp_path / "ok", [a[0], b[0]], [a[1], b[1]]))
+    assert rec["pass_threshold"] == 0.6
+    assert rec["proof_version"] == "9.9.9"
+    assert rec["wire_version"] == "1.0"
+    b[1]["gate"] = {"run_pass_rate": 0.5}
+    with pytest.raises(demo_tape.TapeError, match="pass thresholds"):
+        demo_tape.recording(_recording_dir(tmp_path / "mix", [a[0], b[0]], [a[1], b[1]]))
+
+
 def test_webp_applies_exif_orientation(tmp_path: Path) -> None:
     from PIL import Image
 

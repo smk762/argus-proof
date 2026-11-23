@@ -103,6 +103,10 @@ class A1111Backend:
             if len(set(spec.seeds)) != len(spec.seeds):
                 # image ids are <run_id>-<seed>: a repeated seed would overwrite its earlier image.
                 raise BackendError("the a1111 backend needs distinct seeds; the run repeats one")
+            if any(seed < 0 for seed in spec.seeds):
+                # A1111's /sdapi treats -1 and any negative seed as "pick a random seed",
+                # then the manifest would record a seed the image was not made with.
+                raise BackendError("the a1111 backend rejects a negative seed; A1111 would randomise it")
             manifest = build_local_manifest(
                 spec, resolve_model=self.resolve_model, engine=BACKEND_NAME, engine_version=self._engine_version
             )
@@ -119,29 +123,29 @@ class A1111Backend:
 
     def _generate_seed(self, spec: RunSpec, seed: int, out_dir: Path, emit: ProgressSink) -> list[GeneratedImage]:
         resp = self.transport.post_json("/sdapi/v1/txt2img", self._payload(spec, seed))
-        encoded = resp.get("images") or []
+        encoded = list(resp.get("images") or [])
         if not encoded:
             raise BackendError(f"A1111 produced no images for seed {seed}")
-        produced: list[GeneratedImage] = []
-        for index, b64 in enumerate(encoded):
-            data = decode_base64_image(b64, context=f"A1111 seed {seed}")
-            suffix = "" if index == 0 else f"-{index}"
-            image_id = f"{spec.run_id}-{seed}{suffix}"
-            path = out_dir / f"{image_id}.png"
-            path.write_bytes(data)
-            dims = read_dimensions(data) or (spec.sampling.width, spec.sampling.height)
-            produced.append(
-                GeneratedImage(
-                    image_id=image_id,
-                    run_id=spec.run_id,
-                    seed=seed,
-                    path=str(path),
-                    width=dims[0],
-                    height=dims[1],
-                )
+        # batch_size and n_iter are 1. Extensions still append auxiliary images
+        # (ControlNet maps, ADetailer previews); those are not samples of this seed.
+        if len(encoded) > 1:
+            logger.warning("a1111.extra_images", run_id=spec.run_id, seed=seed, returned=len(encoded), kept=1)
+        data = decode_base64_image(encoded[0], context=f"A1111 seed {seed}")
+        image_id = f"{spec.run_id}-{seed}"
+        path = out_dir / f"{image_id}.png"
+        path.write_bytes(data)
+        dims = read_dimensions(data) or (spec.sampling.width, spec.sampling.height)
+        emit(ProgressEvent(run_id=spec.run_id, type="image", seed=seed, image_id=image_id))
+        return [
+            GeneratedImage(
+                image_id=image_id,
+                run_id=spec.run_id,
+                seed=seed,
+                path=str(path),
+                width=dims[0],
+                height=dims[1],
             )
-            emit(ProgressEvent(run_id=spec.run_id, type="image", seed=seed, image_id=image_id))
-        return produced
+        ]
 
     def _payload(self, spec: RunSpec, seed: int) -> dict:
         if spec.sampling.guidance is not None:

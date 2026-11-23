@@ -35,6 +35,31 @@ def test_clamp01_passes_non_finite_through() -> None:
 # --------------------------------------------------------------------------
 
 
+def test_hf_cached_file_returns_none_for_an_invalid_repo_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+    from types import ModuleType
+
+    class HFValidationError(ValueError):
+        pass
+
+    def try_to_load_from_cache(model: str, filename: str, revision: str | None = None) -> str:
+        raise HFValidationError(f"{model} is not a repo id ({filename}, {revision})")
+
+    hub = ModuleType("huggingface_hub")
+    hub.try_to_load_from_cache = try_to_load_from_cache  # type: ignore[attr-defined]
+    errors = ModuleType("huggingface_hub.errors")
+    errors.HFValidationError = HFValidationError  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.errors", errors)
+    monkeypatch.setattr("argus_proof.scoring.scorers._util.module_available", lambda *_names: True)
+
+    from argus_proof.scoring.scorers._util import hf_cached_file
+
+    assert hf_cached_file("/no/such/checkpoint", ["model.safetensors"]) is None
+    assert hf_cached_file("org/name/extra", ["model.safetensors"]) is None
+    assert hf_cached_file("../weights", ["model.safetensors"]) is None
+
+
 def test_module_available() -> None:
     assert module_available("math", "json") is True
     assert module_available("definitely_not_a_module_xyz") is False

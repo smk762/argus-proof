@@ -359,6 +359,16 @@ def score(
             f"unknown metric(s) for --require-scorers: {', '.join(unknown)} (known: {', '.join(known)})", err=True
         )
         raise typer.Exit(2)
+    # --scorers can leave a required metric out. It then never runs, installed or not, so the
+    # gate would pass on a report that doesn't contain it. Phash dedup/diversity are not
+    # RunScorerName values: they always run, and requiring one of them is not a deselection.
+    not_selected = [m for m in required if m in get_args(RunScorerName) and m not in selected]
+    if not_selected:
+        typer.echo(
+            f"required scorer(s) not selected: {', '.join(not_selected)} — include them in --scorers",
+            err=True,
+        )
+        raise typer.Exit(2)
     # A scorer the run didn't pick isn't missing; phash dedup/diversity always run, so theirs always counts.
     missing = [m for m in unavailable_metrics() if m in selected or m not in get_args(RunScorerName)]
     missing_required = [m for m in required if m in missing]

@@ -23,7 +23,14 @@ from pathlib import Path
 import structlog
 from pydantic import ValidationError
 
-from argus_proof.backends.base import BackendError, GenResult, ProgressSink, safe_image_id, write_manifest
+from argus_proof.backends.base import (
+    MANIFEST_NAME,
+    BackendError,
+    GenResult,
+    ProgressSink,
+    safe_image_id,
+    write_manifest,
+)
 from argus_proof.backends.http import Transport, UrllibTransport, decode_base64_image
 from argus_proof.backends.pnginfo import read_dimensions
 from argus_proof.models import BackendCapabilities, GeneratedImage, ProgressEvent, ProofError, RunManifest, RunSpec
@@ -74,6 +81,8 @@ class RemoteBackend:
         total = len(spec.seeds)
         emit(ProgressEvent(run_id=spec.run_id, type="start", total=total))
 
+        written: list[Path] = []
+        manifest_path: Path | None = None
         try:
             resp = self.transport.post_json("/generate", {"spec": spec.model_dump(mode="json")})
             manifest = self._parse_manifest(resp, spec)
@@ -85,15 +94,23 @@ class RemoteBackend:
             if missing:
                 # The manifest claims these seeds; with no image for them it would misdescribe the run.
                 raise BackendError(f"remote service returned no image for requested seed(s) {missing}")
-            # Only a fully validated response touches out_dir: a failed run leaves no orphan image behind.
+            # Only a fully validated response touches out_dir. A write that fails partway
+            # deletes what it already wrote, so a failed run leaves no orphan image and no manifest.
             for img, data in decoded:
+                path = Path(img.path)
+                written.append(path)
                 try:
-                    Path(img.path).write_bytes(data)
+                    path.write_bytes(data)
                 except OSError as exc:
                     raise BackendError(f"could not write remote image {img.image_id!r}: {exc}") from exc
                 emit(ProgressEvent(run_id=spec.run_id, type="image", seed=img.seed, image_id=img.image_id))
+            manifest_path = out_dir / MANIFEST_NAME
             write_manifest(out_dir, manifest)
         except BackendError as exc:
+            for path in written:
+                path.unlink(missing_ok=True)
+            if manifest_path is not None:
+                manifest_path.unlink(missing_ok=True)
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
 

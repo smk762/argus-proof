@@ -112,16 +112,34 @@ def wav_float32(pcm: bytes, sample_rate: int, channels: int = 1) -> bytes:
     return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
+def _reject_header_controls(kind: str, value: str) -> None:
+    """Refuse CR, LF or NUL in a multipart header parameter (they end the header line)."""
+    if any(char in value for char in ("\r", "\n", "\0")):
+        raise EchoError(f"multipart {kind} contains a control character")
+
+
+def _quote_header(value: str) -> str:
+    """Escape ``\\`` and ``"`` so *value* stays inside one quoted header parameter."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def multipart(fields: Mapping[str, str], files: list[tuple[str, str, bytes]]) -> tuple[bytes, str]:
     """A ``multipart/form-data`` body: text *fields*, then ``(field, filename, data)`` *files*. Returns body, type."""
     boundary = f"argus-proof-{secrets.token_hex(12)}"
     parts: list[bytes] = []
     for name, value in fields.items():
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+        _reject_header_controls("field name", name)
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{_quote_header(name)}"\r\n\r\n'.encode())
         parts.append(value.encode() + b"\r\n")
     for name, filename, data in files:
+        _reject_header_controls("field name", name)
+        _reject_header_controls("filename", filename)
+        disposition = f'name="{_quote_header(name)}"; filename="{_quote_header(filename)}"'
+        if not filename.isascii():
+            # RFC 5987. The quoted filename is still sent; parsers that only read filename* get UTF-8.
+            disposition += f"; filename*=UTF-8''{quote(filename, safe='')}"
         head = (
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+            f"--{boundary}\r\nContent-Disposition: form-data; {disposition}\r\n"
             "Content-Type: application/octet-stream\r\n\r\n"
         )
         parts.append(head.encode() + data + b"\r\n")
@@ -138,6 +156,17 @@ def clone_id(run_id: str, ref_id: str) -> str:
 def item_id(prompt_index: int, ref_id: str, seed: int) -> str:
     """A clip's handle within its run, and its WAV's stem."""
     return f"p{prompt_index}-{ref_id}-s{seed}"
+
+
+def _is_gpu_error(body: bytes) -> bool:
+    """Whether *body* is echo's permanent ``gpu_error`` (the engine needs a restart, not another try)."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    return any(isinstance(data.get(key), str) and "gpu_error" in data[key] for key in ("error", "status", "detail"))
 
 
 def _error_text(body: bytes) -> str:
@@ -270,9 +299,10 @@ class EchoClient:
                 )
             except (UrlRefused, OSError) as exc:
                 raise EchoError(f"echo could not be reached: {exc}") from exc
-            # Only a 503 is retried: busy, loading, or a real out-of-memory. Any other CUDA error is a 500, after
-            # which XTTS's /health answers gpu_error until a restart, so retrying it would only fail again.
-            if reply.status == 503 and attempt < self.retries:
+            # Only a 503 is retried: busy, loading, or a real out-of-memory. A 503 whose body is
+            # ``gpu_error`` is permanent (XTTS's /health stays there until a restart), and any other
+            # CUDA error is a 500, so retrying either would only fail again.
+            if reply.status == 503 and attempt < self.retries and not _is_gpu_error(reply.body):
                 self._sleep(self._retry_after(reply.headers, attempt))
                 continue
             break
@@ -404,6 +434,13 @@ class EchoBackend:
             mark_failed(out_dir, spec.run_id, str(exc))
             emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(exc)))
             raise
+        except OSError as exc:
+            # A missing permission, a vanished file or a full disk is a failed run, not an uncaught traceback:
+            # the report/status endpoints read failed.json, and callers listen for the error event.
+            error = EchoError(f"could not write the speech run: {exc}")
+            mark_failed(out_dir, spec.run_id, str(error))
+            emit(ProgressEvent(run_id=spec.run_id, type="error", message=str(error)))
+            raise error from exc
         clear_failed(out_dir)
         emit(ProgressEvent(run_id=spec.run_id, type="done", completed=total, total=total))
         return SpeechResult(manifest, out_dir)
