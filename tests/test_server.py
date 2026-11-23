@@ -51,6 +51,42 @@ def test_health(client: TestClient) -> None:
     assert body["version"] == __version__
     assert body["read_only"] is False  # live host: eval available
     assert "report_manifest" in body["capabilities"]  # GET /report/{run_id}/manifest
+    assert body["devmode"] is False
+
+
+def test_health_is_the_suite_service_health(client: TestClient, read_only_client: TestClient) -> None:
+    from argus_cortex.service import ServiceHealth
+
+    from argus_proof.models import PROOF_VERSION
+
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    health = ServiceHealth.model_validate(resp.json())
+    assert (health.service, health.version, health.status) == ("argus-proof", __version__, "ok")
+    assert health.wire == {"proof_version": PROOF_VERSION}
+    assert health.capabilities == ("report_manifest", "score") and health.read_only is False
+    assert health.checks == {} and health.started_at is not None
+    # the shallow probe a sibling or a container healthcheck uses
+    assert client.get("/health?checks=0").json()["status"] == "ok"
+    replay = ServiceHealth.model_validate(read_only_client.get("/health").json())
+    assert replay.read_only is True and replay.capabilities == ("report_manifest",)
+
+
+def test_health_names_the_peer_and_build_it_was_told(monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    monkeypatch.setenv("ARGUS_PEER", "proof")
+    monkeypatch.setenv("ARGUS_BUILD", "abc1234")
+    body = TestClient(create_app(reports_dir=str(tmp_path))).get("/health").json()
+    assert (body["peer"], body["build"]) == ("proof", "abc1234")
+
+
+@pytest.mark.parametrize("name", ["PROOF_NUDENET_URL", "ARGUS_PUPPET_URL", "COMFYUI_BASE_URL", "ARGUS_TTS_URL"])
+def test_a_malformed_peer_url_stops_the_server_at_startup(name: str, monkeypatch, tmp_path) -> None:  # noqa: ANN001
+    from argus_cortex.peers import PeerRefused
+
+    monkeypatch.setenv(name, "made-up-host:8000")
+    with pytest.raises(PeerRefused, match=name) as refused:
+        create_app(reports_dir=str(tmp_path))
+    assert "made-up-host" not in str(refused.value)
 
 
 def test_health_reports_read_only(read_only_client: TestClient) -> None:

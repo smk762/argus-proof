@@ -382,6 +382,23 @@ def test_from_env_needs_the_url(monkeypatch: pytest.MonkeyPatch) -> None:
     assert (client.base, client.admin_token) == (URL, "t")
 
 
+def test_from_env_falls_back_to_the_engines_suite_wide_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARGUS_XTTS_URL", "http://xtts.test:8141")
+    monkeypatch.setenv("ARGUS_TTS_URL", "http://qwen.test:8142")
+    assert EchoClient.from_env().base == "http://xtts.test:8141"  # xtts is the default engine
+    assert EchoClient.from_env(engine="xtts").base == "http://xtts.test:8141"
+    assert EchoClient.from_env(engine="qwen").base == "http://qwen.test:8142"
+    monkeypatch.setenv("PROOF_ECHO_URL", URL)  # proof's own variable wins, for either engine
+    assert EchoClient.from_env(engine="qwen").base == URL
+
+
+def test_from_env_refuses_a_malformed_url_by_variable_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARGUS_XTTS_URL", "made-up-host:8141")
+    with pytest.raises(EchoError, match="ARGUS_XTTS_URL") as refused:
+        EchoClient.from_env()
+    assert "made-up-host" not in str(refused.value)
+
+
 # --------------------------------------------------------------------------
 # the spec
 # --------------------------------------------------------------------------

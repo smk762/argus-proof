@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from argus_cortex.peers import PeerRefused
 from fakebackend import FakeBackend, save_png
 from fakepuppet import HOST, PORT, URL, FakePuppet, payload, resolve
 
@@ -154,10 +155,25 @@ def test_without_a_url_pose_is_unavailable_and_the_report_has_no_pose_block(tmp_
     assert report.pose is None and not any(s.metric == "pose" for s in report.scorers)
 
 
-def test_a_url_turns_pose_on_and_a_bad_one_leaves_it_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_url_turns_pose_on_and_a_bad_one_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(pose_mod.ENV_PUPPET_URL, "http://puppet:8220")
     assert evaluate.default_pose_scorer().is_available()
+    # Not an absolute http(s) URL: argus-cortex refuses it, naming the variable, rather than read it as "no puppet".
     monkeypatch.setenv(pose_mod.ENV_PUPPET_URL, "ftp://puppet")
+    with pytest.raises(PeerRefused, match=pose_mod.ENV_PUPPET_URL):
+        evaluate.default_pose_scorer().is_available()
+    # A URL proof's own origin rule refuses (credentials) still leaves pose off, as before.
+    monkeypatch.setenv(pose_mod.ENV_PUPPET_URL, "http://user:pw@puppet:8220")
+    assert not evaluate.default_pose_scorer().is_available()
+
+
+def test_the_suite_wide_puppet_url_is_the_fallback_and_proofs_own_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARGUS_PUPPET_URL", "http://suite.test:8220")
+    scorer = evaluate.default_pose_scorer()
+    assert scorer.is_available() and scorer._url() == "http://suite.test:8220"
+    monkeypatch.setenv(pose_mod.ENV_PUPPET_URL, "http://own.test:8220")
+    assert evaluate.default_pose_scorer()._url() == "http://own.test:8220"
+    monkeypatch.setenv(pose_mod.ENV_PUPPET_URL, "off")
     assert not evaluate.default_pose_scorer().is_available()
 
 

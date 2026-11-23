@@ -55,6 +55,20 @@ def test_backend_from_env_comfyui_default(monkeypatch, tmp_path: Path) -> None: 
     assert isinstance(backend, ComfyUIBackend)
 
 
+def test_the_comfyui_url_is_proofs_own_then_the_suite_wide_one_then_loopback(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
+    from argus_cortex.peers import PeerRefused
+
+    monkeypatch.setenv("PROOF_MODELS_DIR", str(tmp_path))
+    assert backend_from_env("comfyui").transport.base == "http://127.0.0.1:8188"
+    monkeypatch.setenv("ARGUS_COMFYUI_URL", "http://suite.test:8188")
+    assert backend_from_env("comfyui").transport.base == "http://suite.test:8188"
+    monkeypatch.setenv("COMFYUI_BASE_URL", "http://own.test:8188")
+    assert backend_from_env("comfyui").transport.base == "http://own.test:8188"
+    monkeypatch.setenv("COMFYUI_BASE_URL", "made-up-host:8188")
+    with pytest.raises(PeerRefused, match="COMFYUI_BASE_URL"):
+        backend_from_env("comfyui")
+
+
 def test_backend_from_env_needs_models_dir(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.delenv("PROOF_MODELS_DIR", raising=False)
     with pytest.raises(EvaluateError, match="PROOF_MODELS_DIR"):

@@ -20,6 +20,7 @@ from typing import get_args
 
 import structlog
 from argus_cortex.gpu import GpuCoordinator
+from argus_cortex.peers import peer_url
 from argus_cortex.taxonomy import TargetCategory, TargetProfile
 
 from argus_proof import gpu
@@ -62,6 +63,8 @@ ENV_BACKEND = "PROOF_BACKEND"
 ENV_MODELS_DIR = "PROOF_MODELS_DIR"
 ENV_WORKFLOW_TEMPLATE = "PROOF_WORKFLOW_TEMPLATE"
 ENV_COMFYUI_URL = "COMFYUI_BASE_URL"
+COMFYUI_PEER = "comfyui"  # argus-cortex's peer name: ARGUS_COMFYUI_URL is read when COMFYUI_BASE_URL is unset
+DEFAULT_COMFYUI_URL = "http://127.0.0.1:8188"
 ENV_A1111_URL = "A1111_BASE_URL"
 ENV_REMOTE_URL = "PROOF_REMOTE_URL"
 ENV_REMOTE_API_KEY = "PROOF_REMOTE_API_KEY"
@@ -130,6 +133,23 @@ def _comfy_template(path: str | os.PathLike[str] | None = None) -> dict:
     return example_template()
 
 
+def check_peer_urls() -> None:
+    """Refuse a malformed peer URL now (``PeerRefused``, naming the variable) rather than at the first run.
+
+    Resolves every service URL proof reads, in proof's own variable and its suite-wide ``ARGUS_<PEER>_URL``. An
+    unset one is fine (that scorer or backend is simply not configured); nothing is contacted.
+    """
+    from argus_proof.backends.echo import ECHO_PEERS, ENV_ECHO_URL
+    from argus_proof.scoring.scorers.pose import ENV_PUPPET_URL, PUPPET_PEER
+    from argus_proof.scoring.scorers.safety import ENV_NUDENET_URL, NUDENET_PEER
+
+    peer_url(NUDENET_PEER, ENV_NUDENET_URL)
+    peer_url(PUPPET_PEER, ENV_PUPPET_URL)
+    peer_url(COMFYUI_PEER, ENV_COMFYUI_URL)
+    for peer in ECHO_PEERS.values():
+        peer_url(peer, ENV_ECHO_URL)
+
+
 def backend_from_env(
     name: str | None = None,
     *,
@@ -154,7 +174,8 @@ def backend_from_env(
             # defaults pick SDXL or Flux by the checkpoint's family folder.
             family_templates=None if explicit else packaged_templates(),
             resolve_model=models_resolver(models_dir),
-            base_url=os.environ.get(ENV_COMFYUI_URL, "http://127.0.0.1:8188"),
+            # COMFYUI_BASE_URL, else the suite-wide ARGUS_COMFYUI_URL; a malformed one raises PeerRefused.
+            base_url=peer_url(COMFYUI_PEER, ENV_COMFYUI_URL, default=DEFAULT_COMFYUI_URL),
         )
     if resolved == "a1111":
         return get_backend(

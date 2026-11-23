@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from argus_cortex.peers import PeerRefused
 
 from argus_proof.models import (
     AggregateScores,
@@ -232,8 +233,30 @@ def test_nudenet_scores_through_the_server(nudenet_url: str, tmp_path: Path) -> 
 def test_nudenet_url_from_env(nudenet_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROOF_NUDENET_URL", nudenet_url)
     assert NudeNetDetector().is_available()
-    monkeypatch.setenv("PROOF_NUDENET_URL", "ftp://nudenet")
+
+
+def test_the_suite_wide_nudenet_url_is_the_fallback_and_proofs_own_wins(
+    nudenet_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARGUS_NUDENET_URL", nudenet_url)
+    assert NudeNetDetector()._url() == nudenet_url.rstrip("/")
+    assert NudeNetDetector().is_available()
+    monkeypatch.setenv("PROOF_NUDENET_URL", "http://own.test:8130/")
+    assert NudeNetDetector()._url() == "http://own.test:8130"
+    monkeypatch.setenv("PROOF_NUDENET_URL", "off")  # opts proof out, whatever the suite says
     assert NudeNetDetector().is_available() is False
+    assert NudeNetDetector(base_url=nudenet_url)._url() == nudenet_url  # an explicit URL reads no variable
+
+
+@pytest.mark.parametrize("name", ["PROOF_NUDENET_URL", "ARGUS_NUDENET_URL"])
+def test_a_malformed_nudenet_url_is_refused_not_read_as_unconfigured(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A typo must not turn the safety scorer off: the error names the variable and never the value.
+    monkeypatch.setenv(name, "ftp://made-up-host")
+    with pytest.raises(PeerRefused, match=name) as refused:
+        NudeNetDetector().is_available()
+    assert "made-up-host" not in str(refused.value)
 
 
 def test_nudenet_unavailable_without_a_server_and_degrades(monkeypatch: pytest.MonkeyPatch) -> None:

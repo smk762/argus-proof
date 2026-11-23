@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import structlog
+from argus_cortex.peers import peer_url
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from argus_proof.models import (
@@ -54,6 +55,8 @@ logger = structlog.get_logger()
 
 # The puppet service (its origin) and per-read timeout, kept in lock-step with .env.example.
 ENV_PUPPET_URL = "PROOF_PUPPET_URL"
+# The suite's name for it: with PROOF_PUPPET_URL unset, argus-cortex reads the suite-wide ARGUS_PUPPET_URL.
+PUPPET_PEER = "puppet"
 ENV_PUPPET_TIMEOUT = "PROOF_PUPPET_TIMEOUT"
 DEFAULT_PUPPET_TIMEOUT = 60.0
 # A call's overall deadline is this many timeouts: a slow drip can't hold a scoring pass for ever.
@@ -422,7 +425,11 @@ class PoseScorer:
         self._health: PuppetHealth | None = None
 
     def _url(self) -> str:
-        return (self._base_url if self._base_url is not None else os.environ.get(ENV_PUPPET_URL, "")).strip()
+        """The service's URL (``PROOF_PUPPET_URL``, else the suite-wide ``ARGUS_PUPPET_URL``), or ``""`` when none
+        is configured. One that is set but not an absolute http(s) URL raises ``PeerRefused``."""
+        if self._base_url is not None:
+            return self._base_url.strip()
+        return peer_url(PUPPET_PEER, ENV_PUPPET_URL) or ""
 
     def is_available(self) -> bool:
         if self._client is not None:
