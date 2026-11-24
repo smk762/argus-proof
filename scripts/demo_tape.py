@@ -281,6 +281,10 @@ def recording(root: Path) -> dict:
         raise TapeError(f"no report under {root / 'eval' / 'reports'}")
     first = manifests[0]
     for m in manifests:
+        # proof has always written these, so a manifest without one is damaged or not proof's.
+        absent = [k for k in ("engine", "engine_version", "proof_version") if not m.get(k)]
+        if absent:
+            raise TapeError(f"run {m.get('run_id')} records no {', '.join(absent)}")
         if m["sampling"] != first["sampling"] or m["base_checkpoint"] != first["base_checkpoint"]:
             raise TapeError(f"run {m['run_id']} sampled differently from {first['run_id']}")
         if m["seeds"] != first["seeds"]:

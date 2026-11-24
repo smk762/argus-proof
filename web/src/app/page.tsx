@@ -1,7 +1,7 @@
 import { EvalGrid, type GridRow } from "@/components/EvalGrid";
 import { ScoreChart } from "@/components/ScoreChart";
 import { Card, Code, Ext, Kv, Lead, SectionTitle } from "@/components/ui";
-import { baseline, fmt, RECOMMENDED, shortPrompt, src, tape, type Variant } from "@/lib/tape";
+import { baseline, fmt, RECOMMENDED, runVerdict, shortPrompt, src, tape, type Variant } from "@/lib/tape";
 
 const { recording: rec, training: tr } = tape;
 const DOCS = (pkg: string) => `https://docs.dragonhound.dev/packages/${pkg}/`;
@@ -303,7 +303,7 @@ function VariantCard({ v }: { v: Variant }) {
           {v.runs.map((r) => (
             <li key={r.run_id} className="text-caption text-text-secondary">
               <span className="font-semibold text-text-primary">P{r.prompt + 1}</span>{" "}
-              <span className={r.verdict.passed ? "text-success" : "text-warning"}>{r.verdict.passed ? "✓ passed" : "? pending review"}</span>
+              <span className={runVerdict(r.verdict).tone}>{runVerdict(r.verdict).text}</span>
               <span className="block [overflow-wrap:anywhere]">{r.verdict.reasons.join("; ")}</span>
             </li>
           ))}

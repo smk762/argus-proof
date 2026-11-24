@@ -309,7 +309,8 @@ def score(
     require_scorers: list[str] | None = Option(
         None,
         "--require-scorers",
-        help="Metrics whose scorer must be available, else exit 2 (repeatable or comma-separated, e.g. "
+        help="Metrics whose scorer must be available and have the inputs it needs (identity and likeness: "
+        "--references), else exit 2 (repeatable or comma-separated, e.g. "
         "identity,likeness,clip_score,aesthetic,safety,pose)",
     ),
     scorers: list[str] | None = Option(
@@ -383,6 +384,17 @@ def score(
             err=True,
         )
         raise typer.Exit(2)
+    # An available scorer still measures nothing when the run's inputs leave it nothing to measure.
+    refs = reference_images(references) if references else []
+    unmeasurable: list[str] = []
+    if "identity" in required and target_category != "identity":
+        unmeasurable.append(f"identity (--target-category is {target_category}, ArcFace scores only identity)")
+    if not refs:
+        why = f"no images under {references}" if references else "no --references"
+        unmeasurable += [f"{m} ({why})" for m in ("identity", "likeness") if m in required]
+    if unmeasurable:
+        typer.echo(f"required scorer(s) cannot measure this run: {', '.join(unmeasurable)}", err=True)
+        raise typer.Exit(2)
     if missing:
         typer.echo(
             f"warning: no scorer available for {', '.join(missing)}; those metrics will be empty and their "
@@ -392,7 +404,6 @@ def score(
         )
 
     try:
-        refs = reference_images(references) if references else []
         rep = score_run_dir(run_dir, references=refs, scorers=picked, target_category=target_category)
     except (EvaluateError, ProofError, ValueError) as exc:
         typer.echo(str(exc), err=True)

@@ -470,7 +470,10 @@ class EchoBackend:
         if "tts" not in (health.get("capabilities") or ["tts"]):
             raise EchoError(f"echo's {engine} engine doesn't serve text to speech")
         image = health.get("image") if isinstance(health.get("image"), dict) else {}
-        previous = (health.get("weights") or {}).get("checkpoint") if isinstance(health.get("weights"), dict) else None
+        # A reported ``null`` is the stock weights; a health with no ``checkpoint`` says nothing about what is selected.
+        reported = health.get("weights")
+        previous_known = isinstance(reported, dict) and "checkpoint" in reported
+        previous = reported["checkpoint"] if previous_known else None
         references = [self._reference(ref) for ref in spec.references]
 
         cloned: list[str] = []
@@ -500,7 +503,13 @@ class EchoBackend:
                     self.client.delete_clone(cid)
                 except EchoError as exc:
                     logger.warning("echo.clone_not_deleted", run_id=spec.run_id, clone=cid, error=str(exc))
-            if loaded:
+            if loaded and not previous_known:
+                logger.warning(
+                    "echo.checkpoint_not_restored",
+                    run_id=spec.run_id,
+                    error="echo's /health did not report the checkpoint it had selected",
+                )
+            elif loaded:
                 try:
                     self.client.load(previous)
                 except EchoError as exc:

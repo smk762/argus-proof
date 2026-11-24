@@ -258,7 +258,11 @@ def test_a_zip_member_that_escapes_the_run_dir_is_not_written_there(tmp_path: Pa
 
     assert not outside.exists()
     assert not absolute.exists()
-    assert not (run_dir / "..").is_file()
+    # Nothing else was written, so the ".." member (which has no safe basename) was skipped.
+    assert [p.name for p in tmp_path.iterdir()] == ["run"]
+    assert sorted(p.name for p in run_dir.iterdir()) == sorted(
+        ["abs.png", "escaped.png", "eval_report.json", "manifest.json", "reject_archive.json"]
+    )
     assert (run_dir / "escaped.png").read_bytes() == payload
     assert (run_dir / "abs.png").read_bytes() == payload
 

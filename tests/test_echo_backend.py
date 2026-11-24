@@ -175,6 +175,19 @@ def test_the_checkpoint_is_loaded_then_the_previous_one_restored(tmp_path: Path)
     assert echo.selected is None
 
 
+@pytest.mark.parametrize("weights", [None, {}])
+def test_an_unreported_checkpoint_is_not_restored_to_the_stock_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, weights: dict | None
+) -> None:
+    echo = FakeEcho()
+    health = echo.health
+    answers = iter([health() | {"weights": weights}])  # only the first read: pinning the clips needs the real weights
+    monkeypatch.setattr(echo, "health", lambda: next(answers, None) or health())
+    _backend(echo).generate(_spec(tmp_path), tmp_path / "run")
+    assert [b["checkpoint"] for b in echo.bodies("/admin/load")] == ["forge/run 7"]
+    assert (tmp_path / "run" / MANIFEST_NAME).is_file()
+
+
 def test_a_run_on_the_selected_checkpoint_loads_nothing(tmp_path: Path) -> None:
     echo = FakeEcho()
     _backend(echo).generate(_spec(tmp_path, checkpoint=None), tmp_path / "run")

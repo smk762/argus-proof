@@ -524,6 +524,66 @@ def test_require_scorers_refuses_a_metric_that_scorers_left_out(tmp_path: Path) 
     assert "required scorer(s) not selected: identity" in result.output
 
 
+@pytest.mark.parametrize(
+    ("category", "refs", "metrics", "expected"),
+    [
+        ("setting", "full", "identity", ["identity (--target-category is setting"]),
+        ("identity", None, "identity,likeness", ["identity (no --references)", "likeness (no --references)"]),
+        ("setting", None, "likeness", ["likeness (no --references)"]),
+        ("identity", "empty", "likeness", ["likeness (no images under"]),
+    ],
+)
+def test_require_scorers_refuses_a_metric_the_inputs_cannot_produce(
+    tmp_path: Path,
+    fake_backend: object,
+    monkeypatch: pytest.MonkeyPatch,
+    category: str,
+    refs: str | None,
+    metrics: str,
+    expected: list[str],
+) -> None:
+    import argus_proof.evaluate as evaluate
+
+    monkeypatch.setattr(evaluate, "unavailable_metrics", lambda: [])
+    _, run_dir = _run_grid(tmp_path)
+    args = ["score", str(run_dir), "--no-save", "--require-scorers", metrics, "--target-category", category]
+    if refs:
+        ref_dir = tmp_path / "refs"
+        ref_dir.mkdir()
+        if refs == "full":
+            (ref_dir / "r0.png").write_bytes(b"held out")
+        args += ["--references", str(ref_dir)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 2, result.output
+    assert "required scorer(s) cannot measure this run" in result.output
+    assert all(text in result.output for text in expected)
+
+
+def test_require_scorers_accepts_likeness_with_references_on_a_setting(
+    tmp_path: Path,
+    fake_backend,
+    monkeypatch,  # noqa: ANN001
+) -> None:
+    import argus_proof.evaluate as evaluate
+
+    monkeypatch.setattr(evaluate, "unavailable_metrics", lambda: [])
+    scored: list[list[Path]] = []
+
+    def stop(run_dir: Path, *, references: list[Path], **_kw: object) -> None:
+        scored.append(references)
+        raise evaluate.EvaluateError("scoring reached")
+
+    monkeypatch.setattr(evaluate, "score_run_dir", stop)
+    _, run_dir = _run_grid(tmp_path)
+    ref = tmp_path / "refs" / "r0.png"
+    ref.parent.mkdir()
+    ref.write_bytes(b"held out")
+    args = ["score", str(run_dir), "--no-save", "--require-scorers", "likeness", "--target-category", "setting"]
+    result = runner.invoke(app, [*args, "--references", str(ref.parent)])
+    assert result.exit_code == 1 and "scoring reached" in result.output
+    assert scored == [[ref]]
+
+
 def test_require_scorers_rejects_an_unknown_metric(tmp_path: Path) -> None:
     result = runner.invoke(app, ["score", str(tmp_path), "--require-scorers", "vibes"])
     assert result.exit_code == 2
