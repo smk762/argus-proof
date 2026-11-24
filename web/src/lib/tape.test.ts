@@ -2,7 +2,7 @@
 // page says something the data no longer shows.
 import { describe, expect, it } from "vitest";
 
-import { baseline, cell, checkpoints, RECOMMENDED, shortPrompt, tape, value, verdictKey } from "./tape";
+import { baseline, cell, checkpoints, RECOMMENDED, runVerdict, shortPrompt, tape, value, verdictKey } from "./tape";
 
 const byId = (id: string) => tape.variants.find((v) => v.id === id)!;
 
@@ -67,5 +67,11 @@ describe("tape", () => {
 
   it("shortens a prompt by its trigger only", () => {
     expect(shortPrompt("ohwx woman, portrait, white sweater, pose")).toBe("portrait, white sweater, pose");
+  });
+
+  it("tells a failed run from one pending review", () => {
+    expect(runVerdict({ passed: true, pending: false }).text).toBe("✓ passed");
+    expect(runVerdict({ passed: false, pending: true }).text).toBe("? pending review");
+    expect(runVerdict({ passed: false, pending: false })).toEqual({ text: "✕ failed", tone: "text-error" });
   });
 });

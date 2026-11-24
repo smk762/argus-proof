@@ -157,6 +157,15 @@ def test_recording_refuses_a_different_engine_or_proof_version(tmp_path: Path) -
         demo_tape.recording(_recording_dir(tmp_path / "wire", [a[0], b[0]], [a[1], b[1]]))
 
 
+@pytest.mark.parametrize("field", ["engine", "engine_version", "proof_version"])
+def test_recording_names_a_run_without_an_engine_or_proof_version(tmp_path: Path, field: str) -> None:
+    a = _recorded("synth-s00000320-l00-w00-p000", [1, 2, 3])
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 3])
+    del a[0][field], b[0][field]  # every run lacks it, so the runs agree with each other
+    with pytest.raises(demo_tape.TapeError, match=f"synth-s00000320-l00-w00-p000 records no {field}$"):
+        demo_tape.recording(_recording_dir(tmp_path / "rec", [a[0], b[0]], [a[1], b[1]]))
+
+
 def test_recording_still_runs_when_the_distribution_is_not_installed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

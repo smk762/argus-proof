@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `speak-qwen` lease asks for 5800 MiB (was 5200): Qwen3-TTS 0.6B with Base and CustomVoice loaded peaked at 5692 MiB
   speaking 27 s cloned utterances on dragon's RTX 4060 (5178 was a short utterance), and keeps that reserved while loaded.
+- `score --require-scorers identity` (or `likeness`) exits 2 when the run's inputs leave that metric empty: no reference
+  images, or for identity a `--target-category` other than `identity`. It used to pass.
+- A speech run no longer loads echo's stock weights afterwards when `/health` did not report which checkpoint was
+  selected before it: it logs `echo.checkpoint_not_restored` instead.
+- The demo page labels a run that failed outright "failed", not "pending review", and `scripts/demo_tape.py` names a
+  run whose manifest records no engine or `proof_version` instead of stopping on a `KeyError`.
 
 ## [0.8.0] - 2026-11-22
 

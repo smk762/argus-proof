@@ -114,6 +114,13 @@ export const VERDICT: Record<"pass" | "review" | "fail", { mark: string; label: 
 
 export const verdictKey = (p: Passed) => (p === true ? "pass" : p === null ? "review" : "fail");
 
+/** How a run's verdict reads: a run that is neither passed nor pending was rejected. */
+export function runVerdict(v: Pick<TapeRun["verdict"], "passed" | "pending">): { text: string; tone: string } {
+  if (v.passed) return { text: "✓ passed", tone: "text-success" };
+  if (v.pending) return { text: "? pending review", tone: "text-warning" };
+  return { text: "✕ failed", tone: "text-error" };
+}
+
 /** The image for one (variant, prompt, seed) cell of the grid. */
 export function cell(v: Variant, prompt: number, seed: number): TapeImage {
   const run = v.runs.find((r) => r.prompt === prompt);
