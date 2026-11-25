@@ -1,0 +1,92 @@
+name: Deploy demo
+
+# Publishes the hosted demo (proof.dragonhound.dev, Cloudflare Pages project argus-proof) from every dev commit
+# that passed CI. Production is the Pages branch `main`; any other --branch is only a preview.
+#
+# Needs two repo secrets: CLOUDFLARE_API_TOKEN (Account > Cloudflare Pages > Edit) and
+# CLOUDFLARE_ACCOUNT_ID. Without them the job builds, then skips the upload with a notice.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # Only dev itself: a pull request's CI run, or a dispatch from another branch, never deploys.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev') ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # On the job, so a skipped run never cancels a deploy.
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    env:
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+
+      # CI runs can finish out of order; an older commit must not replace a newer one.
+      - id: head
+        run: |
+          head=$(git ls-remote origin refs/heads/dev | cut -f1)
+          [ -n "$head" ] || { echo "::error::could not read dev"; exit 1; }
+          if [ "$head" = "$SHA" ]; then echo "current=true" >> "$GITHUB_OUTPUT"
+          else echo "::notice::dev has moved past ${SHA::7}; its own run deploys."; fi
+
+      - if: steps.head.outputs.current == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - if: steps.head.outputs.current == 'true'
+        run: npm ci
+        working-directory: web
+
+      - if: steps.head.outputs.current == 'true'
+        run: npm test # a dispatch doesn't wait for CI
+        working-directory: web
+
+      - if: steps.head.outputs.current == 'true'
+        run: make pages
+        env:
+          OPSEC_DENYLIST: ${{ secrets.OPSEC_DENYLIST }}
+
+      - if: steps.head.outputs.current == 'true' && env.HAS_TOKEN != 'true'
+        run: echo "::notice::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set; built ${SHA::7} but did not deploy."
+
+      - if: steps.head.outputs.current == 'true' && env.HAS_TOKEN == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >
+          npx --yes wrangler@4.162.0 pages deploy web/out
+          --project-name argus-proof --branch main
+          --commit-hash "$SHA" --commit-message "dev ${SHA::7}"
+
+      # The old site answers 200 too, so also look for a file whose path holds this build's id.
+      - if: steps.head.outputs.current == 'true' && env.HAS_TOKEN == 'true'
+        run: |
+          manifest=$(cd web/out && ls _next/static/*/_buildManifest.js | head -1)
+          [ -n "$manifest" ] || { echo "::error::no build manifest in web/out"; exit 1; }
+          for path in "" "$manifest"; do
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              code=$(curl -sS -o /dev/null -w '%{http_code}' "https://proof.dragonhound.dev/$path" || true)
+              [ "$code" = 200 ] && break
+              sleep 6
+            done
+            echo "$code /$path"; [ "$code" = 200 ] || exit 1
+          done
