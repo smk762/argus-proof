@@ -24,6 +24,7 @@ argus-quarry -> argus-curator -> argus-lens -> argus-forge -> your trainer -> ar
 SDXL LoRA trained for 1600 steps, every 320-step checkpoint and a no-LoRA baseline scored by proof (144 images), and
 where it peaks. It is a static page with no backend; the recording is `web/public/tape/`, built by
 `scripts/demo_tape.py <recording-dir>`, and `make pages` exports the site to `web/out/`.
+`.github/workflows/pages.yml` deploys it to Cloudflare Pages from every `dev` commit that passes CI.
 
 ## Install
 

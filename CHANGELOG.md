@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The hosted demo deploys itself: `.github/workflows/pages.yml` publishes every `dev` commit that passes CI and checks the live site serves that build.
 - **One suite-wide name per service URL** (argus-cortex 0.16 `peers`, argus-cortex#209). Each URL is read from
   proof's own variable, then the suite-wide one: `PROOF_NUDENET_URL` then `ARGUS_NUDENET_URL`, `PROOF_PUPPET_URL` then
   `ARGUS_PUPPET_URL`, `COMFYUI_BASE_URL` then `ARGUS_COMFYUI_URL` (then loopback), and `PROOF_ECHO_URL` then
