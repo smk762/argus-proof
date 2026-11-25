@@ -42,11 +42,10 @@ describe("dh-strip", () => {
     expect(strip.defaultLabel).toBe("recorded");
   });
 
-  it("marks Proof's link current once the shared layer lists it, and none before (dh-shared 1.2.8 does not)", () => {
+  it("lists Proof and marks its link current, and only it (dh-shared 1.2.10)", () => {
     const html = renderToStaticMarkup(createElement(DemoStrip));
     const current = html.match(/<a [^>]*aria-current="page"[^>]*>/g) ?? [];
-    const listed = strip.links.some((link) => (link.site as string) === STRIP_SITE);
-    expect(current).toEqual(listed ? [expect.stringContaining(`data-dh-site="${STRIP_SITE}"`)] : []);
+    expect(current).toEqual([expect.stringContaining(`data-dh-site="${STRIP_SITE}"`)]);
   });
 
   it("links the family in the same tab", () => {

@@ -1,7 +1,7 @@
-/*! dh-strip v1.2.8 | TypeScript declarations for dh-strip.mjs (vendored alongside it; a .mjs import resolves .d.mts). */
+/*! dh-strip v1.2.11 | TypeScript declarations for dh-strip.mjs (vendored alongside it; a .mjs import resolves .d.mts). */
 
 /** A site id used in data-dh-site: the lab home or one of the demos. */
-export type DhSite = "dragonhound" | "lightbox" | "studio" | "atlas" | "cull" | "realms" | "safelight" | "assay" | "sightline" | "mask" | "quarry";
+export type DhSite = "dragonhound" | "lightbox" | "studio" | "atlas" | "cull" | "realms" | "safelight" | "assay" | "sightline" | "mask" | "quarry" | "proof" | "iris";
 
 /** A label-suffix key used in data-dh-label (1.2.4): "recorded" (the default) or "browser". */
 export type DhLabel = "recorded" | "browser";
@@ -22,7 +22,7 @@ export interface DhStrip {
   /** "Live demo": always shown. */
   readonly label: string;
   /** The default label suffix, " · recorded output" (= labelSuffixes[defaultLabel]). Visually hidden on phones
-   *  (below 1024 px since 1.2.8; 968 px in 1.2.7, 880 px in 1.2.5, 720 px in 1.2.4, 640 px in 1.2.2-1.2.3, 560 px before). */
+   *  (below 1112 px since 1.2.11; 1072 px in 1.2.10, 1024 px in 1.2.8, 968 px in 1.2.7, 880 px in 1.2.5, 720 px in 1.2.4, 640 px in 1.2.2-1.2.3, 560 px before). */
   readonly labelMore: string;
   /** The key of the default suffix: "recorded". */
   readonly defaultLabel: DhLabel;
