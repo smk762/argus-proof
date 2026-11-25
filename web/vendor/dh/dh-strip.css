@@ -1,4 +1,4 @@
-/*! dh-strip v1.2.8 | Dragonhound Labs family bar. Requires dh-tokens.css. Works without JS.
+/*! dh-strip v1.2.11 | Dragonhound Labs family bar. Requires dh-tokens.css. Works without JS.
  * Current site: data-dh-site="<site>" on <html> or on the .dh-strip; the rules below show it without JS,
  * and dh-theme.js adds aria-current="page" to that link. A hand-set aria-current still works.
  * Label suffix: data-dh-label="<key>" on <html> or on the .dh-strip picks one of the suffixes in the pasted HTML
@@ -12,7 +12,7 @@
   font: var(--dh-text-xs)/1 var(--dh-font);
   white-space: nowrap;
   overflow-x: auto; overflow-y: hidden; scrollbar-width: none; /* last resort on very narrow screens */
-  position: relative; /* contains the visually hidden name and suffix (absolute below 1024 px): without it they escape the
+  position: relative; /* contains the visually hidden name and suffix (absolute below 1112 px): without it they escape the
                         scroll box and widen the page whenever the bar's content is a few px wider than the screen */
 }
 .dh-strip::-webkit-scrollbar { display: none; }
@@ -48,7 +48,11 @@
 :root[data-dh-site="mask"] .dh-strip:not([data-dh-site]) .dh-strip-links a[data-dh-site="mask"],
 .dh-strip[data-dh-site="mask"] .dh-strip-links a[data-dh-site="mask"],
 :root[data-dh-site="quarry"] .dh-strip:not([data-dh-site]) .dh-strip-links a[data-dh-site="quarry"],
-.dh-strip[data-dh-site="quarry"] .dh-strip-links a[data-dh-site="quarry"]
+.dh-strip[data-dh-site="quarry"] .dh-strip-links a[data-dh-site="quarry"],
+:root[data-dh-site="proof"] .dh-strip:not([data-dh-site]) .dh-strip-links a[data-dh-site="proof"],
+.dh-strip[data-dh-site="proof"] .dh-strip-links a[data-dh-site="proof"],
+:root[data-dh-site="iris"] .dh-strip:not([data-dh-site]) .dh-strip-links a[data-dh-site="iris"],
+.dh-strip[data-dh-site="iris"] .dh-strip-links a[data-dh-site="iris"]
 /* @end */ { color: var(--dh-text); font-weight: var(--dh-weight-semibold); box-shadow: inset 0 -2px 0 var(--dh-accent); border-radius: 0; }
 .dh-strip-label { margin: 0 0 0 auto; padding-left: var(--dh-space-3); color: var(--dh-muted); }
 /* @generated label suffixes from dh-strip.mjs (npm run shared:stamp) */
@@ -57,10 +61,10 @@
 :root[data-dh-label="browser"] .dh-strip:not([data-dh-label]) .dh-strip-more[data-dh-label="recorded"],
 .dh-strip[data-dh-label="browser"] .dh-strip-more[data-dh-label="recorded"] { display: none; }
 /* @end */
-/* Phones and tablets (below 1024 px since 1.2.8: ten links, the current one semibold, and the longest suffix need 955 px in
- * Chromium with Linux system fonts, and the nine-link bar measured about 60 px wider elsewhere; 968 px in 1.2.7, 880 px in 1.2.5, 720 px in 1.2.4):
+/* Phones and tablets (below 1112 px since 1.2.11: twelve links, the current one semibold, and the longest suffix need 1104 px in
+ * Chromium with DejaVu Sans, a wide system font; 1072 px in 1.2.10, 1024 px in 1.2.8, 968 px in 1.2.7, 880 px in 1.2.5, 720 px in 1.2.4):
  * the mark carries "Dragonhound Labs" (kept for screen readers), the label shortens. */
-@media (max-width: 1023px) {
+@media (max-width: 1111px) {
   .dh-strip { gap: var(--dh-space-2); }
   .dh-strip-name, .dh-strip-more {
     position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden;
@@ -68,11 +72,11 @@
   }
   .dh-strip-links { padding-left: var(--dh-space-2); }
 }
-/* Phones (below 720 px since 1.2.8: the ten links need 679 px; 664 px in 1.2.7, 600 px in 1.2.5): the links no longer fit, so the link list scrolls sideways on its own while the
+/* Phones (below 800 px since 1.2.11: the twelve links need 792 px in DejaVu Sans; 768 px in 1.2.10, 720 px in 1.2.8, 664 px in 1.2.7, 600 px in 1.2.5): the links no longer fit, so the link list scrolls sideways on its own while the
  * mark and "Live demo" stay put. Where scroll-driven animations exist, the edges fade only while there is more to
  * scroll that way (no fade when the list fits); elsewhere the list is clipped at the edge. dh-theme.js scrolls the
  * current site's link into view. */
-@media (max-width: 719px) {
+@media (max-width: 799px) {
   .dh-strip-links {
     flex: 0 1 auto; min-width: 0;
     overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain;
@@ -97,16 +101,16 @@
   to { --dh-strip-fade-l: 24px; --dh-strip-fade-r: 0px; }
 }
 /* Narrow phones (320-419 px): tighter spacing shows more of the list. Links keep at least 24 px of width
- * ("Cull", the shortest, is about 31 px with 3 px padding). */
+ * ("Iris" is the shortest). */
 @media (max-width: 419px) {
   .dh-strip { gap: var(--dh-space-1); padding: 0 var(--dh-space-2); }
   .dh-strip-links { gap: 0; padding-left: var(--dh-space-1); }
   .dh-strip-links a { padding: 0 3px; }
   .dh-strip-label { padding-left: var(--dh-space-1); }
 }
-/* Below 360 px (320 px phones): 12 px text and 2 px link padding. "Cull" stays about 26 px wide. */
+/* Below 360 px (320 px phones): 12 px text and 2 px link padding. "Iris" would be 22 px: min-width holds it at 24. */
 @media (max-width: 359px) {
   .dh-strip { font-size: .75rem; }
-  .dh-strip-links a { padding: 0 2px; }
+  .dh-strip-links a { padding: 0 2px; min-width: 20px; justify-content: center; } /* content box: 24 px with the padding */
 }
 @media print { .dh-strip { display: none; } }

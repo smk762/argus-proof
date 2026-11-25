@@ -1,7 +1,7 @@
-# Dragonhound shared design layer (dh-shared v1, currently 1.2.8)
+# Dragonhound shared design layer (dh-shared v1, currently 1.2.11)
 
 The one source of truth for what the Dragonhound Labs sites share: dragonhound.dev (this repo,
-the reference look), Studio, Lightbox, Atlas, Cull, Realms, Safelight, Assay, Sightline, Mask and Quarry. Each repo vendors a pinned copy, so there is no
+the reference look), Studio, Lightbox, Atlas, Cull, Realms, Safelight, Assay, Sightline, Mask, Quarry, Proof and Iris. Each repo vendors a pinned copy, so there is no
 runtime dependency and no CSP change. A checksum keeps the copies honest.
 
 | File | What it is |
@@ -121,7 +121,7 @@ One source, two forms: `dh-strip.mjs` exports the links, labels and mark (`strip
 `dh-strip.html` is generated from it by `npm run shared:stamp`, and the build fails if the two drift.
 
 - **Static HTML:** paste `dh-strip.html` as the first element in `<body>` after the skip link, include `dh-strip.css`
-  after the tokens, and say which site this is with **`data-dh-site="studio"`** (or `lightbox`, `atlas`, `cull`, `realms`, `safelight`, `assay`, `sightline`, `mask`, `quarry`) on `<html>`
+  after the tokens, and say which site this is with **`data-dh-site="studio"`** (or `lightbox`, `atlas`, `cull`, `realms`, `safelight`, `assay`, `sightline`, `mask`, `quarry`, `proof`, `iris`) on `<html>`
   or on the `<nav class="dh-strip">`. Don't edit the markup: `dh-strip.css` shows the current link from that
   attribute (no JS needed), and `dh-theme.js` adds `aria-current="page"` to it, also for strips mounted later.
   A hand-set `aria-current` still works.
@@ -137,8 +137,8 @@ One source, two forms: `dh-strip.mjs` exports the links, labels and mark (`strip
   TypeScript picks up the types from `dh-strip.d.mts` next to it (1.2.1; for a `.mjs` import TypeScript looks for `.d.mts`, not `.d.ts`).
 
 It is a `<nav aria-label="Dragonhound Labs demos">` landmark, 30 px tall. Links are same-tab (all `*.dragonhound.dev` hosts are internal: make sure your
-external-link rewriter treats them that way). Below 1024 px (1.2.8; 968 px in 1.2.7, 880 px in 1.2.5, 720 px in 1.2.4, 640 px in 1.2.2 and 1.2.3, 560 px before) the "Dragonhound Labs" text and
-the label suffix are visually hidden (still read out). Below 720 px (1.2.8; 664 px in 1.2.7, 600 px in 1.2.5) the ten links no longer fit, so the link list scrolls
+external-link rewriter treats them that way). Below 1112 px (1.2.11; 1072 px in 1.2.10, 1024 px in 1.2.8, 968 px in 1.2.7, 880 px in 1.2.5, 720 px in 1.2.4, 640 px in 1.2.2 and 1.2.3, 560 px before) the "Dragonhound Labs" text and
+the label suffix are visually hidden (still read out). Below 800 px (1.2.11; 768 px in 1.2.10, 720 px in 1.2.8, 664 px in 1.2.7, 600 px in 1.2.5) the twelve links no longer fit, so the link list scrolls
 sideways on its own (1.2.5) while the mark and "Live demo" stay put; its edges fade while there is more to scroll that way
 (scroll-driven animations; browsers without them clip the list at the edge), and `dh-theme.js` scrolls the current
 site's link into view. Spacing tightens below 420 px, and below 360 px the strip text drops to 12 px. The bar never wraps.
@@ -158,6 +158,7 @@ If your header is sticky, offset it by `var(--dh-strip-h)` or put the strip insi
 - Two states, system default: toggling stores an override in a `dh-theme` cookie (`Domain=.dragonhound.dev; Path=/; SameSite=Lax; Secure`, one year); toggling back to the system scheme deletes it. On other hosts (localhost, `*.pages.dev`) the cookie is host-only.
 - It re-reads the cookie when a tab becomes visible again, so a change on another subdomain carries over.
 - The landing page's old `localStorage.theme` is migrated once. A site with its own 3-state toggle should drop it for this one.
+- Where the cookie can't be stored (cookies blocked, a sandboxed or opaque-origin frame, a rejected `Domain`), the toggle still works: the choice holds in the page, is kept in `localStorage.theme` across loads, and a refocus never resets it to the system scheme (1.2.9).
 - Dark-only site (Lightbox): `<html data-theme="dark" data-dh-theme-lock>`, no toggle (and see "locked sites" below).
 - Next.js: put the tag in the root layout's `<head>` as a plain `<script src>` (not `next/script` with `afterInteractive`), and add `suppressHydrationWarning` to `<html>`.
 - **Change notification:** `document` receives a `dh-theme-change` CustomEvent with
@@ -231,6 +232,43 @@ CI snippet for a target repo (GitHub Actions):
 9. Verify: 390 px and 1440 px in both themes, toggle on one subdomain and reload another (cookie `Domain=.dragonhound.dev`), zero CSP errors, Lighthouse unchanged or better.
 
 ## Changelog
+
+- **1.2.11**
+  - `dh-strip.mjs`: Iris (`iris`, https://iris.dragonhound.dev/, argus-iris) joins the strip after Proof. `dh-strip.html`,
+    the current-site rules in `dh-strip.css` and the `DhSite` type follow.
+  - `dh-strip.css`: the phone layout applies below 1112 px (was 1072 px) and the link list scrolls below 800 px (was
+    768 px). Measured in Chromium with DejaVu Sans, a wider system font than 1.2.10's: twelve links need 1104 px
+    (1072 px for eleven), and 792 px without the name and suffix (761 px for eleven).
+    Below 360 px links are at least 24 px wide ("Iris" was 22 px). Measured at every width from 320 to 1160 px and at
+    1280 and 1440 px, both suffixes, each site current (20,232 cases): no page or bar overflow, links at least 24 px wide.
+  - `dh-theme.js` and the landing's external-link rule: comments name the new site. The test page has the new link
+    and the new phone width.
+
+- **1.2.10**
+  - `dh-strip.mjs`: Proof (`proof`, https://proof.dragonhound.dev/, argus-proof) joins the strip after Quarry:
+    Lightbox, Studio, Atlas, Cull, Realms, Safelight, Assay, Sightline, Mask, Quarry, Proof. `dh-strip.html`, the
+    current-site rules in `dh-strip.css` and the `DhSite` type follow.
+  - `dh-strip.css`: eleven links, the current one semibold, and the longer suffix need 1000 px in Chromium with Linux
+    system fonts (955 px for ten), so the phone layout (mark only, short label) applies below 1072 px (was 1024 px),
+    keeping the same font headroom as 1.2.8. Without the name and suffix the eleven links need 724 px (at 720 px the
+    bar overflowed by up to 4 px), so the link list scrolls sideways below 768 px (was 720 px). The 420 px and 360 px
+    tightening is unchanged. Measured in Chromium at every width from 320 to 1100 px and at 1280 and 1440 px, both
+    suffixes, each site current: no page or bar overflow, "Live demo" always on screen, the current link always in
+    view, links at least 25 px wide.
+  - `dh-theme.js` and the landing's external-link rule: comments name the new site. The test page has the new link
+    and the new phone width. The README's opening list names Proof.
+
+- **1.2.9**
+  - `dh-theme.js`: reading or writing `document.cookie` no longer throws out of the script. In an opaque-origin
+    document (a sandboxed iframe without `allow-same-origin`) the getter throws `SecurityError`, which used to stop
+    start-up before the toggle handling, `aria-pressed` and strip marking; it now reads as "nothing stored".
+  - `dh-theme.js`: a choice whose cookie was dropped (cookies blocked, a rejected `Domain`) is no longer undone when
+    the tab becomes visible again or comes back from bfcache, and no spurious `"sync"` event fires. Every write is read
+    back. While the cookie doesn't hold the choice, it is kept in `localStorage.theme` (the old landing key) across
+    loads, and that key is only removed once the cookie holds it, so the one-time migration no longer loses the value
+    when the cookie is refused. A page with working cookies behaves as before.
+  - Test page: the dropped-cookie and throwing-cookie cases, and an opaque-origin frame (`tests/shared/frame.html`;
+    `serve.mjs` lets the test page frame it).
 
 - **1.2.8**
   - `dh-strip.mjs`: Quarry (`quarry`, https://quarry.dragonhound.dev/, argus-quarry) joins the strip after Mask:

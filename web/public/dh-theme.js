@@ -1,4 +1,4 @@
-/*! dh-theme v1.2.8 | Dragonhound Labs light/dark theme, shared across *.dragonhound.dev.
+/*! dh-theme v1.2.11 | Dragonhound Labs light/dark theme, shared across *.dragonhound.dev.
  *
  * Load it as a plain, blocking script in <head>, before the stylesheet if you can:
  *     <meta name="color-scheme" content="light dark">
@@ -10,9 +10,11 @@
  * Model (two-state, system default): no stored value means "follow prefers-color-scheme".
  * Toggling stores an explicit override; toggling back to the system's own scheme clears it.
  * Storage: a "dh-theme" cookie on Domain=.dragonhound.dev (so the choice follows you between
- * dragonhound.dev, studio., lightbox., atlas., cull., realms., safelight., assay., sightline., mask., quarry.), host-only on any other host (localhost, previews).
+ * dragonhound.dev, studio., lightbox., atlas., cull., realms., safelight., assay., sightline., mask., quarry., proof., iris.), host-only on any other host (localhost, previews).
  * The cookie is set only when someone uses the toggle. A legacy localStorage "theme" value
- * (the landing page's old key) is read once and migrated.
+ * (the landing page's old key) is read once and migrated. Where the cookie can't be stored (cookies
+ * blocked, an opaque-origin frame, a rejected Domain), that key holds the choice instead, and a
+ * missing cookie never undoes the choice made in this page.
  *
  * Toggle: any <button data-dh-theme-toggle> gets click handling (delegated) and aria-pressed
  * (pressed = dark), including toggles mounted later by client-side rendering.
@@ -58,19 +60,35 @@
   const host = location.hostname;
   const domain = host === FAMILY || host.endsWith("." + FAMILY) ? "; Domain=." + FAMILY : "";
   const secure = location.protocol === "https:" ? "; Secure" : "";
-  const readCookie = () => valid((document.cookie.match(/(?:^|;\s*)dh-theme=(light|dark)/) || [])[1]);
+  const LEGACY = "theme"; // the landing page's old localStorage key; the fallback store when the cookie can't be kept
+  // document.cookie throws SecurityError in an opaque-origin document (a sandboxed iframe): read that as "nothing stored".
+  const readCookie = () => {
+    try { return valid((document.cookie.match(/(?:^|;\s*)dh-theme=(light|dark)/) || [])[1]); } catch { return null; }
+  };
+  // True when the cookie now holds t: a blocked or rejected cookie is dropped silently, so read it back.
   const writeCookie = (t) => {
-    document.cookie = KEY + "=" + (t || "") + "; Path=/; SameSite=Lax" + domain + secure + "; Max-Age=" + (t ? YEAR : 0);
+    try {
+      document.cookie = KEY + "=" + (t || "") + "; Path=/; SameSite=Lax" + domain + secure + "; Max-Age=" + (t ? YEAR : 0);
+    } catch { return false; }
+    return readCookie() === t;
+  };
+  let saved = true; // false while the last choice isn't in the cookie: then the cookie is no source of truth
+  const store = (t) => {
+    saved = writeCookie(t);
+    try { // the old key goes once the cookie holds the choice; until then it keeps the choice across loads
+      if (saved || !t) localStorage.removeItem(LEGACY); else localStorage.setItem(LEGACY, t);
+    } catch { /* storage blocked */ }
   };
   const read = () => {
     const c = readCookie();
     if (c) return c;
-    try { // one-time migration from the landing page's old localStorage key
-      const old = valid(localStorage.getItem("theme"));
-      localStorage.removeItem("theme");
-      if (old) { writeCookie(old); return old; }
-    } catch { /* storage blocked */ }
-    return null;
+    let raw = null;
+    try { raw = localStorage.getItem(LEGACY); } catch { /* storage blocked */ }
+    if (raw === null) return null;
+    const old = valid(raw);
+    if (old) store(old); // to the cookie, or kept in the old key while the cookie can't be stored
+    else try { localStorage.removeItem(LEGACY); } catch { /* storage blocked */ }
+    return old;
   };
   const press = (el) => el.setAttribute("aria-pressed", String(effective() === "dark"));
   const sync = () => {
@@ -91,7 +109,7 @@
   const set = (t, source = "api") => {
     if (locked) return;
     t = valid(t);
-    writeCookie(t);
+    store(t);
     apply(t, source);
   };
   const subscribe = (fn) => {
@@ -112,7 +130,8 @@
     });
     system.addEventListener("change", () => apply(root.dataset.theme, "system"));
     // Another subdomain may have changed the cookie while this tab was in the background or bfcache.
-    const recheck = () => apply(readCookie(), "sync");
+    // Not when this page's own choice never reached the cookie: its absence would undo that choice.
+    const recheck = () => { if (saved) apply(readCookie(), "sync"); };
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") recheck(); });
     addEventListener("pageshow", (e) => { if (e.persisted) recheck(); });
   }
