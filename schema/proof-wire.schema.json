@@ -115,6 +115,28 @@
     "AggregateScores": {
       "description": "Run-level roll-up: counts, pass rate, mean of each metric axis, diversity.\n\n``pass_rate`` is computed over near-duplicate *groups*, not raw frames, so a\ncluster of Monte-Carlo near-dups counts once: ``n_passed / n_groups``.\n``n_groups`` equals ``n_images`` when no deduper ran.",
       "properties": {
+        "content_ratings": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "propertyNames": {
+                "enum": [
+                  "safe",
+                  "suggestive",
+                  "explicit"
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Ratings"
+        },
         "diversity": {
           "anyOf": [
             {
@@ -173,7 +195,8 @@
         "means",
         "n_groups",
         "n_needs_hitl",
-        "diversity"
+        "diversity",
+        "content_ratings"
       ],
       "title": "AggregateScores",
       "type": "object"
@@ -396,7 +419,7 @@
           "default": null
         },
         "proof_version": {
-          "default": "1.16",
+          "default": "1.17",
           "title": "Proof Version",
           "type": "string"
         },
@@ -972,6 +995,23 @@
     "ImageScores": {
       "description": "Per-image scores for one generated sample, keyed by ``(run_id, seed)``.\n\n``image_id`` is an opaque handle for the report to reference; the durable,\nreproducible key is ``seed`` (with the run's :class:`RunManifest`).\n``hitl_rating`` is a 1\u20135 star human rating when review has happened;\n``hitl_rater`` records who gave it (an opaque rater id) so a report can be\nsplit per rater for inter-rater reliability. ``refinement`` is the optional\nsecond-pass re-rank over the passing subset, kept distinct from the first pass.",
       "properties": {
+        "content_rating": {
+          "anyOf": [
+            {
+              "enum": [
+                "safe",
+                "suggestive",
+                "explicit"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Rating"
+        },
         "duplicate_group": {
           "anyOf": [
             {
@@ -1056,6 +1096,7 @@
         "image_id",
         "seed",
         "metrics",
+        "content_rating",
         "hitl_rating",
         "hitl_rater",
         "reject_reasons",
@@ -1899,7 +1940,7 @@
           "type": "object"
         },
         "proof_version": {
-          "default": "1.16",
+          "default": "1.17",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2142,7 +2183,7 @@
           "type": "string"
         },
         "proof_version": {
-          "default": "1.16",
+          "default": "1.17",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2513,7 +2554,7 @@
           "type": "integer"
         },
         "proof_version": {
-          "default": "1.16",
+          "default": "1.17",
           "title": "Proof Version",
           "type": "string"
         },
@@ -2538,6 +2579,23 @@
     "ScoredImage": {
       "description": "One uploaded image's scores. ``index`` is its position in the upload;\n``filename`` echoes the client's name for it (never used as a path).",
       "properties": {
+        "content_rating": {
+          "anyOf": [
+            {
+              "enum": [
+                "safe",
+                "suggestive",
+                "explicit"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Rating"
+        },
         "crop": {
           "anyOf": [
             {
@@ -2573,7 +2631,8 @@
         "index",
         "filename",
         "crop",
-        "metrics"
+        "metrics",
+        "content_rating"
       ],
       "title": "ScoredImage",
       "type": "object"
@@ -2899,7 +2958,7 @@
           "type": "array"
         },
         "proof_version": {
-          "default": "1.16",
+          "default": "1.17",
           "title": "Proof Version",
           "type": "string"
         },

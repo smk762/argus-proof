@@ -701,7 +701,10 @@ def score_files(
     boxes = crops or [None] * len(images)
     return ScoreResult(
         images=[
-            ScoredImage(index=i, filename=names[i], crop=boxes[i], metrics=row.metrics) for i, row in enumerate(rows)
+            ScoredImage(
+                index=i, filename=names[i], crop=boxes[i], metrics=row.metrics, content_rating=row.content_rating
+            )
+            for i, row in enumerate(rows)
         ],
         means=metric_means(rows),
         n_images=len(rows),

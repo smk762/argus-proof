@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from argus_cortex.moderation import CONTENT_RATINGS, ContentRating
 from argus_cortex.taxonomy import TargetProfile
 
 from argus_proof.models import RejectReasonCode
@@ -76,6 +77,22 @@ class ImageScorer(Protocol):
     def provenance(self) -> ScorerProvenance: ...
     def is_available(self) -> bool: ...
     def score(self, image_path: Path, ctx: ScoreContext) -> float | None: ...
+
+
+@runtime_checkable
+class ContentRater(Protocol):
+    """A scorer that can also say the content rating of the image it just scored (the safety scorer).
+
+    Asked once per image, right after :meth:`ImageScorer.score`, so it costs no second check.
+    """
+
+    def content_rating(self, image_path: Path) -> ContentRating | None: ...
+
+
+def worst_rating(*ratings: ContentRating | None) -> ContentRating | None:
+    """The most severe of *ratings* (``explicit`` over ``suggestive`` over ``safe``); ``None`` when none is given."""
+    given = [r for r in ratings if r is not None]
+    return max(given, key=CONTENT_RATINGS.index) if given else None
 
 
 @runtime_checkable

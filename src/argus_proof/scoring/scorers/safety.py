@@ -30,13 +30,16 @@ import structlog
 from argus_cortex.moderation import (
     DEFAULT_EXPOSED_LABELS,
     CheckFailed,
+    ContentRating,
     ModerationConfigError,
     NudeNetClient,
     exposed_score,
+    rate_content,
 )
 from argus_cortex.peers import peer_url
 
 from argus_proof.models import ScorerProvenance
+from argus_proof.scoring.base import worst_rating
 from argus_proof.scoring.scorers._util import clamp01
 from argus_proof.scoring.scorers._util import percentile as _percentile
 
@@ -139,6 +142,15 @@ class SafetyScorer:
             return float("nan") if non_finite else None
         return clamp01(1.0 - max(unsafe))  # most-unsafe detector wins; non-finite -> rejected by orchestrator
 
+    def content_rating(self, image_path: Path) -> ContentRating | None:
+        """The suite's content rating of the image :meth:`score` just read: the most severe any detector gives.
+
+        Only a detector that keeps NudeNet's detections can rate (``NudeNetDetector``); ``None`` when none did.
+        Recorded beside the safety score, which it does not change.
+        """
+        ratings = [rate(image_path) for d in self.detectors if callable(rate := getattr(d, "content_rating", None))]
+        return worst_rating(*ratings)
+
 
 class NudeNetDetector:
     """Unsafe-probability from a NudeNet server over HTTP (max exposed-class score).
@@ -173,6 +185,8 @@ class NudeNetDetector:
         self._client: NudeNetClient | None = None
         self._detector: str | None = None
         self._asked = False
+        # The rating of each image checked and not yet asked for (see content_rating).
+        self._ratings: dict[Path, ContentRating] = {}
 
     def _url(self) -> str:
         """The server's URL, or ``""`` when none is configured (the detector is then unavailable).
@@ -232,7 +246,18 @@ class NudeNetDetector:
             # NaN rejects this image through the orchestrator's guard without aborting the run.
             logger.warning("safety.nudenet_check_failed", image=Path(image_path).name, error=str(exc))
             return float("nan")
+        rating = rate_content(result)
+        if rating is not None:
+            self._ratings[Path(image_path)] = rating
         return exposed_score(result.labels, sorted(self._unsafe_classes))  # no exposed detection -> 0.0 (safe)
+
+    def content_rating(self, image_path: Path) -> ContentRating | None:
+        """The content rating from this image's last check (argus-cortex's ``rate_content``), handed over once.
+
+        It is the suite's rubric over the server's detections, whatever ``unsafe_classes`` this detector scores
+        with. ``None`` when the image was not checked or its check failed.
+        """
+        return self._ratings.pop(Path(image_path), None)
 
 
 def _float_env(name: str, default: float) -> float:

@@ -143,6 +143,10 @@ class _NudeNet(BaseHTTPRequestHandler):
             {"class": "FEET_EXPOSED", "score": 0.9, "box": [0, 0, 5, 5]},
             {"class": "MALE_BREAST_EXPOSED", "score": 0.7, "box": [0, 0, 5, 5]},
         ],
+        "swimwear.png": [
+            {"class": "FEMALE_BREAST_COVERED", "score": 0.82, "box": [0, 0, 5, 5]},
+            {"class": "BELLY_EXPOSED", "score": 0.83, "box": [0, 0, 5, 5]},
+        ],
     }
 
     health: dict | None = None  # GET /health; None answers 404, as the upstream 320n image does
@@ -390,3 +394,86 @@ def test_a_nudenet_check_that_fails_is_a_broken_reading(tmp_path: Path) -> None:
     detector = NudeNetDetector(base_url="http://127.0.0.1:9", timeout=0.5)  # nothing listens: the check fails
     value = detector.unsafe_probability(image)
     assert value is not None and math.isnan(value)
+
+
+# --------------------------------------------------------------------------
+# The content rating: recorded beside safety, never gated on
+# --------------------------------------------------------------------------
+
+
+def _rated_run(nudenet_url: str, tmp_path: Path, names: list[str], **kwargs) -> EvalReport:
+    from test_scoring import manifest
+
+    from argus_proof.models import GeneratedImage
+
+    images = []
+    for i, name in enumerate(names):
+        (tmp_path / name).write_bytes(b"\x89PNG fake")
+        images.append(
+            GeneratedImage(image_id=f"i{i}", run_id="run-1", seed=i, path=str(tmp_path / name), width=64, height=64)
+        )
+    scorer = SafetyScorer([NudeNetDetector(base_url=nudenet_url, timeout=5)])
+    return score_run(manifest(), images, scorers=[scorer], **kwargs)
+
+
+def test_each_image_carries_the_suites_content_rating(nudenet_url: str, tmp_path: Path) -> None:
+    report = _rated_run(nudenet_url, tmp_path, ["beach.png", "swimwear.png", "topless.png"])
+    assert [img.content_rating for img in report.images] == ["safe", "suggestive", "explicit"]
+    # The rating shows what the number can't: a covered class leaves safety at 1.0.
+    assert report.images[1].metrics.safety == 1.0
+    assert report.images[2].metrics.safety == pytest.approx(0.19)
+    assert report.aggregate.content_ratings == {"safe": 1, "suggestive": 1, "explicit": 1}
+    assert list(report.aggregate.content_ratings) == ["safe", "suggestive", "explicit"]
+
+
+def test_the_rating_changes_no_verdict(nudenet_url: str, tmp_path: Path) -> None:
+    """Recorded only: a suggestive image passes exactly as a safe one does."""
+    report = _rated_run(nudenet_url, tmp_path, ["beach.png", "swimwear.png"])
+    safe, suggestive = report.images
+    assert (safe.passed, safe.reject_reasons) == (suggestive.passed, suggestive.reject_reasons)
+    assert safe.metrics == suggestive.metrics
+
+
+def test_the_rating_is_the_suites_rubric_whatever_classes_the_detector_scores(nudenet_url: str, tmp_path: Path) -> None:
+    (tmp_path / "beach.png").write_bytes(b"\x89PNG fake")
+    wide = NudeNetDetector(unsafe_classes=frozenset({"FEET_EXPOSED"}), base_url=nudenet_url)
+    assert wide.unsafe_probability(tmp_path / "beach.png") == 0.9
+    assert wide.content_rating(tmp_path / "beach.png") == "safe"  # bare feet are not in cortex's rubric
+    assert wide.content_rating(tmp_path / "beach.png") is None  # handed over once: nothing is kept per image
+    (tmp_path / "broken.png").write_bytes(b"\x89PNG fake")
+    assert math.isnan(wide.unsafe_probability(tmp_path / "broken.png"))
+    assert wide.content_rating(tmp_path / "broken.png") is None  # a failed check rates nothing
+
+
+def test_no_rating_without_a_detector_that_keeps_detections() -> None:
+    from test_scoring import manifest
+
+    from argus_proof.models import GeneratedImage
+
+    images = [GeneratedImage(image_id="i0", run_id="run-1", seed=0, path="i0.png", width=64, height=64)]
+    report = score_run(manifest(), images, scorers=[SafetyScorer([FakeDetector("d", {"i0": 0.9})])])
+    assert report.images[0].content_rating is None and report.aggregate.content_ratings is None
+
+
+def test_an_ensemble_takes_the_most_severe_rating() -> None:
+    class Rater(FakeDetector):
+        def __init__(self, name: str, rating: str) -> None:
+            super().__init__(name, {"gen": 0.0})
+            self.rating = rating
+
+        def content_rating(self, image_path: Path) -> str:
+            return self.rating
+
+    scorer = SafetyScorer([Rater("a", "suggestive"), FakeDetector("b", {"gen": 0.0}), Rater("c", "safe")])
+    assert scorer.content_rating(Path("gen.png")) == "suggestive"
+
+
+def test_a_stored_report_without_ratings_still_reads() -> None:
+    """A 1.16 report has no content_rating: it loads, and its roll-up has no counts."""
+    old = _report([0.9, 0.1]).model_dump(mode="json")
+    for image in old["images"]:
+        image.pop("content_rating")
+    old["aggregate"].pop("content_ratings")
+    old["proof_version"] = "1.16"
+    report = EvalReport.model_validate(old)
+    assert [img.content_rating for img in report.images] == [None, None]
