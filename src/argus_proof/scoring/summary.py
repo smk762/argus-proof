@@ -10,6 +10,8 @@ counts once, and "pending review" stays distinct from "failed".
 
 from __future__ import annotations
 
+from argus_cortex.moderation import CONTENT_RATINGS, ContentRating
+
 from argus_proof.models import AggregateScores, GateConfig, ImageScores, MetricScores, Verdict
 from argus_proof.scoring.base import METRIC_FIELDS
 
@@ -60,6 +62,14 @@ def metric_means(rows: list[ImageScores]) -> MetricScores:
     return means
 
 
+def rating_counts(rows: list[ImageScores]) -> dict[ContentRating, int] | None:
+    """How many rows have each content rating, every rating a key; ``None`` when no row was rated."""
+    rated = [row.content_rating for row in rows if row.content_rating is not None]
+    if not rated:
+        return None
+    return {rating: rated.count(rating) for rating in CONTENT_RATINGS}
+
+
 def build_verdict(aggregate: AggregateScores, gate: GateConfig) -> Verdict:
     """The run verdict from its aggregate.
 
@@ -107,5 +117,6 @@ def summarise(
         pass_rate=n_passed / n_groups if n_groups else 0.0,
         means=metric_means(rows),
         diversity=diversity,
+        content_ratings=rating_counts(rows),
     )
     return aggregate, build_verdict(aggregate, gate)

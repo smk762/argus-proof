@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Each scored image carries the suite's content rating** (wire 1.17, additive). The safety scorer already asks
+  NudeNet about every image; it now also records argus-cortex's `rate_content` of that answer, `safe`, `suggestive`
+  or `explicit`, the rubric curator rates by. `ImageScores.content_rating` and `ScoredImage.content_rating` (`POST
+  /score`) hold it, and `AggregateScores.content_ratings` counts the rated images per rating. `explicit` is the reading
+  that already makes `safety` unsafe; `suggestive` (a covered intimate class) is one the safety number never showed.
+  **It is recorded only**: no gate, acceptance check or recommendation reads it, and no score changes. `null` when
+  NudeNet did not rate the image. Needs argus-cortex 0.16.2.
 - The hosted demo deploys itself: `.github/workflows/pages.yml` publishes every `dev` commit that passes CI and checks the live site serves that build.
 - **One suite-wide name per service URL** (argus-cortex 0.16 `peers`, argus-cortex#209). Each URL is read from
   proof's own variable, then the suite-wide one: `PROOF_NUDENET_URL` then `ARGUS_NUDENET_URL`, `PROOF_PUPPET_URL` then

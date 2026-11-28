@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import structlog
+from argus_cortex.moderation import ContentRating
 
 from argus_proof.models import (
     EvalReport,
@@ -25,10 +26,12 @@ from argus_proof.models import (
 )
 from argus_proof.scoring.base import (
     METRIC_FIELDS,
+    ContentRater,
     Deduper,
     DiversityScorer,
     ImageScorer,
     ScoreContext,
+    worst_rating,
 )
 from argus_proof.scoring.gate import gate_image
 from argus_proof.scoring.summary import summarise
@@ -53,9 +56,12 @@ def _score_images(images: list[GeneratedImage], scorers: Sequence[ImageScorer], 
     rows: list[ImageScores] = []
     for img in images:
         metrics = MetricScores()
+        rating: ContentRating | None = None
         image_path = Path(img.path)
         for scorer in live:
             value = scorer.score(image_path, ctx)
+            if isinstance(scorer, ContentRater):
+                rating = worst_rating(rating, scorer.content_rating(image_path))
             if value is None:
                 continue
             # Enforce the [0,1] contract here: an un-normalised scorer (e.g. a raw
@@ -64,7 +70,7 @@ def _score_images(images: list[GeneratedImage], scorers: Sequence[ImageScorer], 
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"scorer for {scorer.metric!r} returned {value}; scores must be normalised to [0, 1]")
             setattr(metrics, scorer.metric, value)
-        rows.append(ImageScores(image_id=img.image_id, seed=img.seed, metrics=metrics))
+        rows.append(ImageScores(image_id=img.image_id, seed=img.seed, metrics=metrics, content_rating=rating))
     return rows
 
 

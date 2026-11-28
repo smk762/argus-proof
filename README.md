@@ -153,7 +153,8 @@ background out of the embedding. The reply is a `ScoreResult`:
   "n_images": 2,
   "images": [
     {"index": 0, "filename": "t1.png", "crop": {"x": 312, "y": 40, "width": 400, "height": 900},
-     "metrics": {"identity": null, "likeness": 0.83, "clip_score": null, "aesthetic": null, "preference": null, "safety": null}}
+     "metrics": {"identity": null, "likeness": 0.83, "clip_score": null, "aesthetic": null, "preference": null, "safety": null},
+     "content_rating": null}
   ],
   "means": {"identity": null, "likeness": 0.79, "...": null},
   "scorers": [
@@ -430,7 +431,9 @@ clips and `manifest.json` are in the run dir. No report is stored: speech scorer
 
 Generated images are scored into an `EvalReport` by a pluggable framework
 (`argus_proof.scoring`). Per-image `ImageScorer`s each fill one normalised
-`[0,1]` metric (identity / likeness / clip_score / aesthetic / preference / safety); a
+`[0,1]` metric (identity / likeness / clip_score / aesthetic / preference / safety); the
+safety scorer also records each image's `content_rating` (`safe`, `suggestive` or `explicit`:
+argus-cortex's `rate_content`, the rubric curator uses), which no gate reads; a
 `Deduper` collapses Monte-Carlo near-duplicates so a cluster counts **once**
 toward the pass rate; a `DiversityScorer` rewards variety. A `GateConfig` routes
 each image to **auto-pass / auto-fail / needs-HITL** on a weighted composite,

@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
+from argus_cortex.moderation import ContentRating
 from argus_cortex.taxonomy import TargetCategory
 from argus_cortex.wire import check_version, make_versioned_base, schema_major
 from argus_cortex.wire import render_schema as _core_render_schema
@@ -90,11 +91,15 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, m
 #      "generated"; its clips and manifest are written, nothing is scored yet).
 # 1.16: additive — EchoImage.runtime: the library versions echo's /health reports
 #      (echo 0.3.0+), so a speech run records the stack that spoke it.
+# 1.17: additive — the suite's content rating (argus-cortex's rate_content: safe,
+#      suggestive, explicit), recorded beside the safety metric and never gated on:
+#      ImageScores.content_rating, ScoredImage.content_rating, and
+#      AggregateScores.content_ratings, the count of rated images per rating.
 # Since 1.7, GateConfig rejects ``weights`` / ``hard_gates`` keys that aren't a
 # MetricScores field. Such a key never matched a score, so its weight or gate
 # silently never applied; a payload that used one now fails validation instead.
 # Treated as a bug fix, not a wire break, so no major bump.
-PROOF_VERSION = "1.16"
+PROOF_VERSION = "1.17"
 
 # Majors of the proof contract this build understands. Refuse anything else up
 # front rather than deserialize it into the wrong shape.
@@ -513,6 +518,11 @@ class ImageScores(BaseModel):
     image_id: str
     seed: int
     metrics: MetricScores = Field(default_factory=MetricScores)
+    # The suite's content rating of the image (argus-cortex's rate_content over NudeNet's detections): "explicit"
+    # is the same reading that makes ``metrics.safety`` unsafe; "suggestive" (a covered intimate class) is one the
+    # safety number does not show. Recorded only: no gate or acceptance check reads it. None when no NudeNet
+    # detector rated the image.
+    content_rating: ContentRating | None = None
     hitl_rating: int | None = Field(default=None, ge=1, le=5)
     hitl_rater: str | None = None
     reject_reasons: list[RejectReason] = Field(default_factory=list)
@@ -547,6 +557,9 @@ class AggregateScores(BaseModel):
     n_needs_hitl: int = Field(default=0, ge=0)
     # Output variety in [0,1] (higher = more varied); None if not measured.
     diversity: float | None = None
+    # How many images have each content rating (every rating is a key, in order; frames, not near-dup groups).
+    # None when no image was rated. Informational: the verdict does not read it.
+    content_ratings: dict[ContentRating, int] | None = None
 
 
 class ScorerProvenance(BaseModel):
@@ -929,6 +942,8 @@ class ScoredImage(BaseModel):
     filename: str | None = None
     crop: CropBox | None = None
     metrics: MetricScores
+    # The suite's content rating (see ImageScores.content_rating); None when NudeNet did not rate the image.
+    content_rating: ContentRating | None = None
 
 
 class ScoreResult(_Versioned):
