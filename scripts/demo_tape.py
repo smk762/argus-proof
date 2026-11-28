@@ -303,6 +303,15 @@ def recording(root: Path) -> dict:
     for r in reports:
         if _scorers(r) != scorers:
             raise TapeError(f"report {r['run_id']} was scored differently from {reports[0]['run_id']}")
+    # A manifest records proof's wire version, not its package version, so the tape names the installed package.
+    # That is only true of the evaluation if the installed proof speaks the wire the runs were recorded on.
+    from argus_proof.models import PROOF_VERSION
+
+    if first["proof_version"] != PROOF_VERSION:
+        raise TapeError(
+            f"the runs were recorded on proof wire {first['proof_version']} but the installed argus-proof "
+            f"{package_version()} speaks {PROOF_VERSION}: build the tape with the proof release that ran them"
+        )
     return {
         "proof_version": package_version(),
         "wire_version": first["proof_version"],
