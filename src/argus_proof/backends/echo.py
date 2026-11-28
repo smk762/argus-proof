@@ -480,7 +480,8 @@ class EchoBackend:
         voices: dict[str, str] = {}  # ref_id -> the voice_clone_id echo answered with
         loaded = False
         try:
-            if previous != spec.checkpoint:
+            # An unreported selection may be another run's checkpoint: load the requested one rather than guess.
+            if not previous_known or previous != spec.checkpoint:
                 self.client.load(spec.checkpoint)
                 loaded = True
             for ref, pinned in zip(spec.references, references, strict=True):
@@ -571,7 +572,7 @@ class EchoBackend:
                                 spec, pi, ref.ref_id, voices[ref.ref_id], seed, out_dir
                             )
                             if weights is None:
-                                weights = self._pin(fingerprint, headers)
+                                weights = self._pin(fingerprint, headers, spec.checkpoint)
                             elif fingerprint != weights.fingerprint:
                                 raise EchoError(
                                     f"clip {clip.item_id} was spoken by other weights ({fingerprint[:12]}…, not "
@@ -628,8 +629,11 @@ class EchoBackend:
         )
         return clip, fingerprint, headers
 
-    def _pin(self, fingerprint: str, headers: Mapping[str, str]) -> SpeechWeights:
-        """The weights behind *fingerprint*, from ``/health``'s file list, recomputed so the pin can't be wrong."""
+    def _pin(self, fingerprint: str, headers: Mapping[str, str], requested: str | None) -> SpeechWeights:
+        """The weights behind *fingerprint*, from ``/health``'s file list, recomputed so the pin can't be wrong.
+
+        A clip whose ``X-Echo-Checkpoint`` names another checkpoint than *requested* fails the run.
+        """
         weights = self.client.health().get("weights") or {}
         files = weights.get("files") or []
         model = headers.get("x-echo-model")
@@ -641,9 +645,13 @@ class EchoBackend:
                 "echo's /health doesn't list the weights that spoke the first clip (its fingerprint doesn't match "
                 "the files): the checkpoint changed between the clip and the check"
             )
-        checkpoint = headers.get("x-echo-checkpoint", "")
+        checkpoint = unquote(headers.get("x-echo-checkpoint", "")) or None
+        if "x-echo-checkpoint" in headers and checkpoint != requested:
+            raise EchoError(
+                f"echo spoke with checkpoint {checkpoint or 'stock'}, not the requested {requested or 'stock'}"
+            )
         return SpeechWeights(
-            checkpoint=unquote(checkpoint) or None,
+            checkpoint=checkpoint,
             model=model or None,
             fingerprint=fingerprint,
             files=[ModelRef(name=name, sha256=sha) for name, sha in pairs],
