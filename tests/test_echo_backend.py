@@ -188,6 +188,36 @@ def test_an_unreported_checkpoint_is_not_restored_to_the_stock_weights(
     assert (tmp_path / "run" / MANIFEST_NAME).is_file()
 
 
+@pytest.mark.parametrize("weights", [None, {}])
+def test_an_unreported_selection_still_loads_the_stock_weights(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, weights: dict | None
+) -> None:
+    """With /health silent on the selection, a run asking for the stock weights loads them rather than speak with
+    whatever another run left selected (audit pack-argus-proof-aa3e6af18e)."""
+    echo = FakeEcho()
+    echo.selected = "forge/run 7"  # left over from another client
+    health = echo.health
+    answers = iter([health() | {"weights": weights}])
+    monkeypatch.setattr(echo, "health", lambda: next(answers, None) or health())
+    manifest = _backend(echo).generate(_spec(tmp_path, checkpoint=None), tmp_path / "run").manifest
+    assert [b["checkpoint"] for b in echo.bodies("/admin/load")] == [None]
+    assert manifest.weights.checkpoint is None
+
+
+def test_clips_spoken_by_another_checkpoint_than_requested_fail_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """/health claims the requested checkpoint but echo speaks with another: the run fails instead of recording the
+    wrong weights as the requested run (audit pack-argus-proof-aa3e6af18e)."""
+    echo = FakeEcho()  # stock weights selected
+    health = echo.health
+    answers = iter([health() | {"weights": {"checkpoint": "forge/run 7"}}])  # a stale answer
+    monkeypatch.setattr(echo, "health", lambda: next(answers, None) or health())
+    with pytest.raises(EchoError, match="not the requested forge/run 7"):
+        _backend(echo).generate(_spec(tmp_path), tmp_path / "run")
+    assert not (tmp_path / "run" / MANIFEST_NAME).exists()
+
+
 def test_a_run_on_the_selected_checkpoint_loads_nothing(tmp_path: Path) -> None:
     echo = FakeEcho()
     _backend(echo).generate(_spec(tmp_path, checkpoint=None), tmp_path / "run")

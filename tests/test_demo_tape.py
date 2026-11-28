@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from argus_proof.models import PROOF_VERSION
+
 ROOT = Path(__file__).resolve().parent.parent
 TAPE_DIR = ROOT / "web" / "public" / "tape"
 
@@ -112,7 +114,7 @@ def _recorded(run_id: str, seeds: list[int], scorer: str = "insightface") -> tup
         "seeds": seeds,
         "sampling": {"sampler": "euler", "scheduler": "normal", "steps": 30, "cfg": 6, "width": 1024, "height": 1024},
         "base_checkpoint": {"name": "sd_xl_base_1.0.safetensors", "sha256": "cd" * 32},
-        "proof_version": "1.0",
+        "proof_version": PROOF_VERSION,
         "engine": "comfyui",
         "engine_version": "0.3",
     }
@@ -166,6 +168,16 @@ def test_recording_names_a_run_without_an_engine_or_proof_version(tmp_path: Path
         demo_tape.recording(_recording_dir(tmp_path / "rec", [a[0], b[0]], [a[1], b[1]]))
 
 
+def test_recording_refuses_runs_from_another_proof_wire(tmp_path: Path) -> None:
+    """The tape names the installed proof, so runs recorded on another wire (another proof release) are refused
+    rather than credited to it (audit pack-argus-proof-c052434f5d)."""
+    a = _recorded("synth-s00000320-l00-w00-p000", [1, 2, 3])
+    b = _recorded("synth-s00000640-l00-w00-p000", [1, 2, 3])
+    a[0]["proof_version"] = b[0]["proof_version"] = "1.0"
+    with pytest.raises(demo_tape.TapeError, match="installed argus-proof"):
+        demo_tape.recording(_recording_dir(tmp_path / "old", [a[0], b[0]], [a[1], b[1]]))
+
+
 def test_recording_still_runs_when_the_distribution_is_not_installed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -193,7 +205,7 @@ def test_recording_reads_the_threshold_and_the_package_version(tmp_path: Path, m
     rec = demo_tape.recording(_recording_dir(tmp_path / "ok", [a[0], b[0]], [a[1], b[1]]))
     assert rec["pass_threshold"] == 0.6
     assert rec["proof_version"] == "9.9.9"
-    assert rec["wire_version"] == "1.0"
+    assert rec["wire_version"] == PROOF_VERSION
     b[1]["gate"] = {"run_pass_rate": 0.5}
     with pytest.raises(demo_tape.TapeError, match="pass thresholds"):
         demo_tape.recording(_recording_dir(tmp_path / "mix", [a[0], b[0]], [a[1], b[1]]))

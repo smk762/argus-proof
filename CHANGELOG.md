@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup; a read-only server stays off the broker. The CLI still registers with its first lease.
 
 ### Fixed
+- A speech run asking for echo's stock weights loads them when `/health` doesn't say which checkpoint is selected,
+  instead of speaking with whatever another run left selected, and a clip whose `X-Echo-Checkpoint` names another
+  checkpoint than the requested one fails the run.
+- `scripts/demo_tape.py` refuses runs recorded on another proof wire than the installed proof speaks: the tape names
+  the installed release, which can't have run them.
 
 - The `speak-qwen` lease asks for 5800 MiB (was 5200): Qwen3-TTS 0.6B with Base and CustomVoice loaded peaked at 5692 MiB
   speaking 27 s cloned utterances on dragon's RTX 4060 (5178 was a short utterance), and keeps that reserved while loaded.
